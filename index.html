@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AR Experiments</title>
+  <title>xrblocks — XR experiments</title>
   <style>
     :root {
       --bg: #0a0a16;
@@ -19,14 +19,16 @@
       min-height: 100vh;
       padding: 32px 20px 64px;
     }
-    header { max-width: 820px; margin: 0 auto 28px; text-align: center; }
+    header { max-width: 880px; margin: 0 auto 12px; text-align: center; }
     h1 { margin: 0 0 6px; font-size: 2rem; letter-spacing: 0.02em; }
     h1 .glow { color: var(--accent); text-shadow: 0 0 18px rgba(53, 242, 255, 0.55); }
     header p { margin: 0; color: var(--muted); font-size: 0.95rem; }
-    #list {
-      max-width: 820px; margin: 0 auto;
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 18px;
-    }
+    main { max-width: 880px; margin: 0 auto; }
+    .section { margin: 34px 0 14px; display: flex; align-items: baseline; gap: 12px; }
+    .section h2 { margin: 0; font-size: 1.1rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    .section .note { color: var(--muted); font-size: 0.82rem; }
+    .section::after { content: ""; flex: 1; height: 1px; background: #232342; }
+    #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
     a.card {
       display: flex; align-items: center; gap: 16px;
       background: var(--card); border: 1px solid #232342; border-radius: 14px;
@@ -39,46 +41,78 @@
     }
     .qr img { display: block; width: 88px; height: 88px; border-radius: 10px; background: #fff; }
     .meta { flex: 1; min-width: 0; }
-    .meta h2 { margin: 0 0 4px; font-size: 1.15rem; }
+    .meta h3 { margin: 0 0 4px; font-size: 1.05rem; }
+    .meta p { margin: 0 0 8px; color: var(--muted); font-size: 0.85rem; line-height: 1.4; }
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+    .tags span {
+      font-size: 0.68rem; letter-spacing: 0.04em; color: var(--accent);
+      border: 1px solid rgba(53, 242, 255, 0.35); border-radius: 999px; padding: 1px 8px;
+    }
     .meta .open { color: var(--accent); font-size: 0.9rem; }
-    .empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 40px 0; }
+    .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+    footer { max-width: 880px; margin: 40px auto 0; text-align: center; color: var(--muted); font-size: 0.8rem; }
+    footer a { color: var(--accent); text-decoration: none; }
   </style>
 </head>
 <body>
   <header>
-    <h1>AR <span class="glow">Experiments</span></h1>
-    <p>Open on a mobile device &mdash; camera access requires HTTPS.</p>
+    <h1>xr<span class="glow">blocks</span> // experiments</h1>
+    <p>Adaptive WebXR experiments &mdash; Meta Quest 3 first, phone AR + desktop next.</p>
   </header>
-  <main id="list">
+  <main id="root">
     <p class="empty">Loading&hellip;</p>
   </main>
+  <footer>
+    <a href="https://github.com/stanleymarch/xrblocks">github.com/stanleymarch/xrblocks</a>
+    &middot; XR needs HTTPS + a capable browser; camera/mic/geolocation ask on entry.
+  </footer>
   <script>
     (async () => {
-      const list = document.getElementById('list')
+      const root = document.getElementById('root')
+      const SECTIONS = {
+        xrblocks: {
+          title: 'XR Blocks',
+          note: 'Google XR Blocks + three.js &middot; no build &middot; Quest 3 / Android XR / desktop simulator',
+        },
+        '8thwall': {
+          title: '8th Wall',
+          note: 'A-Frame &middot; camera AR on the phone',
+        },
+      }
+      const card = (e) => {
+        const url = new URL(e.path, window.location.href).href
+        const tags = (e.tags || []).map((t) => `<span>${t}</span>`).join('')
+        return `
+          <a class="card" href="${e.path}">
+            <div class="qr">
+              <img alt="QR for ${e.title}"
+                   src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}"
+                   onerror="this.parentNode.style.display='none'">
+            </div>
+            <div class="meta">
+              <h3>${e.title}</h3>
+              ${e.description ? `<p>${e.description}</p>` : ''}
+              ${tags ? `<div class="tags">${tags}</div>` : ''}
+              <span class="open">Open &rarr;</span>
+            </div>
+          </a>`
+      }
       try {
         const res = await fetch('manifest.json')
-        const experiments = await res.json()
-        if (!experiments.length) {
-          list.innerHTML = '<p class="empty">No experiments yet.</p>'
+        const entries = await res.json()
+        if (!entries.length) {
+          root.innerHTML = '<p class="empty">No experiments yet.</p>'
           return
         }
-        list.innerHTML = experiments.map((e) => {
-          const url = new URL(e.path, window.location.href).href
+        root.innerHTML = Object.entries(SECTIONS).map(([stack, meta]) => {
+          const items = entries.filter((e) => e.stack === stack)
+          if (!items.length) return ''
           return `
-            <a class="card" href="${e.path}">
-              <div class="qr">
-                <img alt="QR for ${e.title}"
-                     src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}"
-                     onerror="this.parentNode.style.display='none'">
-              </div>
-              <div class="meta">
-                <h2>${e.title}</h2>
-                <span class="open">Open &rarr;</span>
-              </div>
-            </a>`
-        }).join('')
+            <div class="section"><h2>${meta.title}</h2><span class="note">${meta.note}</span></div>
+            <div id="list">${items.map(card).join('')}</div>`
+        }).join('') || '<p class="empty">No experiments yet.</p>'
       } catch (err) {
-        list.innerHTML = '<p class="empty">Could not load the experiment list.</p>'
+        root.innerHTML = '<p class="empty">Could not load the experiment list.</p>'
       }
     })()
   </script>

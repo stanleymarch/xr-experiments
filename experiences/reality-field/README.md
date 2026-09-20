@@ -1,6 +1,6 @@
 # REALITY//FIELD
 
-Живое демо — на GitHub Pages репозитория, путь `/xrblocks/reality-field/`.
+Живое демо — на GitHub Pages репозитория, путь `/experiences/reality-field/`.
 
 ## Управление
 

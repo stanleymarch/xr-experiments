@@ -1,5 +1,5 @@
 // build-all.js — builds every app in 8thwall/ (8th Wall, webpack),
-// copies every no-build experience in xrblocks/ (XR Blocks, plain static),
+// copies every no-build experience in experiences/ (XR Blocks, plain static),
 // and assembles _site/, the static output that GitHub Pages serves.
 // Each 8th Wall app keeps its own webpack config; dependencies resolve
 // from the root node_modules.
@@ -9,8 +9,8 @@ const fs = require('fs')
 const webpack = require('webpack')
 
 const root = path.join(__dirname, '..')
-const experimentsDir = path.join(root, '8thwall')
-const xrblocksDir = path.join(root, 'xrblocks')
+const wallDir = path.join(root, '8thwall')
+const expDir = path.join(root, 'experiences')
 const siteDir = path.join(root, '_site')
 
 const isDir = (p) => fs.existsSync(p) && fs.statSync(p).isDirectory()
@@ -18,20 +18,20 @@ const isDir = (p) => fs.existsSync(p) && fs.statSync(p).isDirectory()
 // Files that stay in the repo but must not ship to the site.
 const SITE_FILTER = (src) => !/(?:^|[\\/])(?:README\.md|exp\.json)$/.test(src)
 
-function listExperiments() {
-  if (!isDir(experimentsDir)) return []
-  return fs.readdirSync(experimentsDir)
-    .filter((d) => isDir(path.join(experimentsDir, d)))
+function listWall() {
+  if (!isDir(wallDir)) return []
+  return fs.readdirSync(wallDir)
+    .filter((d) => isDir(path.join(wallDir, d)))
     .sort()
 }
 
-// A no-build XR Blocks experience is any folder in xrblocks/ with its own
+// A no-build XR Blocks experience is any folder in experiences/ with its own
 // index.html (shared assets like common/ are skipped).
-function listXrblocks() {
-  if (!isDir(xrblocksDir)) return []
-  return fs.readdirSync(xrblocksDir)
-    .filter((d) => isDir(path.join(xrblocksDir, d)))
-    .filter((d) => fs.existsSync(path.join(xrblocksDir, d, 'index.html')))
+function listExperiences() {
+  if (!isDir(expDir)) return []
+  return fs.readdirSync(expDir)
+    .filter((d) => isDir(path.join(expDir, d)))
+    .filter((d) => fs.existsSync(path.join(expDir, d, 'index.html')))
     .sort()
 }
 
@@ -40,7 +40,7 @@ function titleize(name) {
 }
 
 // Every experience may carry an exp.json next to its entry point:
-// { "title": "...", "description": "...", "tags": ["..."] }
+// { "title": "...", "description": "...", "description_ru": "...", "tags": ["..."] }
 function readMeta(dir, name) {
   let meta = {}
   try {
@@ -51,21 +51,22 @@ function readMeta(dir, name) {
   return {
     title: meta.title || titleize(name),
     description: meta.description || '',
+    ...(meta.description_ru ? {description_ru: meta.description_ru} : {}),
     tags: Array.isArray(meta.tags) ? meta.tags : [],
   }
 }
 
 function buildOne(name) {
-  const expDir = path.join(experimentsDir, name)
-  const configPath = path.join(expDir, 'config', 'webpack.config.js')
+  const appDir = path.join(wallDir, name)
+  const configPath = path.join(appDir, 'config', 'webpack.config.js')
   if (!fs.existsSync(configPath)) {
     throw new Error(`No webpack config for experiment "${name}": ${configPath}`)
   }
 
   return new Promise((resolve, reject) => {
-    // The config computes paths from process.cwd(), so load it from the experiment dir.
+    // The config computes paths from process.cwd(), so load it from the app dir.
     const prevCwd = process.cwd()
-    process.chdir(expDir)
+    process.chdir(appDir)
     let config
     try {
       config = require(configPath)
@@ -84,10 +85,10 @@ function buildOne(name) {
   })
 }
 
-function assemble(expNames, xbNames) {
+function assemble(wallNames, expNames) {
   fs.rmSync(siteDir, {recursive: true, force: true})
   fs.mkdirSync(path.join(siteDir, '8thwall'), {recursive: true})
-  fs.mkdirSync(path.join(siteDir, 'xrblocks'), {recursive: true})
+  fs.mkdirSync(path.join(siteDir, 'experiences'), {recursive: true})
 
   // Landing page lives at the repo root; copy it next to its manifest.
   fs.copyFileSync(path.join(root, 'index.html'), path.join(siteDir, 'index.html'))
@@ -95,25 +96,25 @@ function assemble(expNames, xbNames) {
   const manifest = []
 
   // XR Blocks: plain static folders, no build step.
-  for (const name of xbNames) {
+  for (const name of expNames) {
     fs.cpSync(
-      path.join(xrblocksDir, name),
-      path.join(siteDir, 'xrblocks', name),
+      path.join(expDir, name),
+      path.join(siteDir, 'experiences', name),
       {recursive: true, filter: SITE_FILTER}
     )
-    manifest.push({stack: 'xrblocks', name, path: `xrblocks/${name}/`, ...readMeta(xrblocksDir, name)})
+    manifest.push({stack: 'xrblocks', name, path: `experiences/${name}/`, ...readMeta(expDir, name)})
   }
   // Shared assets for the XR Blocks experiences (styles, helpers).
-  if (isDir(path.join(xrblocksDir, 'common'))) {
-    fs.cpSync(path.join(xrblocksDir, 'common'), path.join(siteDir, 'xrblocks', 'common'), {recursive: true})
+  if (isDir(path.join(expDir, 'common'))) {
+    fs.cpSync(path.join(expDir, 'common'), path.join(siteDir, 'experiences', 'common'), {recursive: true})
   }
 
   // 8th Wall: webpack output from dist/.
-  for (const name of expNames) {
-    const dist = path.join(experimentsDir, name, 'dist')
+  for (const name of wallNames) {
+    const dist = path.join(wallDir, name, 'dist')
     if (!isDir(dist)) throw new Error(`App "${name}" produced no dist/`)
     fs.cpSync(dist, path.join(siteDir, '8thwall', name), {recursive: true})
-    manifest.push({stack: '8thwall', name, path: `8thwall/${name}/`, ...readMeta(experimentsDir, name)})
+    manifest.push({stack: '8thwall', name, path: `8thwall/${name}/`, ...readMeta(wallDir, name)})
   }
 
   fs.writeFileSync(path.join(siteDir, 'manifest.json'), JSON.stringify(manifest, null, 2))
@@ -121,16 +122,16 @@ function assemble(expNames, xbNames) {
 }
 
 async function main() {
-  const expNames = listExperiments()
-  const xbNames = listXrblocks()
-  if (expNames.length === 0) console.warn('No apps found in 8thwall/ — nothing to build.')
-  if (xbNames.length === 0) console.warn('No experiences found in xrblocks/ — nothing to copy.')
-  const rebuild = process.argv.includes('--rebuild-8thwall') || expNames.some((name) => !isDir(path.join(experimentsDir, name, 'dist')))
-  for (const name of rebuild ? expNames : []) {
+  const wallNames = listWall()
+  const expNames = listExperiences()
+  if (wallNames.length === 0) console.warn('No apps found in 8thwall/ — nothing to build.')
+  if (expNames.length === 0) console.warn('No experiences found in experiences/ — nothing to copy.')
+  const rebuild = process.argv.includes('--rebuild-8thwall') || wallNames.some((name) => !isDir(path.join(wallDir, name, 'dist')))
+  for (const name of rebuild ? wallNames : []) {
     console.log(`\n=== Building ${name} ===`)
     await buildOne(name)
   }
-  const manifest = assemble(expNames, xbNames)
+  const manifest = assemble(wallNames, expNames)
   console.log(`\nAssembled ${manifest.length} experience(s) into _site/`)
 }
 

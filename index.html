@@ -1,9 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>xr-experiments — adaptive XR</title>
+  <title>xr-experiments — адаптивный XR</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Geologica:wght@300;400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg: #0a0a16;
@@ -15,18 +18,27 @@
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
     body {
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-family: 'Geologica', 'Segoe UI', system-ui, sans-serif;
+      font-weight: 300;
       min-height: 100vh;
       padding: 32px 20px 64px;
     }
+    h1, h2, h3, .display { font-family: 'Unbounded', 'Geologica', sans-serif; }
     header { max-width: 880px; margin: 0 auto 12px; text-align: center; }
-    h1 { margin: 0 0 6px; font-size: 2rem; letter-spacing: 0.02em; }
+    h1 { margin: 0 0 6px; font-size: 2rem; letter-spacing: 0.02em; font-weight: 800; }
     h1 .glow { color: var(--accent); text-shadow: 0 0 18px rgba(53, 242, 255, 0.55); }
-    header p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+    header p { margin: 0; color: var(--muted); font-size: 0.95rem; font-weight: 300; }
+    .lang { margin-top: 10px; font-size: 0.8rem; }
+    .lang button {
+      background: none; border: 1px solid #232342; color: var(--muted);
+      border-radius: 999px; padding: 2px 12px; margin: 0 3px; cursor: pointer;
+      font-family: inherit; font-size: 0.8rem;
+    }
+    .lang button.on { color: var(--accent); border-color: var(--accent); }
     main { max-width: 880px; margin: 0 auto; }
     .section { margin: 34px 0 14px; display: flex; align-items: baseline; gap: 12px; }
-    .section h2 { margin: 0; font-size: 1.1rem; letter-spacing: 0.08em; text-transform: uppercase; }
-    .section .note { color: var(--muted); font-size: 0.82rem; }
+    .section h2 { margin: 0; font-size: 1.1rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
+    .section .note { color: var(--muted); font-size: 0.82rem; font-weight: 300; }
     .section::after { content: ""; flex: 1; height: 1px; background: #232342; }
     #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
     a.card {
@@ -41,8 +53,8 @@
     }
     .qr img { display: block; width: 88px; height: 88px; border-radius: 10px; background: #fff; }
     .meta { flex: 1; min-width: 0; }
-    .meta h3 { margin: 0 0 4px; font-size: 1.05rem; }
-    .meta p { margin: 0 0 8px; color: var(--muted); font-size: 0.85rem; line-height: 1.4; }
+    .meta h3 { margin: 0 0 4px; font-size: 1.05rem; font-weight: 600; }
+    .meta p { margin: 0 0 8px; color: var(--muted); font-size: 0.85rem; line-height: 1.4; font-weight: 300; }
     .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
     .tags span {
       font-size: 0.68rem; letter-spacing: 0.04em; color: var(--accent);
@@ -50,71 +62,141 @@
     }
     .meta .open { color: var(--accent); font-size: 0.9rem; }
     .empty { text-align: center; color: var(--muted); padding: 40px 0; }
-    footer { max-width: 880px; margin: 40px auto 0; text-align: center; color: var(--muted); font-size: 0.8rem; }
+    .licenses { max-width: 880px; margin: 40px auto 0; color: var(--muted); font-size: 0.78rem; line-height: 1.6; font-weight: 300; }
+    .licenses h2 { font-size: 0.9rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text); font-weight: 600; }
+    .licenses a { color: var(--accent); text-decoration: none; }
+    .licenses table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    .licenses td, .licenses th { border: 1px solid #232342; padding: 6px 10px; text-align: left; vertical-align: top; }
+    .licenses th { color: var(--text); font-weight: 500; }
+    footer { max-width: 880px; margin: 32px auto 0; text-align: center; color: var(--muted); font-size: 0.8rem; font-weight: 300; }
     footer a { color: var(--accent); text-decoration: none; }
   </style>
 </head>
 <body>
   <header>
     <h1>xr<span class="glow">//</span>experiments</h1>
-    <p>Adaptive WebXR experiments &mdash; Meta Quest 3 first, phone AR + desktop next.</p>
+    <p data-i18n="tagline">Адаптивные XR-опыты — сначала Meta Quest 3, дальше телефон AR и десктоп.</p>
+    <div class="lang">
+      <button id="lang-ru" class="on">RU</button><button id="lang-en">EN</button>
+    </div>
   </header>
   <main id="root">
-    <p class="empty">Loading&hellip;</p>
+    <p class="empty">Загрузка&hellip;</p>
   </main>
+  <section class="licenses" id="licenses">
+    <h2 data-i18n="lic_title">Технологии и лицензии</h2>
+    <p data-i18n="lic_intro">Всё стороннее — бесплатное и с указанием источника. Наш код и шейдеры — MIT. Данные — с атрибуцией согласно их лицензиям.</p>
+    <table>
+      <tr><th data-i18n="th_what">Что</th><th data-i18n="th_src">Источник / лицензия</th><th data-i18n="th_where">Где</th></tr>
+      <tr><td>Google XR Blocks 0.21.1</td><td><a href="https://github.com/google/xrblocks">google/xrblocks</a>, Apache-2.0 (CDN jsDelivr)</td><td data-i18n="lic_xrb">все опыты experiences/</td></tr>
+      <tr><td>three.js 0.186.0</td><td><a href="https://threejs.org/">threejs.org</a>, MIT (CDN jsDelivr)</td><td data-i18n="lic_three">все опыты experiences/</td></tr>
+      <tr><td>8th Wall engine (8frame 1.5.0), A-Frame</td><td><a href="https://www.8thwall.com/">8thwall.com</a> — коммерческий движок, бесплатный тир; <a href="https://aframe.io/">A-Frame</a> MIT</td><td>8thwall/</td></tr>
+      <tr><td>cannon-es</td><td><a href="https://github.com/pmndrs/cannon-es">pmndrs/cannon-es</a>, MIT (npm)</td><td>8thwall/knockdown</td></tr>
+      <tr><td>Open-Meteo API</td><td><a href="https://open-meteo.com/">open-meteo.com</a> — бесплатно без ключа, лимит 10 000 запр./сутки, некоммерческое использование</td><td>experiences/weather-room</td></tr>
+      <tr><td>Overpass API / OpenStreetMap</td><td><a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>, ODbL; публичные серверы Overpass — умеренное использование, кэширование</td><td>experiences/city-orbit</td></tr>
+      <tr><td>Unbounded, Geologica</td><td>Google Fonts, <a href="https://scripts.sil.org/OFL">SIL Open Font License 1.1</a></td><td data-i18n="lic_fonts">эта страница</td></tr>
+      <tr><td>QR-коды</td><td><a href="https://goqr.me/api/">goqr.me API</a> — бесплатный генератор, картинки по требованию</td><td data-i18n="lic_qr">карточки каталога</td></tr>
+    </table>
+  </section>
   <footer>
-    <a href="https://github.com/stanleymarch/xr-experiments">github.com/stanleymarch/xr-experiments</a>
-    &middot; XR needs HTTPS + a capable browser; camera/mic/geolocation ask on entry.
+    <a href="https://staniverse.xyz">staniverse.xyz</a>
+    &middot; <a href="https://github.com/stanleymarch/xr-experiments">github.com/stanleymarch/xr-experiments</a>
+    &middot; <span data-i18n="foot">XR нужен HTTPS и поддерживающий браузер; камера/микрофон/геолокация спрашиваются на входе.</span>
   </footer>
   <script>
-    (async () => {
-      const root = document.getElementById('root')
-      const SECTIONS = {
-        xrblocks: {
-          title: 'XR Blocks',
-          note: 'Google XR Blocks + three.js &middot; no build &middot; Quest 3 / Android XR / desktop simulator',
-        },
-        '8thwall': {
-          title: '8th Wall',
-          note: 'A-Frame &middot; camera AR on the phone',
-        },
-      }
-      const card = (e) => {
-        const url = new URL(e.path, window.location.href).href
-        const tags = (e.tags || []).map((t) => `<span>${t}</span>`).join('')
+    const I18N = {
+      ru: {
+        tagline: 'Адаптивные XR-опыты — сначала Meta Quest 3, дальше телефон AR и десктоп.',
+        lic_title: 'Технологии и лицензии',
+        lic_intro: 'Всё стороннее — бесплатное и с указанием источника. Наш код и шейдеры — MIT. Данные — с атрибуцией согласно их лицензиям.',
+        th_what: 'Что', th_src: 'Источник / лицензия', th_where: 'Где',
+        lic_xrb: 'все опыты experiences/', lic_three: 'все опыты experiences/',
+        lic_fonts: 'эта страница', lic_qr: 'карточки каталога',
+        foot: 'XR нужен HTTPS и поддерживающий браузер; камера/микрофон/геолокация спрашиваются на входе.',
+        loading: 'Загрузка…', empty: 'Пока пусто.',
+        err: 'Не удалось загрузить список опытов.',
+        open: 'Открыть →',
+        sec_xrblocks_title: 'XR Blocks опыты',
+        sec_xrblocks_note: 'Google XR Blocks + three.js · без сборки · Quest 3 / Android XR / симулятор',
+        sec_8thwall_title: '8th Wall',
+        sec_8thwall_note: 'A-Frame · камерный AR на телефоне',
+      },
+      en: {
+        tagline: 'Adaptive XR experiments — Meta Quest 3 first, phone AR and desktop next.',
+        lic_title: 'Tech & licenses',
+        lic_intro: 'All third-party bits are free and credited. Our code and shaders are MIT. Data is attributed per its license.',
+        th_what: 'What', th_src: 'Source / license', th_where: 'Where',
+        lic_xrb: 'all experiences/ builds', lic_three: 'all experiences/ builds',
+        lic_fonts: 'this page', lic_qr: 'catalog cards',
+        foot: 'XR needs HTTPS and a capable browser; camera/mic/geolocation ask on entry.',
+        loading: 'Loading…', empty: 'Nothing yet.',
+        err: 'Could not load the experiment list.',
+        open: 'Open →',
+        sec_xrblocks_title: 'XR Blocks experiences',
+        sec_xrblocks_note: 'Google XR Blocks + three.js · no build · Quest 3 / Android XR / simulator',
+        sec_8thwall_title: '8th Wall',
+        sec_8thwall_note: 'A-Frame · camera AR on the phone',
+      },
+    };
+    let LANG = localStorage.getItem('xr-lang') || 'ru';
+    const t = (k) => I18N[LANG][k] || k;
+    function applyLang() {
+      document.documentElement.lang = LANG;
+      document.querySelectorAll('[data-i18n]').forEach((el) => {
+        el.innerHTML = t(el.dataset.i18n);
+      });
+      document.getElementById('lang-ru').classList.toggle('on', LANG === 'ru');
+      document.getElementById('lang-en').classList.toggle('on', LANG === 'en');
+      render();
+    }
+    document.getElementById('lang-ru').onclick = () => { LANG = 'ru'; localStorage.setItem('xr-lang', LANG); applyLang(); };
+    document.getElementById('lang-en').onclick = () => { LANG = 'en'; localStorage.setItem('xr-lang', LANG); applyLang(); };
+
+    let ENTRIES = [];
+    const SECTIONS = () => ({
+      xrblocks: { title: t('sec_xrblocks_title'), note: t('sec_xrblocks_note') },
+      '8thwall': { title: t('sec_8thwall_title'), note: t('sec_8thwall_note') },
+    });
+    const desc = (e) => (LANG === 'ru' && e.description_ru) ? e.description_ru : e.description;
+    const card = (e) => {
+      const url = new URL(e.path, window.location.href).href;
+      const tags = (e.tags || []).map((tag) => `<span>${tag}</span>`).join('');
+      return `
+        <a class="card" href="${e.path}">
+          <div class="qr">
+            <img alt="QR for ${e.title}" loading="lazy"
+                 src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}"
+                 onerror="this.parentNode.style.display='none'">
+          </div>
+          <div class="meta">
+            <h3>${e.title}</h3>
+            ${desc(e) ? `<p>${desc(e)}</p>` : ''}
+            ${tags ? `<div class="tags">${tags}</div>` : ''}
+            <span class="open">${t('open')}</span>
+          </div>
+        </a>`;
+    };
+    function render() {
+      const root = document.getElementById('root');
+      if (!ENTRIES.length) { root.innerHTML = `<p class="empty">${t('empty')}</p>`; return; }
+      root.innerHTML = Object.entries(SECTIONS()).map(([stack, meta]) => {
+        const items = ENTRIES.filter((e) => e.stack === stack);
+        if (!items.length) return '';
         return `
-          <a class="card" href="${e.path}">
-            <div class="qr">
-              <img alt="QR for ${e.title}"
-                   src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}"
-                   onerror="this.parentNode.style.display='none'">
-            </div>
-            <div class="meta">
-              <h3>${e.title}</h3>
-              ${e.description ? `<p>${e.description}</p>` : ''}
-              ${tags ? `<div class="tags">${tags}</div>` : ''}
-              <span class="open">Open &rarr;</span>
-            </div>
-          </a>`
-      }
+          <div class="section"><h2>${meta.title}</h2><span class="note">${meta.note}</span></div>
+          <div id="list">${items.map(card).join('')}</div>`;
+      }).join('') || `<p class="empty">${t('empty')}</p>`;
+    }
+    (async () => {
       try {
-        const res = await fetch('manifest.json')
-        const entries = await res.json()
-        if (!entries.length) {
-          root.innerHTML = '<p class="empty">No experiments yet.</p>'
-          return
-        }
-        root.innerHTML = Object.entries(SECTIONS).map(([stack, meta]) => {
-          const items = entries.filter((e) => e.stack === stack)
-          if (!items.length) return ''
-          return `
-            <div class="section"><h2>${meta.title}</h2><span class="note">${meta.note}</span></div>
-            <div id="list">${items.map(card).join('')}</div>`
-        }).join('') || '<p class="empty">No experiments yet.</p>'
+        const res = await fetch('manifest.json');
+        ENTRIES = await res.json();
       } catch (err) {
-        root.innerHTML = '<p class="empty">Could not load the experiment list.</p>'
+        document.getElementById('root').innerHTML = `<p class="empty">${t('err')}</p>`;
+        return;
       }
-    })()
+      applyLang();
+    })();
   </script>
 </body>
 </html>

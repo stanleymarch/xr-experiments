@@ -2,7 +2,7 @@
 
 Звук превращается в пространство: микрофон → Web Audio FFT → светящаяся 3D-лента времени перед тобой. Скажи «Staniverse» и заморозь фразу в скульптуру.
 
-Живое демо — `/xrblocks/sound-space/` на GitHub Pages.
+Живое демо — `/experiences/sound-space/` на GitHub Pages.
 
 ## Как выглядит звук
 

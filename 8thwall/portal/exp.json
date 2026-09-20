@@ -1,5 +1,6 @@
 {
   "title": "Portal",
   "description": "Place a virtual portal on a real wall and peek into another world through it.",
+  "description_ru": "Поставь портал на настоящую стену и загляни в другой мир.",
   "tags": ["8th-wall", "portal"]
 }

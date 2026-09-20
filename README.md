@@ -1,9 +1,13 @@
 # xr-experiments
 
-A public catalog of adaptive WebXR experiments — **Meta Quest 3 first**, phone AR and desktop next. Two shelves, two stacks:
+A public catalog of adaptive XR experiments — **Meta Quest 3 first**, phone AR and desktop next. One catalog, three engines, zero installs: every experience runs straight from GitHub Pages.
 
-- **[`xrblocks/`](xrblocks/)** — built on [Google XR Blocks](https://github.com/google/xrblocks) + three.js. Plain static folders, no build step, import-map CDNs. Depth sensing, hand gestures, spatial UI; each runs in AR on Quest 3 / Android XR and falls back to the desktop simulator elsewhere.
-- **[`8thwall/`](8thwall/)** — 8th Wall / A-Frame camera AR for phones, each with its own webpack config.
+Concept: the real room is the stage. Each experience takes something invisible — the room's geometry, the weather outside, your street, ambient sound, your own last 60 seconds — and turns it into something you can touch, stretch, freeze or rewind. Same controls everywhere: point, pinch/tap/click, drag; the phone covers for missing hands, the desktop covers for missing headsets.
+
+Three shelves by engine:
+
+- **[`experiences/`](experiences/)** — built on [Google XR Blocks](https://github.com/google/xrblocks) + three.js. Plain static folders, no build step, import-map CDNs. Depth sensing, hand gestures, spatial UI; each runs in AR on Quest 3 / Android XR and falls back to the desktop simulator elsewhere.
+- **[`8thwall/`](8thwall/)** — 8th Wall / A-Frame camera AR for phones, each with its own webpack config. Started as a standalone repo of 8th Wall AR examples — now one shelf of this catalog, keeping its own build.
 
 One push to `main` rebuilds everything and publishes the catalog to GitHub Pages.
 
@@ -11,11 +15,11 @@ One push to `main` rebuilds everything and publishes the catalog to GitHub Pages
 
 | Experience | Stack | What it does | Status |
 |---|---|---|---|
-| [REALITY//FIELD](xrblocks/reality-field/) | XR Blocks | The room becomes a physical field: impulses hit real geometry, waves ripple through particles; pinch/palm/fist/spread gestures; DEBUG and DREAM reality modes | playable |
-| [WEATHER//ROOM](xrblocks/weather-room/) | XR Blocks | Live outside weather rendered inside your room (Open-Meteo, one request); hand-scrubbed −24h…+24h timeline | playable |
-| [CITY//ORBIT](xrblocks/city-orbit/) | XR Blocks | Your street from OpenStreetMap as a tabletop hologram or 360° shell; pull POIs up into cards; scale the city between two hands | playable* |
-| [SOUND//SPACE](xrblocks/sound-space/) | XR Blocks | Microphone sound sculpted into 3D structures in real time; freeze phrases into glowing sculptures, walk through the history | playable |
-| [ECHO//ROOM](xrblocks/echo-room/) | XR Blocks | Every action leaves a 60-second trail; tap an old trace to unfold NOW/−1s…−4s temporal layers around it | playable |
+| [REALITY//FIELD](experiences/reality-field/) | XR Blocks | The room becomes a physical field: impulses hit real geometry, waves ripple through particles; pinch/palm/fist/spread gestures; DEBUG and DREAM reality modes | playable |
+| [WEATHER//ROOM](experiences/weather-room/) | XR Blocks | Live outside weather rendered inside your room (Open-Meteo, one request); hand-scrubbed −24h…+24h timeline | playable |
+| [CITY//ORBIT](experiences/city-orbit/) | XR Blocks | Your street from OpenStreetMap as a tabletop hologram or 360° shell; pull POIs up into cards; scale the city between two hands | playable* |
+| [SOUND//SPACE](experiences/sound-space/) | XR Blocks | Microphone sound sculpted into 3D structures in real time; freeze phrases into glowing sculptures, walk through the history | playable |
+| [ECHO//ROOM](experiences/echo-room/) | XR Blocks | Every action leaves a 60-second trail; tap an old trace to unfold NOW/−1s…−4s temporal layers around it | playable |
 | [Knockdown](8thwall/knockdown/) | 8th Wall | Knock physics towers off your table | playable |
 | [Portal](8thwall/portal/) | 8th Wall | Place a portal on a real wall, peek through | playable |
 | [Sea Battle](8thwall/sea-battle/) | 8th Wall | Classic naval battle laid out in your room | playable |
@@ -23,20 +27,20 @@ One push to `main` rebuilds everything and publishes the catalog to GitHub Pages
 ## Repository layout
 
 ```
-xrblocks/               no-build XR Blocks experiences (one folder each)
+experiences/            no-build XR Blocks experiences (one folder each)
   <name>/index.html     import map + HUD
   <name>/main.js        the whole experience
   <name>/exp.json       catalog card: title, description, tags
   common/               shared HUD styles
 8thwall/               8th Wall apps (webpack, one folder each)
-scripts/build-all.js    builds 8th Wall dists, copies xrblocks/, assembles _site/
+scripts/build-all.js    builds 8th Wall dists, copies experiences/, assembles _site/
 index.html              the catalog landing page (renders manifest.json)
 _site/                  build output served by GitHub Pages (generated)
 ```
 
 ## Adding an experience
 
-- **XR Blocks:** create `xrblocks/<name>/` with `index.html` (import map → `three`, `xrblocks` on jsDelivr) and `main.js`. Add an `exp.json` card. That's it — the catalog picks the folder up on the next build.
+- **XR Blocks:** create `experiences/<name>/` with `index.html` (import map → `three`, `xrblocks` on jsDelivr) and `main.js`. Add an `exp.json` card. That's it — the catalog picks the folder up on the next build.
 - **8th Wall:** create `8thwall/<name>/` with `config/webpack.config.js` emitting `dist/` (see any existing one), then wire `build:<name>` / `serve:<name>` scripts in `package.json`.
 
 ## Running locally

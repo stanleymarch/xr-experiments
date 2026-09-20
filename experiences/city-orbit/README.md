@@ -2,7 +2,7 @@
 
 Реальное окружение из OpenStreetMap — маленькая пространственная модель без единой 3D-модели: точки OSM становятся светящимися маркерами.
 
-Живое демо — `/xrblocks/city-orbit/` на GitHub Pages.
+Живое демо — `/experiences/city-orbit/` на GitHub Pages.
 
 ## Режимы
 

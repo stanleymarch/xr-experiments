@@ -1,0 +1,6 @@
+{
+  "title": "WEATHER//ROOM",
+  "description": "Your room becomes the weather outside. Wind at 8 m/s from the south-west blows real particles through your walls; rain falls onto actual horizontal surfaces; clouds dim the virtual sun; temperature tints the air; pressure sets the height of the atmosphere. Grab the timeline with your finger and scrub it: −24h ← NOW → +24h. One free Open-Meteo request, everything else is local.",
+  "description_ru": "Твоя комната становится погодой за окном. Ветер 8 м/с с юго-запада гонит живые частицы сквозь стены; дождь падает на настоящие горизонтальные поверхности; облака гасят виртуальное солнце; температура красит воздух; давление задаёт высоту атмосферы. Схвати пальцем шкалу времени и мотай: −24ч ← NOW → +24ч. Один бесплатный запрос к Open-Meteo — дальше всё локально.",
+  "tags": ["open-meteo", "particles", "timeline"]
+}

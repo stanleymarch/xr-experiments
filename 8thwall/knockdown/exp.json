@@ -1,5 +1,6 @@
 {
   "title": "Knockdown",
   "description": "Physics playground: knock down towers of boxes on your table with cannon-es rigid bodies tracked to real surfaces.",
+  "description_ru": "Физическая песочница: сбивай башни из ящиков прямо на своём столе.",
   "tags": ["8th-wall", "physics"]
 }

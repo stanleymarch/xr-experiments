@@ -1,13 +1,17 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
+import { makePoints, shockRingMaterial, dome } from '../common/fx.js';
 
 // REALITY//FIELD — комната как физическое поле.
 // Импульс летит из руки/взгляда, бьётся о depth-mesh (Quest) или
 // fallback-комнату (десктоп/телефон), расходится кольцом и волной по частицам.
 // Жесты: pinch = заряд, open-palm = отталкивание, fist = притяжение,
 // spread = растянуть поле. Клик/тап = импульс.
+//
+// Рендер: процедурные glow-спрайты (шейдер, затухание с глубиной),
+// шейдерные shock-кольца, градиентный купол вместо пустоты.
 
-const COUNT = 1400;
+const COUNT = 2200;
 const ROOM_R = 3.4;
 const ROOM_C = new THREE.Vector3(0, 1.6, 0);
 
@@ -19,13 +23,22 @@ class RealityField extends xb.Script {
     const sun = new THREE.DirectionalLight(0x88ccff, 1.4);
     sun.position.set(1, 3, 2);
     this.add(sun);
+    const cupola = dome(7);
+    cupola.position.copy(ROOM_C);
+    this.add(cupola);
 
-    // --- поле частиц ---
-    const pos = new Float32Array(COUNT * 3);
-    const col = new Float32Array(COUNT * 3);
+    // --- поле частиц: шейдерные glow-точки ---
+    const kit = makePoints(COUNT, { size: 0.045, color: 0xffffff, opacity: 0.95 });
+    this.points = kit.points;
+    this.pgeo = kit.geo;
+    this.add(this.points);
+    const pos = kit.pos;
+    const col = kit.col;
+
     this.vel = new Float32Array(COUNT * 3);
     this.home = new Float32Array(COUNT * 3);
     this.homeCol = new Float32Array(COUNT * 3);
+    this.hue = new Float32Array(COUNT);
     const c = new THREE.Color();
     for (let i = 0; i < COUNT; i++) {
       const x = (Math.random() * 2 - 1) * 3;
@@ -33,20 +46,29 @@ class RealityField extends xb.Script {
       const z = (Math.random() * 2 - 1) * 3;
       pos.set([x, y, z], i * 3);
       this.home.set([x, y, z], i * 3);
-      c.setHSL(0.52 + Math.random() * 0.18, 0.9, 0.55);
+      this.hue[i] = 0.52 + Math.random() * 0.18;
+      c.setHSL(this.hue[i], 0.9, 0.55);
       col.set([c.r, c.g, c.b], i * 3);
       this.homeCol.set([c.r, c.g, c.b], i * 3);
     }
-    this.pgeo = new THREE.BufferGeometry();
-    this.pgeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    this.pgeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    this.pmat = new THREE.PointsMaterial({
-      size: 0.02, vertexColors: true, transparent: true, opacity: 0.9,
-      depthWrite: false, blending: THREE.AdditiveBlending,
-    });
-    this.points = new THREE.Points(this.pgeo, this.pmat);
-    this.points.frustumCulled = false;
-    this.add(this.points);
+    this.pgeo.attributes.position.needsUpdate = true;
+    this.pgeo.attributes.color.needsUpdate = true;
+    this.pmat = this.points.material;
+
+    // тонкие светящиеся силовые линии: 90 отрезков между соседями по дому
+    const SEG = 90;
+    const lpos = new Float32Array(SEG * 6);
+    this.links = new THREE.BufferGeometry();
+    this.links.setAttribute('position', new THREE.BufferAttribute(lpos, 3));
+    this.linkLines = new THREE.LineSegments(this.links, new THREE.LineBasicMaterial({
+      color: 0x2a7fa8, transparent: true, opacity: 0.28,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    this.linkLines.frustumCulled = false;
+    this.add(this.linkLines);
+    // пары: i-й линк соединяет точки (i*7)%N и (i*13+5)%N
+    this.linkPairs = [];
+    for (let l = 0; l < SEG; l++) this.linkPairs.push([(l * 7) % COUNT, (l * 13 + 5) % COUNT]);
 
     // --- fallback-комната: пол + сфера (видны только в DEBUG) ---
     this.floor = new THREE.Mesh(
@@ -63,14 +85,12 @@ class RealityField extends xb.Script {
     this.roomMesh.visible = false;
     this.add(this.floor, this.roomMesh);
 
-    // --- пул колец удара ---
+    // --- пул шейдерных колец удара ---
     this.rings = [];
-    const rgeo = new THREE.RingGeometry(0.94, 1.0, 48);
+    const rgeo = new THREE.RingGeometry(0.42, 0.5, 64);
     for (let i = 0; i < 10; i++) {
-      const m = new THREE.Mesh(rgeo, new THREE.MeshBasicMaterial({
-        color: 0x9fe8ff, transparent: true, opacity: 0,
-        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
-      }));
+      const mat = shockRingMaterial(0x9fe8ff);
+      const m = new THREE.Mesh(rgeo, mat);
       m.visible = false;
       this.add(m);
       this.rings.push({ mesh: m, t: 1e9, dur: 1.1 });
@@ -103,7 +123,7 @@ class RealityField extends xb.Script {
     $('btn-dream').onclick = () => {
       this.dream = !this.dream;
       $('btn-dream').classList.toggle('on', this.dream);
-      this.pmat.size = this.dream ? 0.04 : 0.02;
+      this.pmat.uniforms.uSize.value = this.dream ? 0.08 : 0.045;
     };
 
     this._fpsN = 0; this._fpsT = 0; this._fps = 0;
@@ -203,6 +223,7 @@ class RealityField extends xb.Script {
     const repel = this.fx.has('repel') ? 1 : 0;
     const attract = this.fx.has('attract') ? 1 : 0;
     const stretch = this.fx.has('stretch') ? 1 : 0;
+    const c = new THREE.Color();
 
     for (let i = 0; i < COUNT; i++) {
       const ix = i * 3;
@@ -254,25 +275,33 @@ class RealityField extends xb.Script {
       p[ix] = x; p[ix + 1] = y; p[ix + 2] = z;
       this.vel[ix] = vx; this.vel[ix + 1] = vy; this.vel[ix + 2] = vz;
 
-      // подсветка фронта волны
+      // цвет: дом + белизна скорости + вспышка фронта волны
+      const speed = Math.min(1, Math.sqrt(vx * vx + vy * vy + vz * vz) * 1.4);
       let glow = 0;
       for (const w of this.waves) {
         const dx = x - w.x, dy = y - w.y, dz = z - w.z;
         if (Math.abs(Math.sqrt(dx * dx + dy * dy + dz * dz) - w.r) < 0.12) { glow = 1; break; }
       }
-      colA[ix] = this.homeCol[ix] + glow * 0.6;
-      colA[ix + 1] = this.homeCol[ix + 1] + glow * 0.6;
-      colA[ix + 2] = this.homeCol[ix + 2] + glow * 0.6;
+      const li = 0.55 + speed * 0.3 + glow * 0.5;
+      c.setHSL(this.hue[i], 0.9, Math.min(0.95, li));
+      colA[ix] = c.r; colA[ix + 1] = c.g; colA[ix + 2] = c.b;
     }
     this.pgeo.attributes.position.needsUpdate = true;
     this.pgeo.attributes.color.needsUpdate = true;
+
+    // силовые линии следуют за концами
+    const lp = this.links.attributes.position.array;
+    this.linkPairs.forEach(([a, b], l) => {
+      lp.set([p[a * 3], p[a * 3 + 1], p[a * 3 + 2], p[b * 3], p[b * 3 + 1], p[b * 3 + 2]], l * 6);
+    });
+    this.links.attributes.position.needsUpdate = true;
 
     for (const r of this.rings) {
       if (r.t >= r.dur) { r.mesh.visible = false; continue; }
       r.t += dt;
       const k = r.t / r.dur;
-      r.mesh.scale.setScalar(0.1 + k * 1.6);
-      r.mesh.material.opacity = 0.9 * (1 - k);
+      r.mesh.scale.setScalar(0.2 + k * 3.2);
+      r.mesh.material.uniforms.uT.value = k;
     }
 
     // FPS + статус
@@ -292,6 +321,7 @@ class RealityField extends xb.Script {
     g.removeEventListener('gesturestart', this._gs);
     g.removeEventListener('gestureend', this._ge);
     this.pgeo.dispose(); this.pmat.dispose();
+    this.links.dispose(); this.linkLines.material.dispose();
   }
 }
 

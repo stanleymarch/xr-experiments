@@ -1,0 +1,6 @@
+{
+  "title": "REALITY//FIELD",
+  "description": "Your room becomes an interactive physical field. A flick of your hand fires an impulse that strikes the table, spills across it as light and drops to the floor. Pinch charges a shot, an open palm repels particles, a fist attracts them, two hands stretch local gravity. DEBUG REALITY reveals the raw mesh and rays; DREAM REALITY dissolves it into a thousand glowing particles.",
+  "description_ru": "Твоя комната становится физическим полем. Взмах рукой — и с пальцев срывается импульс: бьёт в стол, расходится светящейся волной по поверхности, падает на пол, отражается от стены. Щипок заряжает выстрел, открытая ладонь отталкивает частицы, кулак притягивает, две руки растягивают локальную гравитацию. DEBUG REALITY показывает честную сетку комнаты, лучи и скелет рук; DREAM REALITY растворяет её в тысячах светящихся частиц.",
+  "tags": ["depth-mesh", "gestures", "particles"]
+}

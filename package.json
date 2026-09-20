@@ -1,13 +1,13 @@
 {
-  "name": "ar-experiments",
+  "name": "xr-experiments",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "build": "node scripts/build-all.js",
-    "build:knockdown": "cd experiments/knockdown && webpack --config config/webpack.config.js",
-    "serve:knockdown": "cd experiments/knockdown && webpack-dev-server --mode=development --config config/webpack.config.js --port 8091",
-    "build:sea-battle": "cd experiments/sea-battle && webpack --config config/webpack.config.js",
-    "serve:sea-battle": "cd experiments/sea-battle && webpack-dev-server --mode=development --config config/webpack.config.js --port 8093"
+    "build:knockdown": "cd 8thwall/knockdown && webpack --config config/webpack.config.js",
+    "serve:knockdown": "cd 8thwall/knockdown && webpack-dev-server --mode=development --config config/webpack.config.js --port 8091",
+    "build:sea-battle": "cd 8thwall/sea-battle && webpack --config config/webpack.config.js",
+    "serve:sea-battle": "cd 8thwall/sea-battle && webpack-dev-server --mode=development --config config/webpack.config.js --port 8093"
   },
   "devDependencies": {
     "@babel/parser": "^7.23.9",

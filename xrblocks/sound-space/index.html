@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>SOUND//SPACE — xrblocks</title>
+<link rel="stylesheet" href="../common/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
+    "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/xrblocks.js",
+    "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/addons/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="hud">
+  <h2>SOUND//SPACE</h2>
+  <div class="stat" id="stat">нажми MIC — или слушай демо-генератор</div>
+  <div class="row">
+    <button id="btn-mic">MIC</button>
+    <button id="btn-freeze">FREEZE</button>
+    <button id="btn-clear">стереть</button>
+  </div>
+  <div class="row"><a href="../../">← все опыты</a></div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

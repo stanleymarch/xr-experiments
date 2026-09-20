@@ -1,0 +1,5 @@
+{
+  "title": "SOUND//SPACE",
+  "description": "Sound sculpted into space: microphone → live FFT → a glowing 3D structure. Speech, music and claps look different. Freeze moments into sculptures; walk through the last minutes.",
+  "tags": ["web-audio", "fft", "mic"]
+}

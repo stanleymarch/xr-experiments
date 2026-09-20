@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>CITY//ORBIT — xrblocks</title>
+<link rel="stylesheet" href="../common/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
+    "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/xrblocks.js",
+    "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/addons/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="hud">
+  <h2>CITY//ORBIT</h2>
+  <div class="stat" id="stat">запрос геопозиции…</div>
+  <div class="row">
+    <input type="number" id="lat" step="0.0001" value="59.9343" aria-label="широта" />
+    <input type="number" id="lon" step="0.0001" value="30.3351" aria-label="долгота" />
+    <button id="btn-geo">город</button>
+    <button id="btn-mode">стол / 360°</button>
+  </div>
+  <div class="row"><a href="../../">← все опыты</a></div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

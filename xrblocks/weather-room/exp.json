@@ -1,0 +1,5 @@
+{
+  "title": "WEATHER//ROOM",
+  "description": "Live outside weather embodied in your room: wind drives particles, rain falls on the floor, clouds dim the light. One Open-Meteo request, then a hand-scrubbed −24h…+24h timeline.",
+  "tags": ["open-meteo", "particles", "timeline"]
+}

@@ -8,11 +8,11 @@ import * as xb from 'xrblocks';
 
 const $ = (id) => document.getElementById(id);
 
-// Публичные Overpass-зеркала. Серверы часто перегружены и банят типовые UA,
-// поэтому клиент идёт с контактным UA, держится аккуратно (лёгкие запросы,
-// ретраи, кулдаун зеркал, гонка зеркал).
-const CONTACT_UA = 'xrblocks-demo/0.1 (+https://stanleymarch.github.io/xrblocks/)';
+// Публичные Overpass-зеркала. Российский узел VK Maps / Mail.ru идёт
+// первым: для основной российской аудитории у него короче сетевой маршрут.
+// Остальные узлы — автоматический резерв; запросы короткие и кэшируются.
 const OVERPASS = [
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.nchc.org.tw/api/interpreter',
@@ -41,12 +41,10 @@ async function postOverpass(base, query, timeoutMs, signal) {
   const onOuter = () => ctrl.abort(signal?.reason);
   signal?.addEventListener('abort', onOuter, { once: true });
   try {
-    // Сервер режет типовые и пустые UA (406/429): шлём контактный UA.
     const r = await fetch(base, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'User-Agent': CONTACT_UA,
       },
       body: 'data=' + encodeURIComponent(query),
       signal: ctrl.signal,

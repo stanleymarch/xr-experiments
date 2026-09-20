@@ -1,66 +1,183 @@
 # xr-experiments
 
-A public catalog of adaptive XR experiments — **Meta Quest 3 first**, phone AR and desktop next. One catalog, three engines, zero installs: every experience runs straight from GitHub Pages.
+Коллекция небольших WebXR-опытов, где реальная комната становится частью произведения. Главная целевая платформа — **Meta Quest 3**; каждый опыт при этом обязан оставаться осмысленным на смартфоне и на десктопе.
 
-Concept: the real room is the stage. Each experience takes something invisible — the room's geometry, the weather outside, your street, ambient sound, your own last 60 seconds — and turns it into something you can touch, stretch, freeze or rewind. Same controls everywhere: point, pinch/tap/click, drag; the phone covers for missing hands, the desktop covers for missing headsets.
+Общий принцип: не приносить в XR очередную сцену с готовыми 3D-моделями, а проявлять то, что уже окружает человека, но обычно невидимо — геометрию комнаты, погоду снаружи, городские данные, звук и недавнее прошлое. Эти данные становятся материей: их можно толкнуть, растянуть, заморозить или отмотать.
 
-Three shelves by engine:
+**Живой каталог:** <https://stanleymarch.github.io/xr-experiments/>  
+**Автор:** <https://staniverse.xyz>
 
-- **[`experiences/`](experiences/)** — built on [Google XR Blocks](https://github.com/google/xrblocks) + three.js. Plain static folders, no build step, import-map CDNs. Depth sensing, hand gestures, spatial UI; each runs in AR on Quest 3 / Android XR and falls back to the desktop simulator elsewhere.
-- **[`8thwall/`](8thwall/)** — 8th Wall / A-Frame camera AR for phones, each with its own webpack config. Started as a standalone repo of 8th Wall AR examples — now one shelf of this catalog, keeping its own build.
+## Движки и структура
 
-One push to `main` rebuilds everything and publishes the catalog to GitHub Pages.
+Репозиторий устроен как полка движков, а не как одна монолитная программа:
 
-## The experiments
+- **[`xrblocks/`](xrblocks/)** — опыты на [Google XR Blocks](https://github.com/google/xrblocks) + three.js. Это статические папки без сборщика; они используют один и тот же код взаимодействия в WebXR и в официальном desktop simulator.
+- **[`8thwall/`](8thwall/)** — самостоятельные 8th Wall / A-Frame camera-AR опыты со своей webpack-сборкой.
+- Следующий движок можно добавить соседней папкой, например `meta-immersive/`, не смешивая его зависимости и жизненный цикл с остальными.
 
-| Experience | Stack | What it does | Status |
-|---|---|---|---|
-| [REALITY//FIELD](experiences/reality-field/) | XR Blocks | The room becomes a physical field: impulses hit real geometry, waves ripple through particles; pinch/palm/fist/spread gestures; DEBUG and DREAM reality modes | playable |
-| [WEATHER//ROOM](experiences/weather-room/) | XR Blocks | Live outside weather rendered inside your room (Open-Meteo, one request); hand-scrubbed −24h…+24h timeline | playable |
-| [CITY//ORBIT](experiences/city-orbit/) | XR Blocks | Your street from OpenStreetMap as a tabletop hologram or 360° shell; pull POIs up into cards; scale the city between two hands | playable* |
-| [SOUND//SPACE](experiences/sound-space/) | XR Blocks | Microphone sound sculpted into 3D structures in real time; freeze phrases into glowing sculptures, walk through the history | playable |
-| [ECHO//ROOM](experiences/echo-room/) | XR Blocks | Every action leaves a 60-second trail; tap an old trace to unfold NOW/−1s…−4s temporal layers around it | playable |
-| [Knockdown](8thwall/knockdown/) | 8th Wall | Knock physics towers off your table | playable |
-| [Portal](8thwall/portal/) | 8th Wall | Place a portal on a real wall, peek through | playable |
-| [Sea Battle](8thwall/sea-battle/) | 8th Wall | Classic naval battle laid out in your room | playable |
+GitHub Actions собирает обе существующие полки в единый `_site/` и публикует каталог на GitHub Pages.
 
-## Repository layout
+---
 
+## 1. REALITY//FIELD
+
+Ты входишь в XR — и обычная комната перестаёт быть фоном. Стены, стол, пол и окружающая геометрия проявляются как единое интерактивное физическое поле.
+
+Проводишь рукой — из пальцев вылетает импульс. Он встречает реальную поверхность, вспыхивает в точке удара, расходится по ней светящейся волной, падает на пол и отражается от границ комнаты. Ты не расставляешь виртуальные предметы поверх реальности: сама реальность становится инструментом.
+
+- **pinch** накапливает заряд и отпускает усиленный импульс;
+- **открытая ладонь** отталкивает частицы;
+- **кулак** притягивает их;
+- **две разведённые руки** растягивают локальное поле.
+
+У опыта два лица. **DEBUG REALITY** снимает красивую оболочку и показывает то, чем XR видит комнату: depth mesh, плоскости, скелет рук, лучи, нормали столкновений и FPS. **DREAM REALITY** возвращает поэзию — техническая реконструкция растворяется в тысячах светящихся частиц и силовых линий.
+
+**Текущая реализация.** XR Blocks depth mesh принимает лучи импульсов; симулятор даёт синтетическую комнату, а устройство — доступную ему геометрию. Частицы, волны, четыре жеста, DEBUG/DREAM и безопасная fallback-комната работают без серверной части. Следующий физический шаг — перевести каждую частицу на полноценные столкновения с живым mesh через Rapier, а не только использовать mesh как место рождения волны.
+
+[Открыть код и подробности](xrblocks/reality-field/)
+
+## 2. WEATHER//ROOM
+
+Комната становится физическим воплощением погоды за окном.
+
+Если с юго-запада дует ветер 8 м/с, поток частиц действительно проходит через пространство с этого направления. Дождь падает на горизонтальные поверхности. Облачность гасит виртуальный свет. Температура меняет цвет, плотность и подвижность воздуха. Давление поднимает или опускает условный потолок атмосферы.
+
+Время здесь тоже становится предметом. Шкала **−24h ← NOW → +24h** позволяет рукой проматывать вчерашний дождь, нынешний ветер и завтрашнее прояснение, не делая новый сетевой запрос на каждом кадре.
+
+Источник — [Open-Meteo](https://open-meteo.com/): API не требует ключа или регистрации. Один запрос при открытии приносит почасовой ряд, после чего визуализация и перемотка работают локально. Если сеть недоступна, включается явно помеченный синтетический погодный сценарий.
+
+**Текущая реализация.** Ветер, дождь, облачность, температура, давление и диапазон −24…+24 часа связаны с одной почасовой выборкой. HUD доступен на телефоне и десктопе; в XR тот же ряд вынесен в пространственное управление. Реальные поверхности используются там, где устройство или симулятор предоставляет depth/planes; иначе дождь честно падает на fallback-пол.
+
+[Открыть код и подробности](xrblocks/weather-room/)
+
+## 3. CITY//ORBIT
+
+Сайт получает координаты пользователя и загружает ближайшие места из OpenStreetMap. Но вместо плоской карты появляется маленькая пространственная система:
+
+```text
+             museum
+               ●
+
+ café ●      YOU      ● ITMO
+
+          ● monument
 ```
-experiences/            no-build XR Blocks experiences (one folder each)
-  <name>/index.html     import map + HUD
-  <name>/main.js        the whole experience
-  <name>/exp.json       catalog card: title, description, tags
-  common/               shared HUD styles
-8thwall/               8th Wall apps (webpack, one folder each)
-scripts/build-all.js    builds 8th Wall dists, copies experiences/, assembles _site/
-index.html              the catalog landing page (renders manifest.json)
-_site/                  build output served by GitHub Pages (generated)
+
+Она может лежать на столе как голографический макет или развернуться вокруг человека на 360°. Наводишь руку на точку — видишь «Кунсткамера · 430 м». Вытягиваешь её вверх — появляется пространственная карточка места.
+
+Самая важная механика — масштабирование мира двумя руками. Разводишь ладони: **200 м → 1 км → 5 км**. Чем больше реального жеста, тем меньше становится город между руками. Никаких скачанных 3D-моделей: только координаты, типы и названия, превращённые в свет, высоту и расстояние.
+
+Данные приходят через Overpass. Первым используется российский узел **VK Maps / Mail.ru** — `https://maps.mail.ru/osm/tools/overpass/api/interpreter`; затем идут публичные международные зеркала. Запросы ограничены, результаты кэшируются, а при недоступности серверов открывается явно помеченный офлайн-квартал у Эрмитажа.
+
+**Текущая реализация.** Есть настольный и 360° режимы, геолокация, выбор точки лучом, манипулируемая карточка и три радиуса. В выборку входят культурные места, памятники, кафе, образование и другие именованные POI; данные не маскируются под готовый город — визуальный язык остаётся абстрактной орбитальной схемой.
+
+[Открыть код и подробности](xrblocks/city-orbit/)
+
+## 4. SOUND//SPACE
+
+Звук превращается в пространство.
+
+Открываешь страницу, разрешаешь микрофон — и окружающий звук начинает строить перед тобой живую светящуюся структуру. Речь оставляет нервный рельеф, музыка собирается в плавные спектральные волны, хлопок выпускает мощное кольцо.
+
+Самое красивое действие — остановить момент. Скажи «Staniverse», нажми или сделай pinch и получи физическую 3D-скульптуру этой фразы. Затем заморозь следующую, и ещё одну. Постепенно вокруг появляется пространственная история последних минут: на Quest через неё можно пройти, на телефоне — осмотреть камерой и гироскопом, на десктопе — обойти мышью.
+
+Единый язык управления:
+
+- **tap / click / pinch** — заморозить текущий звук;
+- **drag** — повернуть или переставить скульптуру;
+- **hold / squeeze** — удалить выбранный слой.
+
+Внутри только Web Audio API, FFT, шейдеры, three.js и XR Blocks. Никакого сервера, AI и внешнего API — **0 ₽**. Микрофон не записывается и никуда не отправляется.
+
+**Текущая реализация.** Живой FFT строит световую ленту, классификация различает речь, устойчивый музыкальный спектр и ударный транзиент, а freeze создаёт историю скульптур. Без разрешения на микрофон опыт не пустует: демонстрационный генератор по очереди показывает все три состояния.
+
+[Открыть код и подробности](xrblocks/sound-space/)
+
+## 5. ECHO//ROOM
+
+Каждое действие оставляет временной след.
+
+Перемещаешь указатель — его траектория ещё несколько секунд висит в воздухе полупрозрачной линией. Делаешь tap — в точке возникает импульс ✦. Постепенно пространство начинает помнить последние 60 секунд твоего присутствия.
+
+Но это не просто следы. Нажми на старый импульс — и время отмотается **локально**, только вокруг выбранной точки. Рядом раскроются прозрачные состояния пространства:
+
+```text
+NOW
+−1 sec
+−2 sec
+−3 sec
+−4 sec
 ```
 
-## Adding an experience
+Получается трёхмерный temporal debugger реальности: не видео всей комнаты, а её пространственная память, которую можно исследовать одной рукой.
 
-- **XR Blocks:** create `experiences/<name>/` with `index.html` (import map → `three`, `xrblocks` on jsDelivr) and `main.js`. Add an `exp.json` card. That's it — the catalog picks the folder up on the next build.
-- **8th Wall:** create `8thwall/<name>/` with `config/webpack.config.js` emitting `dist/` (see any existing one), then wire `build:<name>` / `serve:<name>` scripts in `package.json`.
+**Текущая реализация.** Кольцевой буфер хранит луч и импульсы, старые события исчезают через минуту, выбор ✦ реконструирует четыре цветных временных слоя. На Quest используется луч руки/контроллера; на телефоне и десктопе — тот же select-путь XR Blocks.
 
-## Running locally
+[Открыть код и подробности](xrblocks/echo-room/)
+
+---
+
+## 8th Wall: отдельные AR-опыты
+
+- **[Knockdown](8thwall/knockdown/)** — физическая диорама на реальной поверхности: снарядами разбиваешь архитектурную башню.
+- **[Portal](8thwall/portal/)** — ставишь на стену портал и смотришь сквозь него в другой объём.
+- **[Sea Battle](8thwall/sea-battle/)** — переосмысление советского перископного автомата 1974 года: акватория разворачивается на безопасной дистанции перед игроком, корабли идут по цепным линиям, торпеды требуют упреждения, 10/10 открывает призовую игру.
+
+У этой полки свой визуальный язык, но тот же принцип: AR не закрывает комнату, а аккуратно занимает найденную поверхность; HUD учитывает safe-area, узкие и горизонтальные экраны.
+
+## Google XR Blocks desktop simulator
+
+XR Blocks включает официальный [desktop simulator](https://xrblocks.github.io/docs/manual/Simulator/). Он запускает те же `Script`, selection, hand/controller, world и depth API в обычном Chromium; синтетическая глубина и плоскости полезны для разработки, но не заменяют приёмку сенсора на Quest 3.
+
+Локальный запуск:
 
 ```bash
 npm ci
-npm run build                        # builds everything into _site/
-npx http-server _site -c-1 -p 8090   # open http://127.0.0.1:8090
+npm run build
+npx http-server _site -c-1 -p 8090
 ```
 
-XR, camera, microphone and geolocation require HTTPS (or localhost); on a phone use the QR codes on the catalog page of the deployed site. For a single 8th Wall experience during development use `npm run serve:<name>`.
+Открой любой опыт с параметром:
 
-## Deploy
+```text
+http://127.0.0.1:8090/xrblocks/reality-field/?formFactor=desktop&debug=1
+```
 
-GitHub Actions (`.github/workflows/deploy.yml`) on every push to `main`: `npm ci` → `npm run build` → publish `_site/` to Pages. Nothing manual.
+- `?formFactor=desktop` — сразу запускает simulator;
+- `?xrAutomation=1` — официальный automation preset для smoke-проверок;
+- `?debug=1` — публикует `window.xb` и `window.xbReady` для диагностического harness;
+- без параметров кнопка **Start Simulator** остаётся рядом с входом в XR.
 
-\* CITY//ORBIT works live when the public Overpass mirrors answer; when they throttle, it falls back to an offline demo quarter so the experience never dies.
+В режиме simulator: WASD — движение, Q/E — высота, правая кнопка + мышь — взгляд, левая кнопка — select; Left Shift переключает режимы, если открыт mode toggle. В каждой `xrblocks/*/index.html` подключён `lit`, чтобы работали официальные панели настроек и поз рук.
 
-## Credits
+## Структура репозитория
 
-- [XR Blocks](https://github.com/google/xrblocks) by Google — Apache-2.0
-- [8th Wall](https://www.8thwall.com/) engine, [A-Frame](https://aframe.io/), [three.js](https://threejs.org/)
-- Data: [Open-Meteo](https://open-meteo.com/) and [OpenStreetMap](https://www.openstreetmap.org/) via Overpass (used lightly, with caching and mirror failover)
+```text
+xrblocks/                 Google XR Blocks, одна статическая папка на опыт
+  <name>/index.html       import map + адаптивный HUD
+  <name>/main.js          сцена и взаимодействия
+  <name>/exp.json         русская/английская карточка каталога
+  common/                 общий визуальный kit и HUD
+8thwall/                  8th Wall / A-Frame приложения
+scripts/build-all.js      сборка 8th Wall + копирование XR Blocks в _site/
+index.html                двуязычный каталог
+_site/                    генерируемый Pages artifact
+```
+
+### Добавить новый опыт
+
+- **XR Blocks:** создай `xrblocks/<name>/` с `index.html`, `main.js` и `exp.json`; каталог подхватит папку автоматически.
+- **8th Wall:** создай `8thwall/<name>/` с `config/webpack.config.js`, который выпускает `dist/`, и добавь npm scripts по образцу существующих приложений.
+- **Другой движок:** отдельная корневая папка и отдельный шаг сборщика; не складывай его зависимости в `xrblocks/` или `8thwall/`.
+
+## Данные, лицензии и приватность
+
+- Google XR Blocks — Apache-2.0; three.js и собственный код репозитория — MIT.
+- OpenStreetMap — © OpenStreetMap contributors, ODbL; публичные Overpass-серверы используются умеренно, с ограничениями и кэшем.
+- Open-Meteo вызывается один раз для почасовой выборки; ключ не нужен.
+- Микрофон SOUND//SPACE анализируется локально через Web Audio API. Аудио не сохраняется и не отправляется.
+- Геолокация используется только для погодного и городского запросов после разрешения браузера.
+
+## English summary
+
+Adaptive WebXR art experiments, designed for Meta Quest 3 first and kept meaningful on phone AR and desktop. Google XR Blocks experiences live under `xrblocks/`; 8th Wall camera-AR experiments live under `8thwall/`. The room itself is the medium: geometry becomes a force field, weather becomes atmosphere, OSM becomes a hand-scaled city, sound becomes sculpture, and the last minute becomes a spatial time debugger.

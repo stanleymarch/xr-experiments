@@ -98,32 +98,50 @@ class RealityField extends xb.Script {
 
     this.waves = []; // {x,y,z, r, speed}
     this.fx = new Set(); // 'repel' | 'attract' | 'stretch'
+    this.handGestures = { left: new Set(), right: new Set() };
     this.charge = 0;
     this.debug = false;
     this.dream = false;
     this.raycaster = new THREE.Raycaster();
     this.raycaster.far = 9;
+    this._ray = new THREE.Ray();
     this._o = new THREE.Vector3();
     this._d = new THREE.Vector3();
     this._h = new THREE.Vector3();
     this._n = new THREE.Vector3();
+    this._color = new THREE.Color();
 
+    const rayPos = new Float32Array(6);
+    this.debugRayGeo = new THREE.BufferGeometry();
+    this.debugRayGeo.setAttribute('position', new THREE.BufferAttribute(rayPos, 3));
+    this.debugRay = new THREE.Line(
+      this.debugRayGeo,
+      new THREE.LineBasicMaterial({ color: 0xffb14a, transparent: true, opacity: 0.9 })
+    );
+    this.debugRay.visible = false;
+    this.add(this.debugRay);
+    this.normalArrow = new THREE.ArrowHelper(
+      new THREE.Vector3(0, 1, 0),
+      new THREE.Vector3(),
+      0.35,
+      0x7dff9a,
+      0.09,
+      0.05
+    );
+    this.normalArrow.visible = false;
+    this.add(this.normalArrow);
     const g = xb.core.gestureRecognition;
     this._gs = (e) => this.onGesture(e.detail, true);
     this._ge = (e) => this.onGesture(e.detail, false);
     g.addEventListener('gesturestart', this._gs);
     g.addEventListener('gestureend', this._ge);
 
-    $('btn-debug').onclick = () => {
-      this.debug = !this.debug;
-      $('btn-debug').classList.toggle('on', this.debug);
-      this.floor.visible = this.roomMesh.visible = this.debug;
-      try { xb.user.enablePivots(); } catch { /* noop */ }
-    };
+    $('btn-debug').onclick = () => this.setDebug(!this.debug);
     $('btn-dream').onclick = () => {
       this.dream = !this.dream;
       $('btn-dream').classList.toggle('on', this.dream);
       this.pmat.uniforms.uSize.value = this.dream ? 0.08 : 0.045;
+      this.linkLines.material.opacity = this.dream ? 0.12 : 0.28;
     };
 
     this._fpsN = 0; this._fpsT = 0; this._fps = 0;
@@ -132,24 +150,46 @@ class RealityField extends xb.Script {
 
   stat(s) { $('stat').textContent = s; }
 
+  setDebug(enabled) {
+    this.debug = enabled;
+    $('btn-debug').classList.toggle('on', enabled);
+    this.floor.visible = this.roomMesh.visible = enabled;
+    this.debugRay.visible = enabled;
+    if (!enabled) this.normalArrow.visible = false;
+    try {
+      if (xb.depth?.depthMesh) xb.depth.depthMesh.visible = enabled;
+    } catch { /* depth может ещё прогреваться */ }
+  }
+
   onGesture(detail, start) {
-    const n = detail.name;
-    if (n === 'pinch') {
-      if (start) this.charge = 0.2;
-      else { this.fire(this.charge > 0 ? 1 + this.charge : 1); this.charge = 0; }
-    } else if (n === 'open-palm') {
-      start ? this.fx.add('repel') : this.fx.delete('repel');
-    } else if (n === 'fist') {
-      start ? this.fx.add('attract') : this.fx.delete('attract');
-    } else if (n === 'spread') {
-      start ? this.fx.add('stretch') : this.fx.delete('stretch');
+    const name = detail.name;
+    const hand = detail.hand === 'left' ? 'left' : 'right';
+    const active = this.handGestures[hand];
+    start ? active.add(name) : active.delete(name);
+
+    if (name === 'pinch') {
+      if (start) this.charge = Math.max(this.charge, 0.2);
+      else {
+        this.fire(this.charge > 0 ? 1 + this.charge : 1);
+        this.charge = 0;
+      }
     }
+
+    const bothSpread =
+      this.handGestures.left.has('spread') && this.handGestures.right.has('spread');
+    const anyRepel =
+      this.handGestures.left.has('open-palm') || this.handGestures.right.has('open-palm');
+    const anyAttract =
+      this.handGestures.left.has('fist') || this.handGestures.right.has('fist');
+    anyRepel ? this.fx.add('repel') : this.fx.delete('repel');
+    anyAttract ? this.fx.add('attract') : this.fx.delete('attract');
+    bothSpread ? this.fx.add('stretch') : this.fx.delete('stretch');
   }
 
   emitter() {
     try {
       xb.user.getControllerPosition(0, this._o);
-      const r = xb.user.getRay(0, new THREE.Ray());
+      const r = xb.user.getRay(0, this._ray);
       if (r && r.direction.lengthSq() > 0.5) { this._d.copy(r.direction); return true; }
     } catch { /* fallback ниже */ }
     xb.core.camera.getWorldPosition(this._o);
@@ -205,6 +245,12 @@ class RealityField extends xb.Script {
     ring.mesh.visible = true;
     ring.mesh.position.copy(point);
     ring.mesh.lookAt(this._h.clone().add(normal));
+    if (this.debug) {
+      this.normalArrow.position.copy(point);
+      this.normalArrow.setDirection(normal);
+      this.normalArrow.visible = true;
+      this._normalAge = 0;
+    }
   }
 
   update() {
@@ -212,6 +258,19 @@ class RealityField extends xb.Script {
     if (this.charge > 0) this.charge = Math.min(2.5, this.charge + dt * 1.5);
     this.emitter();
     const ex = this._o.x, ey = this._o.y, ez = this._o.z;
+    if (this.debug) {
+      const a = this.debugRayGeo.attributes.position.array;
+      a.set([this._o.x, this._o.y, this._o.z], 0);
+      a.set([
+        this._o.x + this._d.x * 4,
+        this._o.y + this._d.y * 4,
+        this._o.z + this._d.z * 4,
+      ], 3);
+      this.debugRayGeo.attributes.position.needsUpdate = true;
+      try {
+        if (xb.depth?.depthMesh) xb.depth.depthMesh.visible = true;
+      } catch { /* depth может ещё прогреваться */ }
+    }
 
     const p = this.pgeo.attributes.position.array;
     const colA = this.pgeo.attributes.color.array;
@@ -223,7 +282,7 @@ class RealityField extends xb.Script {
     const repel = this.fx.has('repel') ? 1 : 0;
     const attract = this.fx.has('attract') ? 1 : 0;
     const stretch = this.fx.has('stretch') ? 1 : 0;
-    const c = new THREE.Color();
+    const c = this._color;
 
     for (let i = 0; i < COUNT; i++) {
       const ix = i * 3;
@@ -303,6 +362,9 @@ class RealityField extends xb.Script {
       r.mesh.scale.setScalar(0.2 + k * 3.2);
       r.mesh.material.uniforms.uT.value = k;
     }
+    if (this.normalArrow.visible && (this._normalAge += dt) > 1.4) {
+      this.normalArrow.visible = false;
+    }
 
     // FPS + статус
     this._fpsN++; this._fpsT += dt;
@@ -322,16 +384,25 @@ class RealityField extends xb.Script {
     g.removeEventListener('gestureend', this._ge);
     this.pgeo.dispose(); this.pmat.dispose();
     this.links.dispose(); this.linkLines.material.dispose();
-  }
+    this.debugRayGeo.dispose(); this.debugRay.material.dispose();
+    this.normalArrow.line.geometry.dispose(); this.normalArrow.line.material.dispose();
+    this.normalArrow.cone.geometry.dispose(); this.normalArrow.cone.material.dispose();
+}
 }
 
 const options = new xb.Options();
 options.enableHands();
 options.enableGestures();
 options.enableDepth();
+options.enablePlaneDetection();
 options.enableReticles();
 options.controllers.visualizeRays = true;
 options.hands.visualization = true;
+options.hands.visualizeJoints = true;
+options.hands.visualizeMeshes = false;
+options.gestures.setGestureEnabled('spread', true);
+options.simulator.defaultMode = xb.SimulatorMode.POSE;
+options.simulator.modeToggle.enabled = true;
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('REALITY//FIELD');
 options.setAppDescription('Комната как физическое поле. Клик — импульс, жесты — поле.');

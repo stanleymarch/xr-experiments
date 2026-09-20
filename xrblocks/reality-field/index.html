@@ -3,13 +3,16 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<title>WEATHER//ROOM — xrblocks</title>
+<title>REALITY//FIELD — XR Testbed</title>
 <link rel="stylesheet" href="../common/style.css" />
+<script>window.litDisableBundleWarning = true;</script>
 <script type="importmap">
 {
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
+    "lit": "https://esm.sh/lit@3.3.1",
+    "lit/": "https://esm.sh/lit@3.3.1/",
     "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/xrblocks.js",
     "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/addons/"
   }
@@ -18,18 +21,12 @@
 </head>
 <body>
 <div id="hud">
-  <h2>WEATHER//ROOM</h2>
-  <div class="stat" id="stat">запрос геопозиции…</div>
+  <h2>REALITY//FIELD</h2>
+  <div class="stat" id="stat">loading…</div>
   <div class="row">
-    <input type="number" id="lat" step="0.001" value="59.934" aria-label="широта" />
-    <input type="number" id="lon" step="0.001" value="30.335" aria-label="долгота" />
-    <button id="btn-geo">обновить</button>
+    <button id="btn-debug">DEBUG REALITY</button>
+    <button id="btn-dream">DREAM REALITY</button>
   </div>
-  <div class="row">
-    <input type="range" id="time" min="-24" max="24" step="1" value="0" style="flex:1" />
-    <button id="btn-now">NOW</button>
-  </div>
-  <div class="stat" id="tlabel">NOW</div>
   <div class="row"><a href="../../">← все опыты</a></div>
 </div>
 <script type="module" src="main.js"></script>

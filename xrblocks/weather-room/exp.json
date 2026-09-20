@@ -1,6 +1,6 @@
 {
   "title": "WEATHER//ROOM",
-  "description": "Your room becomes the weather outside. Wind at 8 m/s from the south-west blows real particles through your walls; rain falls onto actual horizontal surfaces; clouds dim the virtual sun; temperature tints the air; pressure sets the height of the atmosphere. Grab the timeline with your finger and scrub it: −24h ← NOW → +24h. One free Open-Meteo request, everything else is local.",
-  "description_ru": "Твоя комната становится погодой за окном. Ветер 8 м/с с юго-запада гонит живые частицы сквозь стены; дождь падает на настоящие горизонтальные поверхности; облака гасят виртуальное солнце; температура красит воздух; давление задаёт высоту атмосферы. Схвати пальцем шкалу времени и мотай: −24ч ← NOW → +24ч. Один бесплатный запрос к Open-Meteo — дальше всё локально.",
+  "description": "Live weather at your coordinates: wind drives the particle flow, rain lands on detected surfaces, temperature tints the air. A slider scrubs −24…+24 h. One Open-Meteo request, then everything runs locally.",
+  "description_ru": "Живая погода твоих координат: ветер задаёт направление потока частиц, дождь падает на найденные поверхности, температура красит воздух. Слайдер мотает время −24…+24 ч. Один запрос к Open-Meteo, дальше всё локально.",
   "tags": ["open-meteo", "particles", "timeline"]
 }

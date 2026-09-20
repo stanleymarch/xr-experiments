@@ -1,6 +1,6 @@
 {
   "title": "CITY//ORBIT",
-  "description": "Your street from OpenStreetMap becomes a small spatial model with no 3D assets at all. It lies on your table as a holographic maquette or surrounds you at 360°. Point at a glowing dot — Kunstkamera · 430 m — and pull it up into a card. Then spread two palms and shrink the whole city between your hands: 200 m → 1 km → 5 km. Live OSM data via Overpass, with an offline quarter as backup.",
-  "description_ru": "Твоя улица из OpenStreetMap — маленькая пространственная модель без единой 3D-модели. Лежит на столе голографическим макетом или окружает тебя на 360°. Укажи на светящуюся точку — Кунсткамера · 430 м — и вытяни её вверх в карточку. А потом разведи ладони, и весь город сожмётся между руками: 200 м → 1 км → 5 км. Живые данные OSM через Overpass, с офлайн-кварталом про запас.",
+  "description": "Named OSM points around you as an orbital diagram on the table or at 360°. Tap a dot to raise a card with name and distance; spread two pinches to scale the radius 200 m — 1 km — 5 km. No 3D assets, coordinates and types only.",
+  "description_ru": "Именованные POI из OpenStreetMap вокруг тебя — орбитальная схема на столе или на 360°. Тап по точке поднимает карточку с названием и дистанцией; разведение рук в pinch меняет радиус 200 м — 1 км — 5 км. Без 3D-моделей: только координаты и типы.",
   "tags": ["overpass", "geolocation", "hologram"]
 }

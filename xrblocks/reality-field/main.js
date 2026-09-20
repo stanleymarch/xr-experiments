@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
+import { installXrGuards, watchXrButton } from '../common/boot.js';
 import { makePoints, shockRingMaterial, dome } from '../common/fx.js';
 
 // REALITY//FIELD — комната как физическое поле.
@@ -427,9 +428,14 @@ options.hands.visualizeMeshes = false;
 options.simulator.modeToggle.enabled = true;
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('REALITY//FIELD');
-options.setAppDescription('Комната как физическое поле. Клик — импульс, жесты — поле.');
+options.setAppDescription('Импульс из pinch бьёт в реальную геометрию. Ладонь — отталкивает, кулак — притягивает.');
+
+// Телефон без depth/hand-tracking получит сессию без них: boot.js даёт
+// requestSession вторую попытку, а опыт остаётся на fallback-геометрии.
+installXrGuards();
 
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new RealityField());
   xb.init(options);
+  watchXrButton();
 });

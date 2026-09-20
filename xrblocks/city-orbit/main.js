@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
+import { installXrGuards, watchXrButton } from '../common/boot.js';
 
 // CITY//ORBIT — реальное окружение из OpenStreetMap как голограмма.
 // Стол: макет 1.2 м на столе перед тобой. 360°: город вокруг тебя.
@@ -372,9 +373,12 @@ options.simulator.modeToggle.enabled = true;
 options.enableReticles();
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('CITY//ORBIT');
-options.setAppDescription('Город из OSM как голограмма. Луч + select = карточка.');
+options.setAppDescription('OSM-голограмма твоих окрестностей. Тап по точке — карточка, две руки — масштаб.');
+
+installXrGuards();
 
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new CityOrbit());
   xb.init(options);
+  watchXrButton();
 });

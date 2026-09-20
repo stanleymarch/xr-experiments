@@ -120,6 +120,47 @@ export function lineMaterial(color = 0x54d6ff, opacity = 0.6) {
   });
 }
 
+// Лента звука (SOUND//SPACE): амплитуда уже записана в position.z геометрии,
+// поэтому шейдеру не нужны отдельные атрибуты — он красит по высоте рельефа.
+// Живая лента пульсирует сканирующей волной, замороженная застывает ровно.
+export function ribbonMaterial({ color = 0x54d6ff, opacity = 0.85, live = false } = {}) {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+      uOpacity: { value: opacity },
+      uLive: { value: live ? 1 : 0 },
+      uTime: { value: 0 },
+    },
+    vertexShader: /* glsl */`
+      varying float vAmp;
+      varying vec2 vUv;
+      void main() {
+        vAmp = clamp(position.z / 0.35, 0.0, 1.6);
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */`
+      uniform vec3 uColor;
+      uniform float uOpacity, uLive, uTime;
+      varying float vAmp;
+      varying vec2 vUv;
+      void main() {
+        float hot = smoothstep(0.04, 0.85, vAmp);
+        float scan = 0.5 + 0.5 * sin(vUv.x * 62.0 - uTime * 3.2);
+        float edge = smoothstep(0.0, 0.1, vUv.x) * smoothstep(1.0, 0.9, vUv.x)
+                   * smoothstep(0.0, 0.14, vUv.y) * smoothstep(1.0, 0.86, vUv.y);
+        vec3 c = mix(uColor * 0.22, uColor * 1.7 + vec3(0.22), hot);
+        float a = uOpacity * (0.12 + 0.88 * hot) * edge;
+        a *= mix(1.0, 0.72 + 0.28 * scan, uLive);
+        gl_FragColor = vec4(c, a);
+      }`,
+  });
+}
+
 // Маркер-точки для города/импульсов: сферический импостер не нужен —
 // маленькие квады pointsMaterial рисуют дешевле. Это хелпер сетки точек,
 // которой можно двигать позиции напрямую.

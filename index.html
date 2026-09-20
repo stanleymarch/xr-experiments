@@ -40,7 +40,17 @@
     .section h2 { margin: 0; font-size: 1.1rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
     .section .note { color: var(--muted); font-size: 0.82rem; font-weight: 300; }
     .section::after { content: ""; flex: 1; height: 1px; background: #232342; }
-    #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
+    #list { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:18px; }
+    /* Телефон: QR на самом телефоне не нужен (ты уже на нём), карточка
+       получает всю ширину под текст и тап. */
+    @media (max-width:760px) {
+      body { padding:20px 14px 48px; }
+      h1 { font-size:1.45rem; }
+      #list { grid-template-columns:1fr; gap:12px; }
+      .qr { display:none; }
+      a.card { padding:14px; }
+      .licenses table { font-size:0.72rem; }
+    }
     a.card {
       display: flex; align-items: center; gap: 16px;
       background: var(--card); border: 1px solid #232342; border-radius: 14px;
@@ -75,7 +85,7 @@
 <body>
   <header>
     <h1>xr<span class="glow">//</span>experiments</h1>
-    <p data-i18n="tagline">Адаптивные XR-опыты — сначала Meta Quest 3, дальше телефон AR и десктоп.</p>
+    <p data-i18n="tagline">Пять WebXR-опытов и три камерные AR-игры. Quest 3, телефон, десктоп.</p>
     <div class="lang">
       <button id="lang-ru" class="on">RU</button><button id="lang-en">EN</button>
     </div>
@@ -85,7 +95,7 @@
   </main>
   <section class="licenses" id="licenses">
     <h2 data-i18n="lic_title">Технологии и лицензии</h2>
-    <p data-i18n="lic_intro">Всё стороннее — бесплатное и с указанием источника. Наш код и шейдеры — MIT. Данные — с атрибуцией согласно их лицензиям.</p>
+    <p data-i18n="lic_intro">Стороннее — бесплатное, с атрибуцией. Наш код — MIT. Данные — по их лицензиям.</p>
     <table>
       <tr><th data-i18n="th_what">Что</th><th data-i18n="th_src">Источник / лицензия</th><th data-i18n="th_where">Где</th></tr>
       <tr><td>Google XR Blocks 0.21.1</td><td><a href="https://github.com/google/xrblocks">google/xrblocks</a>, Apache-2.0 (CDN jsDelivr)</td><td data-i18n="lic_xrb">все опыты xrblocks/</td></tr>
@@ -106,9 +116,9 @@
   <script>
     const I18N = {
       ru: {
-        tagline: 'Адаптивные XR-опыты — сначала Meta Quest 3, дальше телефон AR и десктоп.',
+        tagline: 'Пять WebXR-опытов и три камерные AR-игры. Quest 3, телефон, десктоп.',
         lic_title: 'Технологии и лицензии',
-        lic_intro: 'Всё стороннее — бесплатное и с указанием источника. Наш код и шейдеры — MIT. Данные — с атрибуцией согласно их лицензиям.',
+        lic_intro: 'Стороннее — бесплатное, с атрибуцией. Наш код — MIT. Данные — по их лицензиям.',
         th_what: 'Что', th_src: 'Источник / лицензия', th_where: 'Где',
         lic_xrb: 'все опыты xrblocks/', lic_three: 'все опыты xrblocks/',
         lic_fonts: 'эта страница', lic_qr: 'карточки каталога',
@@ -122,9 +132,9 @@
         sec_8thwall_note: 'A-Frame · камерный AR на телефоне',
       },
       en: {
-        tagline: 'Adaptive XR experiments — Meta Quest 3 first, phone AR and desktop next.',
+        tagline: 'Five WebXR experiences and three camera-AR games. Quest 3, phone, desktop.',
         lic_title: 'Tech & licenses',
-        lic_intro: 'All third-party bits are free and credited. Our code and shaders are MIT. Data is attributed per its license.',
+        lic_intro: 'Third-party bits are free and credited. Our code is MIT. Data follows its licenses.',
         th_what: 'What', th_src: 'Source / license', th_where: 'Where',
         lic_xrb: 'all xrblocks/ builds', lic_three: 'all xrblocks/ builds',
         lic_fonts: 'this page', lic_qr: 'catalog cards',

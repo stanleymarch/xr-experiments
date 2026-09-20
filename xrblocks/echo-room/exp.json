@@ -1,6 +1,6 @@
 {
   "title": "ECHO//ROOM",
-  "description": "Every action leaves a trace, and space keeps the last 60 seconds. Move your ray and its trajectory lingers; tap and a ✦ pulse blooms. Then click an old trace and time rewinds locally: NOW, −1s, −2s, −3s, −4s unfold as translucent layers around the point. A three-dimensional temporal debugger of reality — no second hand needed.",
-  "description_ru": "Каждое действие оставляет след, и пространство хранит последние 60 секунд. Веди луч — траектория остаётся висеть; тап — вспыхивает импульс ✦. Нажми на старый след — и время отмотается локально: NOW, −1с, −2с, −3с, −4с раскроются прозрачными слоями вокруг точки. Трёхмерный temporal debugger реальности — вторая рука не нужна.",
+  "description": "Space keeps a minute: the ray trail lingers ~8 s, ✦ impulses live 60 s. Tap an old impulse to unfold time layers NOW…−4 s around it.",
+  "description_ru": "Пространство хранит минуту: след луча висит ~8 с, импульсы ✦ живут 60 с. Тап по старому импульсу раскрывает временные слои NOW…−4 с вокруг точки.",
   "tags": ["trails", "time", "debug"]
 }

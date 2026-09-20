@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
-import { shockRingMaterial } from '../common/fx.js';
+import { pointsMaterial, shockRingMaterial } from '../common/fx.js';
+import { installXrGuards, watchXrButton } from '../common/boot.js';
 
 // WEATHER//ROOM — погода снаружи становится телом комнаты.
 // Один запрос к Open-Meteo (без ключа), дальше всё локально:
@@ -68,10 +69,7 @@ class WeatherRoom extends xb.Script {
     this.pgeo = new THREE.BufferGeometry();
     this.pgeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     this.pgeo.setAttribute('color', new THREE.BufferAttribute(this.col, 3));
-    this.points = new THREE.Points(this.pgeo, new THREE.PointsMaterial({
-      size: 0.025, vertexColors: true, transparent: true, opacity: 0.85,
-      depthWrite: false, blending: THREE.AdditiveBlending,
-    }));
+    this.points = new THREE.Points(this.pgeo, pointsMaterial({ size: 0.05, opacity: 0.85 }));
     this.points.frustumCulled = false;
     this.add(this.points);
 
@@ -291,9 +289,12 @@ options.world.planes.showDebugVisualizations =
   new URLSearchParams(window.location.search).has('debug');
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('WEATHER//ROOM');
-options.setAppDescription('Погода снаружи — внутри комнаты. Слайдер мотает ±24ч.');
+options.setAppDescription('Погода снаружи — частицы внутри. Слайдер мотает ±24 ч.');
+
+installXrGuards();
 
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new WeatherRoom());
   xb.init(options);
+  watchXrButton();
 });

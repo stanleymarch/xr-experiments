@@ -1,6 +1,6 @@
 {
   "title": "SOUND//SPACE",
-  "description": "Sound becomes space. Allow the microphone and the room starts building a live glowing structure: speech looks one way, music another, a clap fires a shockwave. Pinch the moment and freeze it — say “Staniverse” and keep a physical sculpture of the phrase. Freeze another, and another. Walk inside the spatial history of your last minutes on Quest, orbit it on desktop. Web Audio FFT, no server, no AI, zero cost.",
-  "description_ru": "Звук становится пространством. Разреши микрофон — и комната начнёт строить живую светящуюся структуру: речь выглядит так, музыка — иначе, хлопок бьёт ударной волной. Ущипни момент — и заморозь его: скажи «Staniverse» и получи физическую скульптуру фразы. Потом следующую. Вокруг соберётся пространственная история последних минут — ходи внутри неё на Quest. Только Web Audio FFT, без сервера и AI, за 0 ₽.",
+  "description": "The microphone builds a glowing spectrum ribbon: speech, music and claps read differently in the relief. FREEZE locks the moment into a sculpture — up to three history layers. Without a mic a demo generator runs.",
+  "description_ru": "Микрофон строит светящуюся ленту спектра: речь, музыка и хлопок читаются по рельефу. FREEZE замораживает момент в скульптуру — до трёх слоёв истории. Без микрофона работает демо-генератор.",
   "tags": ["web-audio", "fft", "mic"]
 }

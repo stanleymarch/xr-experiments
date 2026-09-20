@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
+import { installXrGuards, watchXrButton } from '../common/boot.js';
 
 // ECHO//ROOM — трёхмерный temporal debugger реальности.
 // Каждое движение луча оставляет траекторию, каждый тап — импульс.
@@ -221,9 +222,12 @@ const options = new xb.Options();
 options.enableReticles();
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('ECHO//ROOM');
-options.setAppDescription('Следы действий 60 секунд. Клик по ✦ — временные слои.');
+options.setAppDescription('След и импульсы держат минуту. Тап по ✦ — временные слои.');
+
+installXrGuards();
 
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new EchoRoom());
   xb.init(options);
+  watchXrButton();
 });

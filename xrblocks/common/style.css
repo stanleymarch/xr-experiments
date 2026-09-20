@@ -27,3 +27,37 @@ canvas { display:block; }
 #hud a { color:var(--acc); }
 #hud input[type=text], #hud input[type=number] { width:76px; background:#0a1020;
   border:1px solid #2a3c60; color:var(--fg); border-radius:6px; padding:4px 6px; }
+
+/* Оверлей входа XR Blocks. Без этих правил wrapper падает голой системной
+   кнопкой после канваса — на телефоне его приходится искать скроллом. */
+#XRButtonWrapper {
+  position:fixed; left:0; right:0; bottom:calc(16px + env(safe-area-inset-bottom));
+  z-index:30; display:grid; justify-items:center; gap:8px; padding:0 16px;
+  pointer-events:none;
+}
+#XRButtonWrapper h1 { margin:0; font:600 15px/1.2 system-ui,sans-serif;
+  letter-spacing:.1em; color:var(--acc); text-align:center; }
+#XRButtonWrapper h4 { margin:0; max-width:460px; text-align:center;
+  font:400 12px/1.45 system-ui,sans-serif; color:var(--dim); }
+#XRButtonWrapper .XRButton {
+  pointer-events:auto; width:100%; max-width:430px; min-height:56px;
+  border:1px solid var(--acc); border-radius:16px;
+  background:rgba(13,27,46,.94); color:#eaf9ff;
+  font:600 16px/1 system-ui,sans-serif; letter-spacing:.05em; cursor:pointer;
+}
+#XRButtonWrapper .XRButton:active { background:var(--acc); color:#04121c; }
+#XRButtonWrapper .XRButton:disabled { border-color:#7a4653; color:#e0a0a8; }
+/* На телефоне симулятор бесполезен: это десктоп-режим под клавиатуру. */
+@media (pointer:coarse) {
+  #XRButtonWrapper .XRButton ~ .XRButton { display:none; }
+}
+/* В сессии кнопка становится компактной END-пилюлей у верхнего края. */
+#XRButtonWrapper.in-session {
+  top:calc(10px + env(safe-area-inset-top)); bottom:auto; padding:0 12px;
+  justify-items:end;
+}
+#XRButtonWrapper.in-session h1, #XRButtonWrapper.in-session h4 { display:none; }
+#XRButtonWrapper.in-session .XRButton {
+  width:auto; min-height:0; padding:9px 16px; font-size:12px; border-radius:999px;
+  background:rgba(7,10,18,.72);
+}

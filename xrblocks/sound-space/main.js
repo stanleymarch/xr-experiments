@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
+import { ribbonMaterial } from '../common/fx.js';
+import { installXrGuards, watchXrButton } from '../common/boot.js';
 
 // SOUND//SPACE — звук строит пространство.
 // Микрофон → Web Audio FFT → живая светящаяся структура перед тобой.
@@ -29,11 +31,10 @@ class SoundSpace extends xb.Script {
     for (let l = 0; l <= RIBBONS; l++) {
       const geo = new THREE.PlaneGeometry(1.5, 1.0, STEPS, BANDS);
       const live = l === 0;
-      const mat = new THREE.MeshBasicMaterial({
+      const mat = ribbonMaterial({
         color: live ? 0x54d6ff : [0xffb14a, 0x7dff9a, 0xff6ad5][l - 1],
-        transparent: true, opacity: live ? 0.55 : 0.34,
-        wireframe: true, side: THREE.DoubleSide, depthWrite: false,
-        blending: THREE.AdditiveBlending,
+        opacity: live ? 0.9 : 0.6,
+        live,
       });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.z = -l * 0.28;
@@ -174,7 +175,9 @@ class SoundSpace extends xb.Script {
       if (im.t > 1) { this.remove(im.mesh); im.mesh.material.dispose(); this.impacts.splice(this.impacts.indexOf(im), 1); }
     }
 
-    live.mesh.material.color.set(mode === 0 ? 0x9fe8ff : mode === 1 ? 0x54d6ff : 0xffffff);
+    const u = live.mesh.material.uniforms;
+    u.uTime.value += dt;
+    u.uColor.value.set(mode === 0 ? 0x9fe8ff : mode === 1 ? 0x54d6ff : 0xffffff);
     this.demoPhase += dt;
     if ((this._st = (this._st || 0) + dt) > 0.5) {
       this._st = 0;
@@ -196,9 +199,12 @@ const options = new xb.Options();
 options.enableReticles();
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('SOUND//SPACE');
-options.setAppDescription('Звук строит 3D-скульптуру. pinch/click = freeze, hold = стереть.');
+options.setAppDescription('Микрофон строит световую ленту. FREEZE — заморозить момент.');
+
+installXrGuards();
 
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new SoundSpace());
   xb.init(options);
+  watchXrButton();
 });

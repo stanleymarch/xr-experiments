@@ -1,15 +1,18 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
+import { shockRingMaterial } from '../common/fx.js';
 
 // WEATHER//ROOM — погода снаружи становится телом комнаты.
 // Один запрос к Open-Meteo (без ключа), дальше всё локально:
-// ветер гонит частицы, дождь падает на пол, облака гасят свет,
-// температура красит воздух, давление задаёт высоту атмосферы.
+// ветер гонит частицы, дождь падает на реальные горизонтальные поверхности
+// (detected planes, а без них — на пол), облака гасят свет, температура
+// красит воздух, давление задаёт высоту атмосферы.
 // Слайдер −24ч…+24ч — мотай погоду пальцем.
 
 const $ = (id) => document.getElementById(id);
 const COUNT = 1100;
 const BOX = { x: 3, y: 2.8, z: 3 };
+const SPLASH_POOL = 8;
 
 // Синтетика на случай, если сеть недоступна.
 function demoData() {
@@ -71,6 +74,23 @@ class WeatherRoom extends xb.Script {
     }));
     this.points.frustumCulled = false;
     this.add(this.points);
+
+    // Всплески капель: пул колец, лежащих горизонтально на поверхности.
+    this.splashGeo = new THREE.RingGeometry(0.9, 1.0, 32);
+    this.splashes = [];
+    for (let i = 0; i < SPLASH_POOL; i++) {
+      const mesh = new THREE.Mesh(this.splashGeo, shockRingMaterial(0xcfeaff));
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.visible = false;
+      this.add(mesh);
+      this.splashes.push({ mesh, t: 1e9, dur: 0.5 });
+    }
+
+    // Горизонтальные поверхности комнаты (depth/plane detection), пересчёт раз в секунду.
+    this.surfaces = [];
+    this._surfaceAge = 0;
+    this._box = new THREE.Box3();
+    this._size = new THREE.Vector3();
 
     this.data = null;
     this.offset = 0;
@@ -148,11 +168,48 @@ class WeatherRoom extends xb.Script {
     this.vel[ix] = this.vel[ix + 1] = this.vel[ix + 2] = 0;
   }
 
+  // Горизонтальные плоскости комнаты: стол, пол, столешница. Держим только
+  // боксы с малой толщиной по Y — вертикальные стены дождь не задерживают.
+  sampleSurfaces() {
+    this.surfaces.length = 0;
+    let planes = [];
+    try { planes = xb.world.planes.get(); } catch { /* plane detection выключена */ }
+    for (const plane of planes) {
+      this._box.setFromObject(plane);
+      this._box.getSize(this._size);
+      const flat = Math.min(this._size.x, this._size.z);
+      if (this._size.y > Math.max(0.05, flat * 0.35)) continue;
+      if (this._box.max.y <= 0.02 || this._box.max.y > BOX.y) continue;
+      this.surfaces.push({
+        x0: this._box.min.x, x1: this._box.max.x,
+        z0: this._box.min.z, z1: this._box.max.z,
+        y: this._box.max.y,
+      });
+    }
+  }
+
+  // Высота, на которой капля в этой точке встречает поверхность.
+  floorY(x, z) {
+    let y = 0;
+    for (const s of this.surfaces) {
+      if (s.y > y && x >= s.x0 && x <= s.x1 && z >= s.z0 && z <= s.z1) y = s.y;
+    }
+    return y;
+  }
+
+  splash(x, y, z) {
+    const s = this.splashes.find((c) => c.t >= c.dur) || this.splashes[0];
+    s.t = 0;
+    s.mesh.visible = true;
+    s.mesh.position.set(x, y + 0.005, z);
+  }
+
   onSelectEnd() { this.offset = 0; $('time').value = 0; this.applyHour(); }
 
   update() {
     const dt = Math.min(xb.getDeltaTime(), 0.05);
     const s = this.state;
+    if ((this._surfaceAge += dt) > 1) { this._surfaceAge = 0; this.sampleSurfaces(); }
     // ветер: направление «откуда» → вектор «куда», север = −z
     const a = ((s.wdir + 180) % 360) * Math.PI / 180;
     const wx = Math.sin(a) * s.wind * 0.12;
@@ -175,7 +232,12 @@ class WeatherRoom extends xb.Script {
       if (isRain) {
         y -= (2.2 + s.rain * 0.8) * dt;
         x += wx * dt * 0.4;
-        if (y < 0.02) this.respawn(i, p);
+        const landing = this.floorY(x, z);
+        if (y <= landing) {
+          this.splash(x, landing, z);
+          this.respawn(i, p);
+          x = p[ix]; y = p[ix + 1]; z = p[ix + 2];
+        }
       } else {
         x += (wx * speedK + this.vel[ix]) * dt * 3;
         y += (-0.05 + Math.sin(x * 2 + performance.now() * 0.001) * 0.05) * dt * 3;
@@ -195,22 +257,38 @@ class WeatherRoom extends xb.Script {
     this.pgeo.attributes.position.needsUpdate = true;
     this.pgeo.attributes.color.needsUpdate = true;
 
+    for (const sp of this.splashes) {
+      if (sp.t >= sp.dur) { sp.mesh.visible = false; continue; }
+      sp.t += dt;
+      const k = Math.min(1, sp.t / sp.dur);
+      sp.mesh.scale.setScalar(0.03 + k * 0.16);
+      sp.mesh.material.uniforms.uT.value = k;
+    }
+
     this._fp += dt;
     if (this._fp > 0.5) {
       this._fp = 0;
       this.stat(
         `T ${s.temp.toFixed(1)}°C · ветер ${s.wind.toFixed(1)} м/с ${Math.round(s.wdir)}° · ` +
         `облака ${s.cloud}% · осадки ${s.rain.toFixed(1)} мм · ${Math.round(s.press)} гПа` +
-        (raining ? ' · ДОЖДЬ' : '')
+        (raining ? ' · ДОЖДЬ' : '') +
+        ` · поверхностей ${this.surfaces.length}`
       );
     }
   }
 
-  dispose() { this.pgeo.dispose(); this.points.material.dispose(); }
+  dispose() {
+    this.pgeo.dispose(); this.points.material.dispose();
+    for (const sp of this.splashes) sp.mesh.material.dispose();
+    this.splashGeo.dispose();
+  }
 }
 
 const options = new xb.Options();
 options.enableReticles();
+options.enablePlaneDetection();
+options.world.planes.showDebugVisualizations =
+  new URLSearchParams(window.location.search).has('debug');
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('WEATHER//ROOM');
 options.setAppDescription('Погода снаружи — внутри комнаты. Слайдер мотает ±24ч.');

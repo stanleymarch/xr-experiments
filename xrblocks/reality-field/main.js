@@ -105,6 +105,8 @@ class RealityField extends xb.Script {
     this.raycaster = new THREE.Raycaster();
     this.raycaster.far = 9;
     this._ray = new THREE.Ray();
+    this._handA = new THREE.Vector3();
+    this._handB = new THREE.Vector3();
     this._o = new THREE.Vector3();
     this._d = new THREE.Vector3();
     this._h = new THREE.Vector3();
@@ -135,7 +137,6 @@ class RealityField extends xb.Script {
     this._ge = (e) => this.onGesture(e.detail, false);
     g.addEventListener('gesturestart', this._gs);
     g.addEventListener('gestureend', this._ge);
-
     $('btn-debug').onclick = () => this.setDebug(!this.debug);
     $('btn-dream').onclick = () => {
       this.dream = !this.dream;
@@ -159,6 +160,11 @@ class RealityField extends xb.Script {
     try {
       if (xb.depth?.depthMesh) xb.depth.depthMesh.visible = enabled;
     } catch { /* depth может ещё прогреваться */ }
+    try {
+      // план комнаты, найденные XR Blocks: тот же слой отладки, что и mesh
+      const planes = xb.world?.planes ?? xb.core?.world?.planes;
+      planes?.showDebugVisualizations?.(enabled);
+    } catch { /* plane detection недоступна */ }
   }
 
   onGesture(detail, start) {
@@ -175,15 +181,29 @@ class RealityField extends xb.Script {
       }
     }
 
-    const bothSpread =
-      this.handGestures.left.has('spread') && this.handGestures.right.has('spread');
+    // Поле растягивают только две руки: обе в pinch. Открытые ладони не
+    // считаются — открытая кисть сама по себе похожа на «spread» и включала
+    // бы растяжение постоянно.
+    const bothPinch =
+      this.handGestures.left.has('pinch') && this.handGestures.right.has('pinch');
     const anyRepel =
       this.handGestures.left.has('open-palm') || this.handGestures.right.has('open-palm');
     const anyAttract =
       this.handGestures.left.has('fist') || this.handGestures.right.has('fist');
     anyRepel ? this.fx.add('repel') : this.fx.delete('repel');
     anyAttract ? this.fx.add('attract') : this.fx.delete('attract');
-    bothSpread ? this.fx.add('stretch') : this.fx.delete('stretch');
+    bothPinch ? this.fx.add('stretch') : this.fx.delete('stretch');
+  }
+
+  // Сила растяжения поля: чем шире разведены руки в pinch, тем сильнее.
+  stretchStrength() {
+    try {
+      xb.user.getControllerPosition(0, this._handA);
+      xb.user.getControllerPosition(1, this._handB);
+      const d = this._handA.distanceTo(this._handB);
+      if (d > 0.1) return Math.min(2.0, 0.4 + d);
+    } catch { /* одна рука / десктоп */ }
+    return 0.8;
   }
 
   emitter() {
@@ -281,7 +301,7 @@ class RealityField extends xb.Script {
 
     const repel = this.fx.has('repel') ? 1 : 0;
     const attract = this.fx.has('attract') ? 1 : 0;
-    const stretch = this.fx.has('stretch') ? 1 : 0;
+    const stretch = this.fx.has('stretch') ? this.stretchStrength() : 0;
     const c = this._color;
 
     for (let i = 0; i < COUNT; i++) {
@@ -317,7 +337,7 @@ class RealityField extends xb.Script {
           vx += (dx / dist) * f * 2; vy += (dy / dist) * f * 2; vz += (dz / dist) * f * 2;
         }
       }
-      if (stretch) { vx += (x - ROOM_C.x) * 0.8 * dt; vz += (z - ROOM_C.z) * 0.8 * dt; }
+      if (stretch) { vx += (x - ROOM_C.x) * stretch * dt; vz += (z - ROOM_C.z) * stretch * dt; }
 
       x += vx * dt * 8; y += vy * dt * 8; z += vz * dt * 8;
 
@@ -395,13 +415,15 @@ options.enableHands();
 options.enableGestures();
 options.enableDepth();
 options.enablePlaneDetection();
+options.world.planes.showDebugVisualizations =
+  new URLSearchParams(window.location.search).has('debug');
 options.enableReticles();
 options.controllers.visualizeRays = true;
 options.hands.visualization = true;
 options.hands.visualizeJoints = true;
 options.hands.visualizeMeshes = false;
-options.gestures.setGestureEnabled('spread', true);
-options.simulator.defaultMode = xb.SimulatorMode.POSE;
+// Режим симулятора остаётся USER (клик мышью = select, WASD = ходьба);
+// позы рук доступны переключением режимов по Left Shift.
 options.simulator.modeToggle.enabled = true;
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('REALITY//FIELD');

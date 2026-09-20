@@ -16,12 +16,15 @@ class EchoRoom extends xb.Script {
   init() {
     this.add(new THREE.HemisphereLight(0xdfe8ff, 0x223344, 1.4));
 
-    // живая лента траектории луча
-    this.trailPos = new Float32Array(TRAIL_N * 3);
+    // живая лента траектории луча. Буфер продублирован: точка пишется в двух
+    // местах, поэтому живое окно [now−8с … now] всегда лежит одним куском и
+    // Line не рисует шов через весь буфер при завороте кольца.
+    this.trailPos = new Float32Array(TRAIL_N * 2 * 3);
     this.trailAge = new Float32Array(TRAIL_N).fill(1e9);
     this.trailHead = 0;
     this.trailGeo = new THREE.BufferGeometry();
     this.trailGeo.setAttribute('position', new THREE.BufferAttribute(this.trailPos, 3));
+    this.trailGeo.setDrawRange(0, 0);
     this.trail = new THREE.Line(this.trailGeo, new THREE.LineBasicMaterial({
       color: 0x54d6ff, transparent: true, opacity: 0.6,
     }));
@@ -36,7 +39,7 @@ class EchoRoom extends xb.Script {
     this.log = [];
 
     // слои-призраки: линии-копии истории
-    this.layers = [];
+    this.timeLayers = [];
     for (let l = 1; l <= LAYER_COUNT; l++) {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_N * 3), 3));
@@ -47,12 +50,14 @@ class EchoRoom extends xb.Script {
       line.visible = false;
       line.frustumCulled = false;
       this.add(line);
-      this.layers.push({ line, back: l, anchor: null });
+      this.timeLayers.push({ line, back: l, anchor: null });
     }
 
     this._o = new THREE.Vector3();
     this._d = new THREE.Vector3();
-    this._pts = [];
+    this._tip = new THREE.Vector3();
+    this._sel = new THREE.Vector3();
+    this._ray = new THREE.Ray();
     $('btn-clear').onclick = () => this.wipe();
     this.stat('двигай лучом / кликай — следы остаются 60 секунд');
   }
@@ -62,10 +67,11 @@ class EchoRoom extends xb.Script {
   wipe() {
     this.log = [];
     this.trailAge.fill(1e9);
+    this.trailGeo.setDrawRange(0, 0);
     this.trailGeo.attributes.position.needsUpdate = true;
     for (const p of this.pulses) { this.remove(p.mesh); p.mesh.material.dispose(); }
     this.pulses = [];
-    for (const l of this.layers) { l.line.visible = false; l.anchor = null; }
+    for (const l of this.timeLayers) { l.line.visible = false; l.anchor = null; }
     this.selected = null;
     this.stat('история стёрта');
   }
@@ -73,9 +79,9 @@ class EchoRoom extends xb.Script {
   aim() {
     try {
       xb.user.getControllerPosition(0, this._o);
-      const r = xb.user.getRay(0, new THREE.Ray());
+      const r = xb.user.getRay(0, this._ray);
       if (r && r.direction.lengthSq() > 0.5) { this._d.copy(r.direction); return true; }
-    } catch { /* noop */ }
+    } catch { /* controller may not exist on this platform */ }
     xb.core.camera.getWorldPosition(this._o);
     xb.core.camera.getWorldDirection(this._d);
     return true;
@@ -83,7 +89,7 @@ class EchoRoom extends xb.Script {
 
   onSelectEnd() {
     this.aim();
-    const pos = this._o.clone().addScaledVector(this._d.clone().normalize(), 1.2);
+    const pos = this._sel.copy(this._o).addScaledVector(this._d.normalize(), 1.2);
     // свой импульс или выбор старого следа?
     const pick = this.pickPulse(pos);
     if (pick) { this.inspect(pick); return; }
@@ -116,7 +122,7 @@ class EchoRoom extends xb.Script {
   inspect(pulse) {
     // развернуть слои −1…−4с вокруг точки импульса
     const t0 = pulse.at;
-    for (const l of this.layers) {
+    for (const l of this.timeLayers) {
       l.anchor = pulse.pos.clone();
       l.t = t0 - l.back;
       l.line.visible = true;
@@ -146,19 +152,26 @@ class EchoRoom extends xb.Script {
     const now = performance.now() / 1000;
     this.aim();
 
-    // пишем точку траектории каждый кадр
-    const tip = this._o.clone().addScaledVector(this._d.clone().normalize(), 1.0);
-    const i = this.trailHead % TRAIL_N;
-    this.trailPos.set([tip.x, tip.y, tip.z], i * 3);
-    this.trailAge[i] = now;
+    // пишем точку траектории каждый кадр — сразу в обе половины буфера
+    this._tip.copy(this._o).addScaledVector(this._d.normalize(), 1.0);
+    const w = this.trailHead % TRAIL_N;
+    const ix = w * 3;
+    const mirror = ix + TRAIL_N * 3;
+    this.trailPos[ix] = this.trailPos[mirror] = this._tip.x;
+    this.trailPos[ix + 1] = this.trailPos[mirror + 1] = this._tip.y;
+    this.trailPos[ix + 2] = this.trailPos[mirror + 2] = this._tip.z;
+    this.trailAge[w] = now;
     this.trailHead++;
-    this.log.push({ t: now, kind: 'move', pos: tip.clone() });
+    this.log.push({ t: now, kind: 'move', pos: this._tip.clone() });
 
-    // живая лента: прячем точки старше 8 секунд
-    const p = this.trailGeo.attributes.position.array;
-    for (let k = 0; k < TRAIL_N; k++) {
-      if (now - this.trailAge[k] > 8) { p[k * 3 + 1] = -100; }
+    // живое окно: считаем назад от головы, пока точки свежее 8 секунд.
+    let live = 0;
+    const span = Math.min(this.trailHead, TRAIL_N);
+    for (let k = 0; k < span; k++) {
+      if (now - this.trailAge[(w - k + TRAIL_N) % TRAIL_N] > 8) break;
+      live++;
     }
+    this.trailGeo.setDrawRange(w + TRAIL_N - live + 1, live > 1 ? live : 0);
     this.trailGeo.attributes.position.needsUpdate = true;
 
     // импульсы: рост и затухание
@@ -171,20 +184,21 @@ class EchoRoom extends xb.Script {
 
     // слои: история в окне [t−4.5, t−0.5] вокруг точки
     let n = 0;
-    for (const l of this.layers) {
+    for (const l of this.timeLayers) {
       if (!l.line.visible) continue;
       const arr = l.line.geometry.attributes.position.array;
-      arr.fill(-100);
-      let w = 0;
+      let count = 0;
       for (const e of this.log) {
-        if (Math.abs(e.t - l.t) < 0.6 && e.pos.distanceTo(l.anchor) < 1.2 && w < TRAIL_N) {
-          arr.set([e.pos.x, e.pos.y, e.pos.z], w * 3);
-          w++;
-        }
+        if (count >= TRAIL_N) break;
+        if (Math.abs(e.t - l.t) >= 0.6) continue;
+        if (e.pos.distanceTo(l.anchor) >= 1.2) continue;
+        const at = count * 3;
+        arr[at] = e.pos.x; arr[at + 1] = e.pos.y; arr[at + 2] = e.pos.z;
+        count++;
       }
+      l.line.geometry.setDrawRange(0, count);
       l.line.geometry.attributes.position.needsUpdate = true;
-      l.line.geometry.setDrawRange(0, Math.max(0, w));
-      n += w;
+      n += count;
     }
 
     if ((this._st = (this._st || 0) + dt) > 0.5) {
@@ -199,7 +213,7 @@ class EchoRoom extends xb.Script {
   dispose() {
     this.trailGeo.dispose(); this.trail.material.dispose();
     this.ringGeo.dispose();
-    for (const l of this.layers) { l.line.geometry.dispose(); l.line.material.dispose(); }
+    for (const l of this.timeLayers) { l.line.geometry.dispose(); l.line.material.dispose(); }
   }
 }
 

@@ -10,8 +10,8 @@ import * as xb from 'xrblocks';
 const $ = (id) => document.getElementById(id);
 const FFT = 512;
 const RIBBONS = 3;      // слоёв истории помимо живого
-const STEPS = 220;      // длина ленты во времени
-const BANDS = 96;       // частотных бинов на ленту
+const STEPS = 96;       // длина ленты во времени
+const BANDS = 40;       // частотных бинов на ленту
 
 class SoundSpace extends xb.Script {
   init() {
@@ -25,20 +25,20 @@ class SoundSpace extends xb.Script {
     this.add(this.group);
 
     // живой анализатор + замороженные ленты
-    this.layers = [];
+    this.ribbons = [];
     for (let l = 0; l <= RIBBONS; l++) {
       const geo = new THREE.PlaneGeometry(1.5, 1.0, STEPS, BANDS);
       const live = l === 0;
       const mat = new THREE.MeshBasicMaterial({
         color: live ? 0x54d6ff : [0xffb14a, 0x7dff9a, 0xff6ad5][l - 1],
-        transparent: true, opacity: live ? 0.85 : 0.4,
+        transparent: true, opacity: live ? 0.55 : 0.34,
         wireframe: true, side: THREE.DoubleSide, depthWrite: false,
         blending: THREE.AdditiveBlending,
       });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.z = -l * 0.28;
       this.group.add(mesh);
-      this.layers.push({ mesh, hist: [], maxAge: Infinity });
+      this.ribbons.push({ mesh, hist: [], maxAge: Infinity });
     }
 
     this.audio = null;         // {ctx, analyser, freq}
@@ -108,19 +108,26 @@ class SoundSpace extends xb.Script {
   }
 
   freeze() {
-    const live = this.layers[0];
+    const live = this.ribbons[0];
     if (!live.hist.length) return;
     const snap = live.hist.map((r) => r.slice());
-    const slot = this.layers.slice(1).reduce((a, b) =>
+    const slot = this.ribbons.slice(1).reduce((a, b) =>
       (a.hist.length || 0) <= (b.hist.length || 0) ? a : b);
     slot.hist = snap;
-    this.stat(`заморожено · ${snap.length} кадров · слой ${this.layers.indexOf(slot)}`);
+    this.sculpt(slot);
+    this.stat(`заморожено · ${snap.length} кадров · слой ${this.ribbons.indexOf(slot)}`);
     this.frozen.push({ at: Date.now() });
     if (this.frozen.length > 12) this.frozen.shift();
   }
 
   clear() {
-    for (const l of this.layers.slice(1)) l.hist = [];
+    // стираем и расплющиваем замороженные ленты: они больше не обновляются
+    for (const l of this.ribbons.slice(1)) {
+      l.hist = [];
+      const posA = l.mesh.geometry.attributes.position;
+      posA.array.fill(0);
+      posA.needsUpdate = true;
+    }
     this.frozen = [];
     this.stat(this.perm ? 'mic live · слои очищены' : 'демо · слои очищены');
   }
@@ -142,11 +149,11 @@ class SoundSpace extends xb.Script {
   update() {
     const dt = Math.min(xb.getDeltaTime(), 0.05);
     const { out, mode, level } = this.spectrum();
-    const live = this.layers[0];
+    const live = this.ribbons[0];
     live.hist.push(out.slice());
     if (live.hist.length > STEPS) live.hist.shift();
     this.sculpt(live);
-    for (const l of this.layers.slice(1)) if (l.hist.length) this.sculpt(l);
+    // замороженные ленты статичны: они скульптурируются один раз при freeze
 
     // хлопок = ударная волна кольцом
     if (mode === 2 && level > 0.6 && (!this._lastHit || performance.now() - this._lastHit > 900)) {
@@ -162,7 +169,7 @@ class SoundSpace extends xb.Script {
     }
     for (const im of [...this.impacts]) {
       im.t += dt;
-      im.mesh.scale.setScalar(0.1 + im.t * 2.2);
+      im.mesh.scale.setScalar(0.12 + im.t * 1.15);
       im.mesh.material.opacity = Math.max(0, 0.9 - im.t);
       if (im.t > 1) { this.remove(im.mesh); im.mesh.material.dispose(); this.impacts.splice(this.impacts.indexOf(im), 1); }
     }
@@ -177,13 +184,15 @@ class SoundSpace extends xb.Script {
   }
 
   dispose() {
-    for (const l of this.layers) { l.mesh.geometry.dispose(); l.mesh.material.dispose(); }
+    for (const l of this.ribbons) { l.mesh.geometry.dispose(); l.mesh.material.dispose(); }
     this.audio?.ctx.close().catch(() => {});
   }
 }
 
 const options = new xb.Options();
-options.permissions.microphone = true;
+// Микрофон не декларируется заранее: браузеры выдают доступ только из жеста
+// пользователя, а ранняя декларация задерживает старт опыта. Доступ
+// запрашивается по кнопке MIC — тогда же создаётся AudioContext.
 options.enableReticles();
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('SOUND//SPACE');

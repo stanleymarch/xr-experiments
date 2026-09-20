@@ -10,46 +10,38 @@ const $ = (id) => document.getElementById(id);
 
 // Публичные Overpass-зеркала. Российский узел VK Maps / Mail.ru идёт
 // первым: для основной российской аудитории у него короче сетевой маршрут.
-// Остальные узлы — автоматический резерв; запросы короткие и кэшируются.
+// Остальные — автоматический резерв. Мёртвые и локальные экстракты
+// (nchc.org.tw, osm.ch) в список не входят: первый не отвечает, второй знает
+// только Швейцарию.
 const OVERPASS = [
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.nchc.org.tw/api/interpreter',
 ];
+const DEMO_CENTER = { lat: 59.9398, lon: 30.3146 };
+const poiQuery = (lat, lon, radius, limit) => `[out:json][timeout:20];(`
+  + `node(around:${radius},${lat},${lon})[name][tourism];`
+  + `node(around:${radius},${lat},${lon})[name][amenity~"^(cafe|restaurant|bar|fast_food|library|university|school)$"];`
+  + `node(around:${radius},${lat},${lon})[name][historic];`
+  + `);out body ${limit};`;
 const QUERIES = [
-  // Прямые кешируемые выборки: короткие радиусы первыми, лимиты жёсткие,
-  // регексы только там где без них никак (1км+). detail- fallback ниже.
-  (lat, lon) => `[out:json][timeout:15];node(around:200,${lat},${lon})[tourism];out body 60;`,
-  (lat, lon) => `[out:json][timeout:20];node(around:1000,${lat},${lon})[tourism=museum];out body 120;`,
-  (lat, lon) => `[out:json][timeout:25];node(around:5000,${lat},${lon})[tourism=museum];out body 160;`,
+  (lat, lon) => poiQuery(lat, lon, 200, 80),
+  (lat, lon) => poiQuery(lat, lon, 1000, 140),
+  (lat, lon) => poiQuery(lat, lon, 5000, 200),
 ];
-// Запасной веер точечных запросов: когда сборные выборки упираются в лимит
-// сервера, бьём их на мелкие around-запросы с дисперсией по сетке 3×3.
-function fanQueries(lat, lon, r, tag, perCell, cells = [-0.004, 0, 0.004]) {
-  const out = [];
-  for (const dlat of cells) for (const dlon of cells) {
-    out.push(`[out:json][timeout:15];node(around:${Math.round(r / 3)},${(lat + dlat).toFixed(5)},${(lon + dlon).toFixed(5)})[${tag}];out body ${perCell};`);
-  }
-  return out;
-}
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const RADII = [200, 1000, 5000];
 
-async function postOverpass(base, query, timeoutMs, signal) {
+// GET вместо POST: часть зеркал отдаёт 406 на POST от автоматических
+// клиентов, GET с тем же QL проходит. Запросы короткие и кэшируются.
+async function fetchOverpass(base, query, timeoutMs, signal) {
+  const url = new URL(base);
+  url.searchParams.set('data', query);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(new Error('timeout')), timeoutMs);
   const onOuter = () => ctrl.abort(signal?.reason);
   signal?.addEventListener('abort', onOuter, { once: true });
   try {
-    const r = await fetch(base, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      },
-      body: 'data=' + encodeURIComponent(query),
-      signal: ctrl.signal,
-    });
-    if (r.status === 429 || r.status === 504) throw new Error(`overpass ${r.status}`);
+    const r = await fetch(url, { signal: ctrl.signal });
     if (!r.ok) throw new Error(`overpass ${r.status}`);
     return { json: await r.json(), via: base };
   } finally {
@@ -58,53 +50,30 @@ async function postOverpass(base, query, timeoutMs, signal) {
   }
 }
 
-// Гонка зеркал: выигрывает первый успешный ответ, остальные отменяются.
-// Зеркало в кулдауне (после 429/504/timeout) пропускается.
+// Гонка зеркал: берём первый успешный ответ и сразу отменяем остальные.
+// Зеркало в кулдауне (после 4xx/5xx/таймаута) пропускается.
 const cooldownUntil = new Map();
 async function overpassOne(query, { timeoutMs = 25000 } = {}) {
   const now = Date.now();
   const bases = OVERPASS.filter((b) => (cooldownUntil.get(b) || 0) <= now);
   if (!bases.length) throw new Error('все зеркала в кулдауне');
   const ctrl = new AbortController();
-  const settled = await Promise.allSettled(bases.map((b) => postOverpass(b, query, timeoutMs, ctrl.signal)));
-  ctrl.abort();
-  const win = settled.find((s) => s.status === 'fulfilled');
-  if (win) return win.value;
-  for (const b of bases) cooldownUntil.set(b, Date.now() + 60000);
-  throw settled.find((s) => s.status === 'rejected')?.reason || new Error('overpass недоступен');
+  try {
+    return await Promise.any(
+      bases.map((b) => fetchOverpass(b, query, timeoutMs, ctrl.signal))
+    );
+  } catch (error) {
+    for (const b of bases) cooldownUntil.set(b, Date.now() + 60000);
+    throw error.errors?.[0] || error;
+  } finally {
+    ctrl.abort();
+  }
 }
 
-// Каскад: сборный запрос → веер мелких. Между попытками — паузы, чтобы
-// не упереться в per-slot лимит сервера.
-async function overpass(query, opts = {}) {
-  const { backoff = [2000, 5000, 12000], fan = null } = opts;
-  let last;
-  try {
-    return await overpassOne(query, opts);
-  } catch (e) { last = e; }
-  if (fan) {
-    const seen = new Set();
-    const merged = [];
-    let via = '';
-    for (const q of fan) {
-      await sleep(1500);
-      try {
-        const { json, via: v } = await overpassOne(q, opts);
-        via = via || v;
-        for (const el of json.elements || []) {
-          if (!seen.has(el.id)) { seen.add(el.id); merged.push(el); }
-        }
-      } catch (e) { last = e; }
-    }
-    if (merged.length) return { json: { elements: merged }, via };
-  }
-  for (const wait of backoff) {
-    await sleep(wait);
-    try {
-      return await overpassOne(query, opts);
-    } catch (e) { last = e; }
-  }
-  throw last || new Error('overpass недоступен');
+// Одна короткая попытка через гонку зеркал. Если публичная инфраструктура
+// не отвечает — выбираем художественный офлайн-квартал, а не штурмуем API.
+async function overpass(query) {
+  return overpassOne(query);
 }
 
 // Демо-окружение вокруг Эрмитажа — если сеть мертва.
@@ -182,8 +151,23 @@ class CityOrbit extends xb.Script {
     this.cache = new Map();    // ключ lat,lon,r → данные
     this.selected = null;
     this._o = new THREE.Vector3();
+    this._ray = new THREE.Ray();
+    this._handA = new THREE.Vector3();
+    this._handB = new THREE.Vector3();
     this._prevPinchDist = 0;
+    this.pinchHands = new Set();
 
+    this._gestureStart = (e) => {
+      if (e.detail.name === 'pinch') this.pinchHands.add(e.detail.hand);
+    };
+    this._gestureEnd = (e) => {
+      if (e.detail.name === 'pinch') this.pinchHands.delete(e.detail.hand);
+    };
+    xb.core.gestureRecognition.addEventListener('gesturestart', this._gestureStart);
+    xb.core.gestureRecognition.addEventListener('gestureend', this._gestureEnd);
+
+    $('btn-radius').onclick = () => this.setRadius((this.radiusIdx + 1) % RADII.length);
+    this.setRadius(this.radiusIdx, false);
     $('btn-mode').onclick = () => {
       this.mode = this.mode === 'table' ? 'orbit' : 'table';
       this.layout();
@@ -206,30 +190,53 @@ class CityOrbit extends xb.Script {
 
   stat(s) { $('stat').textContent = s; }
 
+  setRadius(index, reload = true) {
+    this.radiusIdx = index;
+    $('btn-radius').textContent = `радиус ${RADII[index] >= 1000 ? `${RADII[index] / 1000} км` : `${RADII[index]} м`}`;
+    if (reload && this.center) this.load(this.lat, this.lon);
+  }
+
   async load(lat, lon) {
     this.lat = lat; this.lon = lon;
-    this.stat(`overpass · ${lat.toFixed(4)}, ${lon.toFixed(4)} …`);
     const r = RADII[this.radiusIdx];
     const key = `${lat.toFixed(3)},${lon.toFixed(3)},${r}`;
-    try {
-      if (!this.cache.has(key)) {
-        const { json, via } = await overpass(QUERIES[this.radiusIdx](lat, lon), {
-          fan: fanQueries(lat, lon, r, 'tourism=museum', 20),
-        });
-        this.cache.set(key, { elements: json.elements, via });
-      }
+    if (this.cache.has(key)) {
       const got = this.cache.get(key);
       this.center = { lat, lon };
       this._via = got.via;
       this._demo = false;
       this.build(got.elements);
       this.stat(`live · ${got.elements.length} POI в радиусе ${r} м · ${new URL(got.via).host}`);
-    } catch (e) {
-      this.center = { lat: 59.9398, lon: 30.3146 };
-      this._via = 'offline-demo';
+      return;
+    }
+    // Публичные зеркала отвечают за секунды, а иногда за десятки секунд:
+    // сначала показываем художественный квартал, чтобы опыт начался сразу,
+    // и заменяем его живыми данными, как только они придут.
+    if (!this.items.length) {
+      this.center = DEMO_CENTER;
+      this._via = 'demo-quarter';
       this._demo = true;
       this.build(demoCity().elements);
-      this.stat(`офлайн-демо (${e.message}) · Эрмитаж`);
+    }
+    this.stat(`overpass · ${lat.toFixed(4)}, ${lon.toFixed(4)} · ждём live …`);
+    try {
+      const { json, via } = await overpass(QUERIES[this.radiusIdx](lat, lon));
+      this.cache.set(key, { elements: json.elements, via });
+      this.center = { lat, lon };
+      this._via = via;
+      this._demo = false;
+      this.build(json.elements);
+      this.stat(`live · ${json.elements.length} POI в радиусе ${r} м · ${new URL(via).host}`);
+    } catch (e) {
+      if (this.items.length) {
+        this.stat(`live недоступен (${e.message}) · оставлен показанный квартал`);
+      } else {
+        this.center = DEMO_CENTER;
+        this._via = 'offline-demo';
+        this._demo = true;
+        this.build(demoCity().elements);
+        this.stat(`офлайн-демо (${e.message}) · Эрмитаж`);
+      }
     }
   }
 
@@ -243,22 +250,27 @@ class CityOrbit extends xb.Script {
     for (const c of [...this.poiGroup.children]) {
       this.poiGroup.remove(c);
       c.geometry?.dispose?.();
+      c.material?.dispose?.();
     }
     this.items = [];
     const r = RADII[this.radiusIdx];
     const span = this.mode === 'table' ? 1.2 : 7; // метров сцены
     const k = span / (r * 2);
-    const geoS = new THREE.SphereGeometry(0.014, 12, 8);
     for (const el of elements.slice(0, 200)) {
-      if (el.lat == null || el.lon == null) continue;
-      const { x, z } = this.project(el.lat, el.lon);
+      const lat = el.lat ?? el.center?.lat;
+      const lon = el.lon ?? el.center?.lon;
+      if (lat == null || lon == null) continue;
+      const { x, z } = this.project(lat, lon);
       const color = KIND_COLORS.find(([re]) => re.test(JSON.stringify(el.tags || {})))[1];
-      const m = new THREE.Mesh(geoS, new THREE.MeshBasicMaterial({ color }));
+      const m = new THREE.Mesh(
+        new THREE.SphereGeometry(0.014, 12, 8),
+        new THREE.MeshBasicMaterial({ color })
+      );
       m.position.set(x * k, 0.02, z * k);
       m.userData.item = {
         name: el.tags?.name || 'без названия',
         dist: Math.round(Math.hypot(x, z)),
-        kind: el.tags?.tourism || el.tags?.amenity || el.tags?.shop || 'место',
+        kind: el.tags?.tourism || el.tags?.amenity || el.tags?.historic || 'место',
         id: el.id,
       };
       m.xb = { pointerEvents: 'auto' };
@@ -290,7 +302,7 @@ class CityOrbit extends xb.Script {
     // ближайший к лучу контроллера / камеры POI
     try {
       xb.user.getControllerPosition(0, this._o);
-      const ray = xb.user.getRay(0, new THREE.Ray());
+      const ray = xb.user.getRay(0, this._ray);
       if (ray && ray.direction.lengthSq() > 0.5) {
         this.raycaster = this.raycaster || new THREE.Raycaster();
         this.raycaster.set(this._o, ray.direction);
@@ -298,7 +310,7 @@ class CityOrbit extends xb.Script {
         const hits = this.raycaster.intersectObjects(this.items, false);
         return hits[0]?.object || null;
       }
-    } catch { /* noop */ }
+    } catch { /* controller may not exist on this platform */ }
     return null;
   }
 
@@ -317,23 +329,24 @@ class CityOrbit extends xb.Script {
   update() {
     const dt = Math.min(xb.getDeltaTime(), 0.05);
     this.ring.material.opacity = 0.6 + 0.3 * Math.sin(performance.now() * 0.003);
-    // масштаб разведением контроллеров: дистанция между руками
-    try {
-      const a = xb.user.getControllerPosition(0, new THREE.Vector3());
-      const b = xb.user.getControllerPosition(1, new THREE.Vector3());
-      const d = a.distanceTo(b);
-      if (this._prevPinchDist > 0.05 && d > 0.05) {
-        const delta = d - this._prevPinchDist;
-        if (Math.abs(delta) > 0.05) {
-          this.radiusIdx = Math.min(2, Math.max(0, this.radiusIdx + (delta > 0 ? 1 : -1)));
+    // Масштабирование — только когда обе руки в pinch: обычное движение
+    // контроллеров не должно непредсказуемо перезагружать город.
+    if (this.pinchHands.has('left') && this.pinchHands.has('right')) {
+      try {
+        xb.user.getControllerPosition(0, this._handA);
+        xb.user.getControllerPosition(1, this._handB);
+        const d = this._handA.distanceTo(this._handB);
+        if (this._prevPinchDist > 0.05 && Math.abs(d - this._prevPinchDist) > 0.12) {
+          this.setRadius(Math.min(2, Math.max(0, this.radiusIdx + (d > this._prevPinchDist ? 1 : -1))));
           this._prevPinchDist = d;
-          this.load(this.lat, this.lon);
           this.stat(`масштаб → ${RADII[this.radiusIdx]} м`);
           return;
         }
-      }
-      this._prevPinchDist = d;
-    } catch { /* одна рука / десктоп */ }
+        this._prevPinchDist = d;
+      } catch { /* одна рука / десктоп */ }
+    } else {
+      this._prevPinchDist = 0;
+    }
     // пульс выбранного
     if (this.selected) {
       const s = 2.2 + Math.sin(performance.now() * 0.008) * 0.3;
@@ -342,11 +355,20 @@ class CityOrbit extends xb.Script {
     void dt;
   }
 
-  dispose() { this.card.dispose?.(); }
+  dispose() {
+    this.card.dispose?.();
+    xb.core.gestureRecognition.removeEventListener('gesturestart', this._gestureStart);
+    xb.core.gestureRecognition.removeEventListener('gestureend', this._gestureEnd);
+  }
 }
 
 const options = new xb.Options();
 options.enableHands();
+options.enableGestures();
+options.gestures.setGestureEnabled('pinch', true);
+// Режим симулятора остаётся USER: клик мышью = select, то есть выбор POI и
+// масштаб города работают и на десктопе; позы рук — по Left Shift.
+options.simulator.modeToggle.enabled = true;
 options.enableReticles();
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('CITY//ORBIT');

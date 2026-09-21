@@ -88,7 +88,8 @@ class RealityField extends xb.Script {
 
     // --- пул шейдерных колец удара ---
     this.rings = [];
-    const rgeo = new THREE.RingGeometry(0.42, 0.5, 64);
+    this.ringGeo = new THREE.RingGeometry(0.42, 0.5, 64);
+    const rgeo = this.ringGeo;
     for (let i = 0; i < 10; i++) {
       const mat = shockRingMaterial(0x9fe8ff);
       const m = new THREE.Mesh(rgeo, mat);
@@ -97,8 +98,10 @@ class RealityField extends xb.Script {
       this.rings.push({ mesh: m, t: 1e9, dur: 1.1 });
     }
 
-    this.waves = []; // {x,y,z, r, speed}
+    this.waves = []; // {x,y,z, r, speed, dx?,dy?,dz?} — с направлением = бегущая отражённая волна
     this.fx = new Set(); // 'repel' | 'attract' | 'stretch'
+    this._handsSeen = false; // жесты реально приходили — иначе UI не заявляет HANDS
+    this._mode = 'SYNTHETIC'; // источник геометрии последнего импульса
     this.handGestures = { left: new Set(), right: new Set() };
     this.charge = 0;
     this.debug = false;
@@ -178,7 +181,7 @@ class RealityField extends xb.Script {
   }
 
   onGesture(detail, start) {
-    const name = detail.name;
+    this._handsSeen = true; // жестовые события реально приходят — UI может заявить HANDS
     const hand = detail.hand === 'left' ? 'left' : 'right';
     const active = this.handGestures[hand];
     start ? active.add(name) : active.delete(name);
@@ -229,13 +232,35 @@ class RealityField extends xb.Script {
 
   onSelectEnd() { this.fire(1); }
 
+  // Цели импульса в порядке честности: живой depth-mesh Quest, затем
+  // реальные плоскости WebXR (телефон), и только потом синтетическая комната.
+  impulseTargets() {
+    const targets = [];
+    let mode = 'SYNTHETIC';
+    try {
+      if (xb.depth && xb.depth.depthMesh) {
+        targets.push(xb.depth.depthMesh);
+        mode = 'DEPTH';
+      }
+    } catch { /* depth ещё прогревается */ }
+    if (!targets.length) {
+      try {
+        const planes = xb.world?.planes?.get?.() ?? [];
+        for (const plane of planes) {
+          if (plane && plane.isObject3D) targets.push(plane);
+        }
+        if (targets.length) mode = 'PLANES';
+      } catch { /* plane detection недоступна */ }
+    }
+    if (!targets.length) targets.push(this.roomMesh);
+    return { targets, mode };
+  }
+
   fire(power = 1) {
     this.emitter();
     const o = this._o.clone();
     const d = this._d.clone().normalize();
-    // цели: живой depth-mesh Quest, иначе fallback-комната
-    const targets = [this.floor, this.roomMesh];
-    try { if (xb.depth && xb.depth.depthMesh) targets.push(xb.depth.depthMesh); } catch { /* noop */ }
+    const { targets, mode } = this.impulseTargets();
     this.raycaster.set(o, d);
     const hits = this.raycaster.intersectObjects(targets, false);
     const kickOrigin = o.clone().addScaledVector(d, 0.4);
@@ -245,12 +270,26 @@ class RealityField extends xb.Script {
       if (h.face && h.face.normal) this._n.copy(h.face.normal).transformDirection(h.object.matrixWorld);
       else this._n.copy(d).negate();
       this.spawnRing(this._h, this._n);
+      // Первичная волна расходится по поверхности из точки удара.
       this.waves.push({ x: this._h.x, y: this._h.y, z: this._h.z, r: 0.05, speed: 1.6 });
-      if (this.waves.length > 6) this.waves.shift();
+      // Отражённый импульс: r = d − 2(d·n)n. Поверхность реально «отвечает»:
+      // вторая волна бежит от точки вдоль r, частицы выбиваются туда же.
+      const dn = d.dot(this._n);
+      const refl = d.clone().addScaledVector(this._n, -2 * dn).normalize();
+      if (refl.lengthSq() > 0.1 && Math.abs(dn) < 0.985) {
+        this.waves.push({
+          x: this._h.x, y: this._h.y, z: this._h.z, r: 0.04, speed: 2.1,
+          dx: refl.x, dy: refl.y, dz: refl.z,
+        });
+        this.kick(this._h.clone(), refl, power * 0.55, this._h.clone().addScaledVector(refl, 2.6));
+      }
+      if (this.waves.length > 6) this.waves.splice(0, this.waves.length - 6);
       this.kick(kickOrigin, d, power, this._h);
     } else {
+      // Мимо всякой геометрии: честно пинаем по лучу без «поверхности».
       this.kick(kickOrigin, d, power, null);
     }
+    this._mode = mode;
   }
 
   kick(origin, dir, power, stopAt) {
@@ -306,7 +345,16 @@ class RealityField extends xb.Script {
     const colA = this.pgeo.attributes.color.array;
     const dreamK = this.dream ? 0.4 : 1.0;
 
-    for (const w of this.waves) w.r += w.speed * dt;
+    for (const w of this.waves) {
+      w.r += w.speed * dt;
+      // Направленная (отражённая) волна не стоит на месте: её центр бежит
+      // вдоль отражённого луча — поверхность «выстреливает» импульс обратно.
+      if (w.dx !== undefined) {
+        w.x += w.dx * w.speed * dt;
+        w.y += w.dy * w.speed * dt;
+        w.z += w.dz * w.speed * dt;
+      }
+    }
     this.waves = this.waves.filter((w) => w.r < 4);
 
     const repel = this.fx.has('repel') ? 1 : 0;
@@ -401,10 +449,16 @@ class RealityField extends xb.Script {
     if (this._fpsT >= 0.5) {
       this._fps = Math.round(this._fpsN / this._fpsT);
       this._fpsN = 0; this._fpsT = 0;
-      let depthState = 'fallback-room';
-      try { depthState = xb.depth && xb.depth.depthMesh ? 'depth-mesh LIVE' : 'fallback-room'; } catch { /* noop */ }
+      let src = this._mode || 'SYNTHETIC';
+      if (src === 'SYNTHETIC') {
+        try {
+          const n = (xb.world?.planes?.get?.() ?? []).length;
+          if (n) src = `PLANES ${n}`;
+        } catch { /* plane detection недоступна */ }
+      }
+      const ctl = this._handsSeen ? 'HANDS' : 'TAP';
       const fx = this.charge > 0 ? `CHARGE ${this.charge.toFixed(1)}` : [...this.fx].join('+') || 'pulse';
-      this.stat(`FPS ${this._fps} · ${depthState} · ${fx} · волн ${this.waves.length}`);
+      this.stat(`FPS ${this._fps} · ${src} · ${ctl} · ${fx} · волн ${this.waves.length}`);
     }
   }
 
@@ -417,6 +471,10 @@ class RealityField extends xb.Script {
     this.debugRayGeo.dispose(); this.debugRay.material.dispose();
     this.normalArrow.line.geometry.dispose(); this.normalArrow.line.material.dispose();
     this.normalArrow.cone.geometry.dispose(); this.normalArrow.cone.material.dispose();
+    this.ringGeo?.dispose();
+    for (const r of this.rings) r.mesh.material.dispose();
+    this.floor.geometry.dispose(); this.floor.material.dispose();
+    this.roomMesh.geometry.dispose(); this.roomMesh.material.dispose();
 }
 }
 

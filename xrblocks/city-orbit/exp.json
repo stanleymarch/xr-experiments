@@ -1,6 +1,6 @@
 {
   "title": "CITY//ORBIT",
-  "description": "Named OSM points around you as an orbital diagram on the table or at 360°. Tap a dot to raise a card with name and distance; spread two pinches to scale the radius 200 m — 1 km — 5 km. No 3D assets, coordinates and types only.",
-  "description_ru": "Именованные POI из OpenStreetMap вокруг тебя — орбитальная схема на столе или на 360°. Тап по точке поднимает карточку с названием и дистанцией; разведение рук в pinch меняет радиус 200 м — 1 км — 5 км. Без 3D-моделей: только координаты и типы.",
-  "tags": ["overpass", "geolocation", "hologram"]
+  "description": "Your OpenStreetMap neighbourhood as a hologram: major and minor streets, building footprints with real storey heights, water and green surfaces, and six curated landmark categories (heritage, monument, religious, museum, sight, nature). Cafes, shops, hotels and city infrastructure are never queried. Tap a landmark to raise a card with its category, name, distance and OSM id; spread two pinches to scale the radius 200 m — 1 km — 5 km.",
+  "description_ru": "Твой район из OpenStreetMap как голограмма: главные и второстепенные улицы, контуры домов с настоящей этажностью, вода и зелень, шесть осмысленных категорий мест (наследие, памятник, религия, музей, достопримечательность, природа). Кафе, лавки, отели и городская инфраструктура не запрашиваются вовсе. Тап по знаку поднимает карточку с категорией, названием, дистанцией и id OSM; разведение рук в pinch меняет радиус 200 м — 1 км — 5 км.",
+  "tags": ["overpass", "geolocation", "hologram", "openstreetmap", "landmarks"]
 }

@@ -55,7 +55,7 @@ class SoundSpace extends xb.Script {
       buttons: [
         {id: 'mic', label: 'MIC', icon: 'mic', onTap: () => this.enableMic()},
         {id: 'freeze', label: 'FREEZE', onTap: () => this.freeze()},
-        {id: 'clear', label: 'стереть', onTap: () => this.clear()},
+        {id: 'clear', label: 'CLEAR', onTap: () => this.clear()},
       ],
     });
     this.add(this.hud.card);

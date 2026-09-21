@@ -62,7 +62,7 @@ class EchoRoom extends xb.Script {
     this.hud = makeHud({
       title: 'ECHO//ROOM',
       stat: 'двигай лучом / кликай — следы остаются 60 секунд',
-      buttons: [{id: 'clear', label: 'стереть историю', onTap: () => this.wipe()}],
+      buttons: [{id: 'clear', label: 'CLEAR', onTap: () => this.wipe()}],
     });
     this.add(this.hud.card);
   }

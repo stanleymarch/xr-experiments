@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
+import { makeHud } from '../common/hud.js?v=spatial-ui-8';
 import { installXrGuards, watchXrButton } from '../common/boot.js';
 
 // CITY//ORBIT — реальное окружение из OpenStreetMap как голограмма.
@@ -7,7 +8,6 @@ import { installXrGuards, watchXrButton } from '../common/boot.js';
 // Указка лучом + select = карточка с дистанцией. Разведение контроллеров =
 // масштаб 200 м → 1 км → 5 км. Никаких моделей — только данные Overpass.
 
-const $ = (id) => document.getElementById(id);
 
 // Публичные Overpass-зеркала. Российский узел VK Maps / Mail.ru идёт
 // первым: для основной российской аудитории у него короче сетевой маршрут.
@@ -167,33 +167,44 @@ class CityOrbit extends xb.Script {
     xb.core.gestureRecognition.addEventListener('gesturestart', this._gestureStart);
     xb.core.gestureRecognition.addEventListener('gestureend', this._gestureEnd);
 
-    $('btn-radius').onclick = () => this.setRadius((this.radiusIdx + 1) % RADII.length);
-    this.setRadius(this.radiusIdx, false);
-    $('btn-mode').onclick = () => {
-      this.mode = this.mode === 'table' ? 'orbit' : 'table';
-      this.layout();
-    };
-    $('btn-geo').onclick = () => this.load(+$('lat').value, +$('lon').value);
-    this.layout();
-
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (p) => {
-          $('lat').value = p.coords.latitude.toFixed(4);
-          $('lon').value = p.coords.longitude.toFixed(4);
-          this.load(p.coords.latitude, p.coords.longitude);
+    this.hud = makeHud({
+      title: 'CITY//ORBIT',
+      stat: 'запрос геопозиции…',
+      buttons: [
+        {id: 'geo', label: 'город', onTap: () => this.locate()},
+        {
+          id: 'mode', label: 'стол / 360°',
+          onTap: () => { this.mode = this.mode === 'table' ? 'orbit' : 'table'; this.layout(); },
         },
-        () => this.load(this.lat, this.lon),
-        { timeout: 6000 }
-      );
-    } else this.load(this.lat, this.lon);
+        {id: 'radius', label: 'радиус', onTap: () => this.setRadius((this.radiusIdx + 1) % RADII.length)},
+      ],
+    });
+    this.add(this.hud.card);
+    this.setRadius(this.radiusIdx, false);
+    this.layout();
+    this.locate();
   }
 
-  stat(s) { $('stat').textContent = s; }
+  stat(s) { this.hud.setStat(s); }
+
+  locate() {
+    if (!navigator.geolocation) return this.load(this.lat, this.lon);
+    this.stat('запрос геопозиции…');
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        this.lat = +p.coords.latitude.toFixed(4);
+        this.lon = +p.coords.longitude.toFixed(4);
+        this.load(this.lat, this.lon);
+      },
+      () => this.load(this.lat, this.lon),
+      { timeout: 6000 }
+    );
+  }
+
 
   setRadius(index, reload = true) {
     this.radiusIdx = index;
-    $('btn-radius').textContent = `радиус ${RADII[index] >= 1000 ? `${RADII[index] / 1000} км` : `${RADII[index]} м`}`;
+    this.hud.setLabel('radius', `радиус ${RADII[index] >= 1000 ? `${RADII[index] / 1000} км` : `${RADII[index]} м`}`);
     if (reload && this.center) this.load(this.lat, this.lon);
   }
 

@@ -13,20 +13,14 @@ canvas { display:block; }
 .cards a:hover { border-color:var(--acc); }
 .cards b { letter-spacing:.06em; color:var(--acc); }
 .cards i { color:var(--dim); font-style:normal; font-size:12px; }
-/* In-experience HUD: не перехватывает канвас, кроме кнопок */
-#hud { position:fixed; top:10px; left:10px; z-index:10; max-width:min(340px,80vw);
-  background:rgba(7,10,18,.78); border:1px solid #1c2942; border-radius:12px;
-  padding:10px 12px; font-size:13px; pointer-events:none; backdrop-filter:blur(6px); }
-#hud h2 { margin:0 0 4px; font-size:14px; letter-spacing:.08em; color:var(--acc); }
-#hud .row { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; pointer-events:auto; }
-#hud button, #hud input[type=range] { pointer-events:auto; }
-#hud button { background:#16223a; color:var(--fg); border:1px solid #2a3c60;
-  border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer; }
-#hud button.on { border-color:var(--acc); color:var(--acc); }
-#hud .stat { color:var(--dim); font-size:12px; white-space:pre-line; }
-#hud a { color:var(--acc); }
-#hud input[type=text], #hud input[type=number] { width:76px; background:#0a1020;
-  border:1px solid #2a3c60; color:var(--fg); border-radius:6px; padding:4px 6px; }
+/* Ссылка «назад к опытам» — единственный DOM поверх канваса; в сессии
+   прячется, всё управление внутри опыта несёт spatial-карточка XR Blocks. */
+#back { position:fixed; top:10px; left:10px; z-index:10; color:var(--acc);
+  font-size:13px; text-decoration:none; background:rgba(7,10,18,.72);
+  border:1px solid #1c2942; border-radius:10px; padding:6px 12px;
+  backdrop-filter:blur(6px); }
+#back:hover { border-color:var(--acc); }
+body:has(#XRButtonWrapper.in-session) #back { display:none; }
 
 /* Оверлей входа XR Blocks. Без этих правил wrapper падает голой системной
    кнопкой после канваса — на телефоне его приходится искать скроллом. */

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { pointsMaterial, shockRingMaterial } from '../common/fx.js';
+import { makeHud } from '../common/hud.js?v=spatial-ui-8';
 import { installXrGuards, watchXrButton } from '../common/boot.js';
 
 // WEATHER//ROOM — погода снаружи становится телом комнаты.
@@ -10,7 +11,6 @@ import { installXrGuards, watchXrButton } from '../common/boot.js';
 // красит воздух, давление задаёт высоту атмосферы.
 // Слайдер −24ч…+24ч — мотай погоду пальцем.
 
-const $ = (id) => document.getElementById(id);
 const COUNT = 1100;
 const BOX = { x: 3, y: 2.8, z: 3 };
 const SPLASH_POOL = 8;
@@ -92,34 +92,45 @@ class WeatherRoom extends xb.Script {
 
     this.data = null;
     this.offset = 0;
+    this.lat = 59.934; this.lon = 30.335;   // как в старых полях ввода
     this.state = { temp: 8, cloud: 50, wind: 5, wdir: 225, rain: 0, press: 1010 };
     this._fp = 0;
     this.tmpC = new THREE.Color();
 
-    $('time').addEventListener('input', (e) => {
-      this.offset = +e.target.value;
-      this.applyHour();
-    });
-    $('btn-now').onclick = () => {
-      this.offset = 0; $('time').value = 0; this.applyHour();
-    };
-    $('btn-geo').onclick = () => this.load(+$('lat').value, +$('lon').value);
-
-    this.stat('запрос геопозиции…');
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (p) => {
-          $('lat').value = p.coords.latitude.toFixed(3);
-          $('lon').value = p.coords.longitude.toFixed(3);
-          this.load(p.coords.latitude, p.coords.longitude);
+    this.hud = makeHud({
+      title: 'WEATHER//ROOM',
+      stat: 'запрос геопозиции…',
+      slider: {
+        min: -24, max: 24, step: 1, value: 0, ariaLabel: 'время ±24ч',
+        onInput: (v) => { this.offset = v; this.applyHour(); },
+      },
+      buttons: [
+        {
+          id: 'now', label: 'NOW',
+          onTap: () => { this.hud.setSliderValue(0); this.offset = 0; this.applyHour(); },
         },
-        () => this.load(+$('lat').value, +$('lon').value),
-        { timeout: 6000 }
-      );
-    } else this.load(+$('lat').value, +$('lon').value);
+        {id: 'geo', label: 'обновить', onTap: () => this.locate()},
+      ],
+    });
+    this.add(this.hud.card);
+    this.locate();
   }
 
-  stat(s) { $('stat').textContent = s; }
+  stat(s) { this.hud.setStat(s); }
+
+  locate() {
+    if (!navigator.geolocation) return this.load(this.lat, this.lon);
+    this.stat('запрос геопозиции…');
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        this.lat = +p.coords.latitude.toFixed(3);
+        this.lon = +p.coords.longitude.toFixed(3);
+        this.load(this.lat, this.lon);
+      },
+      () => this.load(this.lat, this.lon),
+      { timeout: 6000 }
+    );
+  }
 
   async load(lat, lon) {
     this.stat(`метео ${lat.toFixed(2)}, ${lon.toFixed(2)} …`);
@@ -153,9 +164,9 @@ class WeatherRoom extends xb.Script {
       rain: h.precipitation[i], press: h.pressure_msl[i],
     };
     const when = new Date(Date.parse(h.time[i]));
-    $('tlabel').textContent =
+    this.hud.setSliderLabel(
       `${this.offset === 0 ? 'NOW · ' : ''}${when.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} ` +
-      `· ${this.offset >= 0 ? '+' : ''}${this.offset}ч`;
+      `· ${this.offset >= 0 ? '+' : ''}${this.offset}ч`);
   }
 
   respawn(i, pos, randomY = false) {
@@ -202,7 +213,7 @@ class WeatherRoom extends xb.Script {
     s.mesh.position.set(x, y + 0.005, z);
   }
 
-  onSelectEnd() { this.offset = 0; $('time').value = 0; this.applyHour(); }
+  onSelectEnd() { this.hud.setSliderValue(0); this.offset = 0; this.applyHour(); }
 
   update() {
     const dt = Math.min(xb.getDeltaTime(), 0.05);

@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { installXrGuards, watchXrButton } from '../common/boot.js';
+import { makeHud } from '../common/hud.js?v=spatial-ui-8';
 
 // ECHO//ROOM — трёхмерный temporal debugger реальности.
 // Каждое движение луча оставляет траекторию, каждый тап — импульс.
 // Пространство хранит ~60 секунд. Клик по старому следу разворачивает
 // временные слои NOW / −1с … −4с вокруг выбранной точки.
 
-const $ = (id) => document.getElementById(id);
 const KEEP = 60;          // секунд истории
 const TRAIL_N = 600;      // точек в ленте траектории
 const MAX_PULSES = 40;
@@ -59,11 +59,15 @@ class EchoRoom extends xb.Script {
     this._tip = new THREE.Vector3();
     this._sel = new THREE.Vector3();
     this._ray = new THREE.Ray();
-    $('btn-clear').onclick = () => this.wipe();
-    this.stat('двигай лучом / кликай — следы остаются 60 секунд');
+    this.hud = makeHud({
+      title: 'ECHO//ROOM',
+      stat: 'двигай лучом / кликай — следы остаются 60 секунд',
+      buttons: [{id: 'clear', label: 'стереть историю', onTap: () => this.wipe()}],
+    });
+    this.add(this.hud.card);
   }
 
-  stat(s) { $('stat').textContent = s; }
+  stat(s) { this.hud.setStat(s); }
 
   wipe() {
     this.log = [];

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { ribbonMaterial } from '../common/fx.js';
+import { makeHud } from '../common/hud.js?v=spatial-ui-8';
 import { installXrGuards, watchXrButton } from '../common/boot.js';
 
 // SOUND//SPACE — звук строит пространство.
@@ -9,7 +10,6 @@ import { installXrGuards, watchXrButton } from '../common/boot.js';
 // FREEZE/pinch замораживает текущий момент в скульптуру; вокруг собирается
 // история последних минут. Без сервера, без AI, 0 ₽.
 
-const $ = (id) => document.getElementById(id);
 const FFT = 512;
 const RIBBONS = 3;      // слоёв истории помимо живого
 const STEPS = 96;       // длина ленты во времени
@@ -48,15 +48,22 @@ class SoundSpace extends xb.Script {
     this.impacts = [];         // ударные волны хлопков
     this.ringGeo = new THREE.RingGeometry(0.94, 1.0, 48);
 
-    $('btn-mic').onclick = () => this.enableMic();
-    $('btn-freeze').onclick = () => this.freeze();
-    $('btn-clear').onclick = () => this.clear();
+    this.hud = makeHud({
+      title: 'SOUND//SPACE',
+      stat: 'нажми MIC — или слушай демо-генератор',
+      offset: [0, -0.4, -0.7],
+      buttons: [
+        {id: 'mic', label: 'MIC', icon: 'mic', onTap: () => this.enableMic()},
+        {id: 'freeze', label: 'FREEZE', onTap: () => this.freeze()},
+        {id: 'clear', label: 'стереть', onTap: () => this.clear()},
+      ],
+    });
+    this.add(this.hud.card);
 
     this.perm = false;
-    this.stat('нажми MIC — или слушай демо-генератор');
   }
 
-  stat(s) { $('stat').textContent = s; }
+  stat(s) { this.hud.setStat(s); }
   onSelectEnd() { this.freeze(); }
   onSqueezeEnd() { this.clear(); }
 
@@ -72,7 +79,6 @@ class SoundSpace extends xb.Script {
       const freq = new Uint8Array(analyser.frequencyBinCount);
       this.audio = { ctx, analyser, freq };
       this.perm = true;
-      $('btn-mic').classList.add('on');
       this.stat('mic live · говори, хлопай, играй');
     } catch (e) {
       this.stat(`mic недоступен (${e.name}) — демо-генератор`);

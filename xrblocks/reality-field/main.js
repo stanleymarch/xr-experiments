@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { installXrGuards, watchXrButton } from '../common/boot.js';
 import { makePoints, shockRingMaterial, dome } from '../common/fx.js';
+import { makeHud } from '../common/hud.js?v=spatial-ui-8';
 
 // REALITY//FIELD — комната как физическое поле.
 // Импульс летит из руки/взгляда, бьётся о depth-mesh (Quest) или
@@ -16,7 +17,6 @@ const COUNT = 2200;
 const ROOM_R = 3.4;
 const ROOM_C = new THREE.Vector3(0, 1.6, 0);
 
-const $ = (id) => document.getElementById(id);
 
 class RealityField extends xb.Script {
   init() {
@@ -138,23 +138,25 @@ class RealityField extends xb.Script {
     this._ge = (e) => this.onGesture(e.detail, false);
     g.addEventListener('gesturestart', this._gs);
     g.addEventListener('gestureend', this._ge);
-    $('btn-debug').onclick = () => this.setDebug(!this.debug);
-    $('btn-dream').onclick = () => {
-      this.dream = !this.dream;
-      $('btn-dream').classList.toggle('on', this.dream);
-      this.pmat.uniforms.uSize.value = this.dream ? 0.08 : 0.045;
-      this.linkLines.material.opacity = this.dream ? 0.12 : 0.28;
-    };
+    this.hud = makeHud({
+      title: 'REALITY//FIELD',
+      stat: 'ready — click / pinch = импульс',
+      buttons: [
+        {id: 'debug', label: 'DEBUG', onTap: () => this.setDebug(!this.debug)},
+        {id: 'dream', label: 'DREAM', onTap: () => this.setDream(!this.dream)},
+      ],
+    });
+    this.add(this.hud.card);
 
     this._fpsN = 0; this._fpsT = 0; this._fps = 0;
     this.stat('ready — click / pinch = импульс');
   }
 
-  stat(s) { $('stat').textContent = s; }
+  stat(s) { this.hud.setStat(s); }
 
   setDebug(enabled) {
     this.debug = enabled;
-    $('btn-debug').classList.toggle('on', enabled);
+    this.hud.setLabel('debug', enabled ? 'DEBUG ·on' : 'DEBUG');
     this.floor.visible = this.roomMesh.visible = enabled;
     this.debugRay.visible = enabled;
     if (!enabled) this.normalArrow.visible = false;
@@ -166,6 +168,13 @@ class RealityField extends xb.Script {
       const planes = xb.world?.planes ?? xb.core?.world?.planes;
       planes?.showDebugVisualizations?.(enabled);
     } catch { /* plane detection недоступна */ }
+  }
+
+  setDream(on) {
+    this.dream = on;
+    this.hud.setLabel('dream', on ? 'DREAM ·on' : 'DREAM');
+    this.pmat.uniforms.uSize.value = on ? 0.08 : 0.045;
+    this.linkLines.material.opacity = on ? 0.12 : 0.28;
   }
 
   onGesture(detail, start) {

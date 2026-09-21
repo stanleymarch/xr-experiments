@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
+import { makePoints } from '../common/fx.js';
 import { installXrGuards, watchXrButton } from '../common/boot.js';
 import { makeHud } from '../common/hud.js?v=spatial-ui-8';
 
@@ -12,6 +13,8 @@ const KEEP = 60;          // секунд истории
 const TRAIL_N = 600;      // точек в ленте траектории
 const MAX_PULSES = 40;
 const LAYER_COUNT = 4;
+const SAMPLE_DT = 0.1;          // запись истории поз/движений: 10 Гц, не каждый кадр
+const GHOST_N = KEEP / SAMPLE_DT; // кольцо поз на всю минуту истории
 
 class EchoRoom extends xb.Script {
   init() {
@@ -56,12 +59,33 @@ class EchoRoom extends xb.Script {
 
     this._o = new THREE.Vector3();
     this._d = new THREE.Vector3();
-    this._tip = new THREE.Vector3();
     this._sel = new THREE.Vector3();
     this._ray = new THREE.Ray();
+
+    // Эхо-аватар: призрак «прошлого тебя» — голова и руки (или плечи, если
+    // контроллеров нет). Позы пишутся 10 Гц в кольцо на 60 секунд.
+    const ghost = makePoints(3, { size: 0.05, color: 0xffffff, opacity: 0.9 });
+    this.ghostPts = ghost.points;
+    this.ghostPos = ghost.pos;
+    this.ghostCol = ghost.col;
+    this.ghostGeo = ghost.geo;
+    this.ghostPts.visible = false;
+    this.add(this.ghostPts);
+    this.poseT = new Float32Array(GHOST_N).fill(-1e9);
+    this.poseP = new Float32Array(GHOST_N * 9); // голова + рука L + рука R
+    this.poseHead = 0;
+    this._poseAcc = 0;
+    this.scrub = 0; // 0 = живое настоящее; <0 = смотреть прошлое
+    const gc = new THREE.Color().setHSL(0.09, 0.8, 0.6); // тёплое «прошлое»
+    this.ghostCol.set([gc.r, gc.g, gc.b, gc.r, gc.g, gc.b, gc.r, gc.g, gc.b]);
+    this.ghostGeo.attributes.color.needsUpdate = true;
     this.hud = makeHud({
       title: 'ECHO//ROOM',
-      stat: 'двигай лучом / кликай — следы остаются 60 секунд',
+      stat: 'двигайся — комната помнит минуту. Тап — импульс, слайдер — прошлое',
+      slider: {
+        min: -60, max: 0, step: 1, value: 0, ariaLabel: 'скраб времени',
+        onInput: (v) => { this.scrub = v; },
+      },
       buttons: [{id: 'clear', label: 'CLEAR', onTap: () => this.wipe()}],
     });
     this.add(this.hud.card);
@@ -78,6 +102,11 @@ class EchoRoom extends xb.Script {
     this.pulses = [];
     for (const l of this.timeLayers) { l.line.visible = false; l.anchor = null; }
     this.selected = null;
+    this.poseT.fill(-1e9);
+    this.poseHead = 0;
+    this.scrub = 0;
+    this.hud.setSliderValue(0);
+    this.ghostPts.visible = false;
     this.stat('история стёрта');
   }
 
@@ -167,7 +196,11 @@ class EchoRoom extends xb.Script {
     this.trailPos[ix + 2] = this.trailPos[mirror + 2] = this._tip.z;
     this.trailAge[w] = now;
     this.trailHead++;
-    this.log.push({ t: now, kind: 'move', pos: this._tip.clone() });
+    // движение в журнал — 10 Гц, не каждый кадр: слоям хватит, мусора меньше
+    if ((this._moveAcc = (this._moveAcc || 0) + dt) >= SAMPLE_DT) {
+      this._moveAcc = 0;
+      this.log.push({ t: now, kind: 'move', pos: this._tip.clone() });
+    }
 
     // живое окно: считаем назад от головы, пока точки свежее 8 секунд.
     let live = 0;
@@ -182,8 +215,10 @@ class EchoRoom extends xb.Script {
     // импульсы: рост и затухание
     for (const pu of this.pulses) {
       const age = now - pu.at;
-      pu.mesh.scale.setScalar(0.05 + age * 0.25);
-      pu.mesh.material.opacity = Math.max(0.12, 0.9 - age * 0.06);
+      // диффузия: кольцо растёт как √t, яркость падает экспоненциально —
+      // импульс честно расплывается, а не тускнеет по линейке таймера
+      pu.mesh.scale.setScalar(0.05 + Math.sqrt(age) * 0.12);
+      pu.mesh.material.opacity = Math.max(0.05, 0.9 * Math.exp(-age / 18));
     }
     if ((this._pr = (this._pr || 0) + dt) > 2) { this._pr = 0; this.prune(); }
 
@@ -209,16 +244,73 @@ class EchoRoom extends xb.Script {
     if ((this._st = (this._st || 0) + dt) > 0.5) {
       this._st = 0;
       this.stat(
-        `событий в памяти: ${this.log.length} · импульсов: ${this.pulses.length}` +
-        (this.selected ? ` · слои: ${n} точек` : ' · кликни по ✦ чтобы развернуть слои')
+        (this.scrub < -0.5 ? `СКРАБ ${this.scrub.toFixed(0)}с · призрак стоит` : `событий в памяти: ${this.log.length} · импульсов: ${this.pulses.length}`) +
+        (this.selected ? ` · слои: ${n} точек` : (this.scrub < -0.5 ? '' : ' · кликни по ✦ чтобы развернуть слои'))
       );
     }
+    // История поз: голова всегда; руки — контроллеры, иначе плечи из базиса
+    // камеры. 10 Гц — гладкому призраку хватает, памяти мало.
+    this._poseAcc += dt;
+    if (this._poseAcc >= SAMPLE_DT) {
+      this._poseAcc = 0;
+      const gi = this.poseHead % GHOST_N;
+      const base = gi * 9;
+      xb.core.camera.getWorldPosition(this._tip);
+      this.poseP[base] = this._tip.x; this.poseP[base + 1] = this._tip.y; this.poseP[base + 2] = this._tip.z;
+      let hands = 0;
+      for (let c = 0; c < 2; c++) {
+        try {
+          xb.user.getControllerPosition(c, this._o);
+          this.poseP[base + 3 + c * 3] = this._o.x;
+          this.poseP[base + 4 + c * 3] = this._o.y;
+          this.poseP[base + 5 + c * 3] = this._o.z;
+          hands = 1;
+        } catch { /* контроллеров нет — ниже будут плечи */ }
+      }
+      if (!hands) {
+        xb.core.camera.getWorldDirection(this._d);
+        const sx = this._d.z, sz = -this._d.x; // боковая ось камеры в плане
+        const il = 1 / (Math.hypot(sx, sz) || 1);
+        this.poseP[base + 3] = this._tip.x + sx * il * 0.18;
+        this.poseP[base + 4] = this._tip.y - 0.12;
+        this.poseP[base + 5] = this._tip.z + sz * il * 0.18;
+        this.poseP[base + 6] = this._tip.x - sx * il * 0.18;
+        this.poseP[base + 7] = this._tip.y - 0.12;
+        this.poseP[base + 8] = this._tip.z - sz * il * 0.18;
+      }
+      this.poseT[gi] = now;
+      this.poseHead++;
+    }
+
+    // Скраб времени: тёплый призрак в выбранном прошлом, рядом с живым тобой.
+    if (this.scrub < -0.5) {
+      const want = now + this.scrub;
+      let bi = -1, bd = SAMPLE_DT * 1.5;
+      const newest = Math.min(this.poseHead, GHOST_N);
+      for (let k = 0; k < newest; k++) {
+        const idx = (this.poseHead - 1 - k + GHOST_N * 4) % GHOST_N;
+        const d = Math.abs(this.poseT[idx] - want);
+        if (d < bd) { bd = d; bi = idx; }
+        if (this.poseT[idx] < want - 1) break; // дальше только старее
+      }
+      if (bi >= 0) {
+        const base = bi * 9;
+        for (let j = 0; j < 9; j++) this.ghostPos[j] = this.poseP[base + j];
+        this.ghostGeo.attributes.position.needsUpdate = true;
+        this.ghostPts.visible = true;
+      }
+    } else {
+      this.ghostPts.visible = false;
+    }
+
   }
 
   dispose() {
     this.trailGeo.dispose(); this.trail.material.dispose();
     this.ringGeo.dispose();
     for (const l of this.timeLayers) { l.line.geometry.dispose(); l.line.material.dispose(); }
+    this.ghostGeo.dispose();
+    this.ghostPts.material.dispose();
   }
 }
 

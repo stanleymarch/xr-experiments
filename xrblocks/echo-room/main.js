@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { makePoints } from '../common/fx.js';
 import { installXrGuards, watchXrButton } from '../common/boot.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-8';
+import { makeHud } from '../common/hud.js?v=spatial-ui-9';
 
 // ECHO//ROOM — трёхмерный temporal debugger реальности.
 // Каждое движение луча оставляет траекторию, каждый тап — импульс.
@@ -121,7 +121,8 @@ class EchoRoom extends xb.Script {
     return true;
   }
 
-  onSelectEnd() {
+  onSelectEnd(event) {
+    if (this.hud.owns(event?.target)) return;
     this.aim();
     const pos = this._sel.copy(this._o).addScaledVector(this._d.normalize(), 1.2);
     // свой импульс или выбор старого следа?

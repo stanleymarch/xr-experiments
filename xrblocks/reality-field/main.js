@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { installXrGuards, watchXrButton } from '../common/boot.js';
 import { makePoints, shockRingMaterial, dome } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-8';
+import { makeHud } from '../common/hud.js?v=spatial-ui-9';
 
 // REALITY//FIELD — комната как физическое поле.
 // Импульс летит из руки/взгляда, бьётся о depth-mesh (Quest) или
@@ -230,7 +230,10 @@ class RealityField extends xb.Script {
     return true;
   }
 
-  onSelectEnd() { this.fire(1); }
+  onSelectEnd(event) {
+    if (this.hud.owns(event?.target)) return;
+    this.fire(1);
+  }
 
   // Цели импульса в порядке честности: живой depth-mesh Quest, затем
   // реальные плоскости WebXR (телефон), и только потом синтетическая комната.

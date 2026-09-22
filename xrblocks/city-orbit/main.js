@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-8';
+import { makeHud } from '../common/hud.js?v=spatial-ui-9';
 import { installXrGuards, watchXrButton } from '../common/boot.js';
 import { PALETTES } from '../common/fx.js';
 
@@ -703,25 +703,68 @@ function buildingGeometry(scene, project) {
       push(side, [a.x, 0, a.z], [b.x, h, b.z], [a.x, h, a.z]);
     }
     const shape = new THREE.Shape(ring.map((p) => new THREE.Vector2(p.x, p.z)));
-    const cap = new THREE.ShapeGeometry(shape);
+    const indexedCap = new THREE.ShapeGeometry(shape);
+    // ShapeGeometry is indexed. Appending its raw position array loses the
+    // triangle index and connects unrelated polygon vertices into the broken
+    // fan seen on phones. Flatten the index before merging into our buffers.
+    const cap = indexedCap.index ? indexedCap.toNonIndexed() : indexedCap;
     cap.rotateX(Math.PI / 2);
     cap.translate(0, h, 0);
-    cap.deleteAttribute('normal');
-    cap.deleteAttribute('uv');
     const pos = cap.getAttribute('position');
     const col = new Float32Array(pos.count * 3);
     for (let i = 0; i < pos.count; i++) {
       col[i * 3] = top.r; col[i * 3 + 1] = top.g; col[i * 3 + 2] = top.b;
     }
-    cap.setAttribute('color', new THREE.BufferAttribute(col, 3));
     positions.push(...pos.array);
     colors.push(...col);
+    if (cap !== indexedCap) indexedCap.dispose();
     cap.dispose();
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
   return geo;
+}
+
+// Настоящий голографический материал: форма остаётся читаемой, но здания
+// полупрозрачны, светятся по краям и сканируются горизонтальной строкой.
+function buildingHologramMaterial() {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    uniforms: { uTime: { value: 0 } },
+    vertexShader: /* glsl */`
+      attribute vec3 color;
+      varying vec3 vColor;
+      varying vec3 vNormal;
+      varying vec3 vView;
+      varying float vHeight;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vColor = color;
+        vNormal = normalize(normalMatrix * normal);
+        vView = normalize(-mv.xyz);
+        vHeight = position.y;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float uTime;
+      varying vec3 vColor;
+      varying vec3 vNormal;
+      varying vec3 vView;
+      varying float vHeight;
+      void main() {
+        float edge = pow(1.0 - abs(dot(normalize(vNormal), normalize(vView))), 1.7);
+        float scan = pow(max(0.0, sin(vHeight * 0.72 - uTime * 2.2)), 18.0);
+        float pulse = 0.82 + 0.18 * sin(uTime * 0.8);
+        vec3 glow = vColor * (0.72 + edge * 1.8 + scan * 1.35) * pulse;
+        float alpha = 0.16 + edge * 0.3 + scan * 0.42;
+        gl_FragColor = vec4(glow, alpha);
+      }`,
+  });
 }
 
 // Знаки мест: у каждой категории своя форма — ступенчатая пирамида наследия,
@@ -994,6 +1037,7 @@ class CityOrbit extends xb.Script {
     this.glyphMeshes = [];
     this.glyphIndex = new Map();
     this.poiList = [];
+    this.buildingMaterial = null;
   }
 
   build(scene) {
@@ -1030,9 +1074,9 @@ class CityOrbit extends xb.Script {
 
     const bldGeo = buildingGeometry(scene, project);
     if (bldGeo.getAttribute('position').count) {
-      const buildings = new THREE.Mesh(bldGeo, new THREE.MeshBasicMaterial({
-        vertexColors: true, side: THREE.DoubleSide,
-      }));
+      this.buildingMaterial = buildingHologramMaterial();
+      const buildings = new THREE.Mesh(bldGeo, this.buildingMaterial);
+      buildings.renderOrder = 2;
       buildings.xb = { pointerEvents: 'none' };
       this.map.add(buildings);
     } else {
@@ -1195,6 +1239,7 @@ class CityOrbit extends xb.Script {
   }
 
   onSelectEnd(event) {
+    if (this.hud.owns(event?.target)) return;
     const poi = this.resolvePick(event);
     if (!poi) {
       this.card.visible = false;
@@ -1217,6 +1262,9 @@ class CityOrbit extends xb.Script {
   update() {
     this.ring.material.opacity = 0.6 + 0.3 * Math.sin(performance.now() * 0.003);
     this.youRing.scale.setScalar(1 + 0.12 * Math.sin(performance.now() * 0.004));
+    if (this.buildingMaterial) {
+      this.buildingMaterial.uniforms.uTime.value = performance.now() * 0.001;
+    }
     // Масштабирование — только когда обе руки в pinch: обычное движение
     // контроллеров не должно непредсказуемо перезагружать город.
     if (this.pinchHands.has('left') && this.pinchHands.has('right')) {

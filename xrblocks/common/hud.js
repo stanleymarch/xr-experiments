@@ -96,6 +96,18 @@ export function makeHud({
   let lastStat = null;
   return {
     card: anchor,
+    owns(target) {
+      // Global Script hooks still receive select events after a semantic UI
+      // control handled them. Experiences use this guard so a phone tap on a
+      // slider/button does not also fire the scene action underneath.
+      for (let node = target; node; node = node.parent) {
+        if (node === anchor) return true;
+      }
+      return false;
+    },
+    control(id) {
+      return id === 'slider' ? sliderEl : byId.get(id);
+    },
     setStat(value) {
       if (value === lastStat) return;
       lastStat = value;

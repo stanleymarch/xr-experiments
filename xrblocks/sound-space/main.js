@@ -3,7 +3,7 @@ import * as xb from 'xrblocks';
 import {
   ribbonMaterial, shockRingMaterial, lineMaterial, makePoints, PALETTES,
 } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-8';
+import { makeHud } from '../common/hud.js?v=spatial-ui-9';
 import { installXrGuards, watchXrButton } from '../common/boot.js';
 
 // SOUND//SPACE — звук строит объём вокруг слушателя, а не плоскую ленту.
@@ -329,7 +329,10 @@ class SoundSpace extends xb.Script {
   }
 
   stat(s) { this.hud.setStat(s); }
-  onSelectEnd() { this.freeze(); }
+  onSelectEnd(event) {
+    if (this.hud.owns(event?.target)) return;
+    this.freeze();
+  }
   onSqueezeEnd() { this.clear(); }
 
   async enableMic() {

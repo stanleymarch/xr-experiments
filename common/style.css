@@ -1,0 +1,184 @@
+/* XR TESTBED — общая дизайн-система.
+   Мобильный-first: safe-area, тач-таргеты ≥44px, HUD не мешает
+   центральной кнопке ENTER XR от XR Blocks и исчезает в XR-сессии. */
+
+:root {
+  --bg: #070a12;
+  --fg: #dfe8ff;
+  --dim: #8ea0c2;
+  --acc: #54d6ff;      /* electric cyan */
+  --acc2: #8a7bff;     /* ultraviolet */
+  --coral: #ff6b5e;    /* selection accent */
+  --card: rgba(13, 19, 34, 0.82);
+  --line: #1c2942;
+  --mono: ui-monospace, "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overscroll-behavior: none;
+}
+
+canvas { display: block; touch-action: none; }
+
+a { color: var(--acc); }
+
+/* ---------- Хаб ---------- */
+
+.hub { max-width: 880px; margin: 0 auto; padding: 32px 20px 60px; }
+.hub h1 { font-size: clamp(22px, 5vw, 28px); letter-spacing: .08em; margin: 0; }
+.hub h1 span { color: var(--acc); }
+.hub header p { color: var(--dim); margin: 10px 0 0; }
+.req { color: var(--dim); font-size: 13px; }
+
+.cards {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  margin-top: 20px;
+}
+.cards a {
+  position: relative;
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 44px 16px 16px; text-decoration: none; color: var(--fg);
+  display: flex; flex-direction: column; gap: 8px;
+  transition: border-color .15s ease, transform .15s ease, background-color .15s ease;
+}
+/* Чистый CSS-chevron: вся карточка — крупная тач-цель, действие очевидно. */
+.cards a::after {
+  content: ""; position: absolute; top: 20px; right: 20px;
+  width: 8px; height: 8px; border-top: 1px solid var(--acc);
+  border-right: 1px solid var(--acc); transform: rotate(45deg);
+}
+.cards a:active { transform: scale(.98); }
+@media (hover: hover) { .cards a:hover { border-color: var(--acc); } }
+.cards b { letter-spacing: .06em; color: var(--acc); }
+.cards i { color: var(--dim); font-style: normal; font-size: 12px; font-family: var(--mono); }
+
+.hub footer { margin-top: 24px; color: var(--dim); font-size: 13px; }
+.hub code { font-family: var(--mono); color: var(--acc); }
+
+/* ---------- In-experience HUD (вне XR-сессии) ----------
+   Верхний чип: название + живой статус. Нижний sheet: управление.
+   XR Blocks не запрашивает dom-overlay, поэтому в XR этот DOM скрыт,
+   а управление переходит к пространственной UICard (см. common/shell.js). */
+
+#hud-top {
+  position: fixed;
+  top: calc(var(--safe-top) + 10px);
+  left: calc(var(--safe-left) + 10px);
+  right: calc(var(--safe-right) + 10px);
+  z-index: 10;
+  display: flex; align-items: baseline; gap: 10px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 8px 12px; font-size: 13px;
+  pointer-events: none; backdrop-filter: blur(6px);
+  max-width: min(420px, calc(100vw - 20px - var(--safe-left) - var(--safe-right)));
+}
+#hud-top h2 {
+  margin: 0; font-size: 13px; letter-spacing: .08em;
+  color: var(--acc); font-family: var(--mono); white-space: nowrap;
+}
+#hud-top .stat {
+  color: var(--dim); font-family: var(--mono); font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+#hud-controls {
+  position: fixed;
+  left: calc(var(--safe-left) + 10px);
+  right: calc(var(--safe-right) + 10px);
+  bottom: calc(var(--safe-bottom) + 10px);
+  z-index: 10;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  padding: 10px 12px;
+  backdrop-filter: blur(6px);
+  max-width: 560px;
+}
+#hud-controls .row {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  flex: 1 1 auto; min-width: 0;
+}
+#hud-controls button {
+  min-height: 44px; min-width: 64px;
+  padding: 10px 16px;
+  background: #16223a; color: var(--fg);
+  border: 1px solid #2a3c60; border-radius: 10px;
+  font: 600 13px/1 var(--mono); letter-spacing: .04em;
+  cursor: pointer;
+  transition: border-color .12s ease, color .12s ease, box-shadow .12s ease;
+}
+#hud-controls button.on {
+  border-color: var(--acc); color: var(--acc);
+  box-shadow: 0 0 0 1px var(--acc), 0 0 14px rgba(84, 214, 255, .25);
+}
+#hud-controls button:focus-visible { outline: 2px solid var(--acc2); outline-offset: 2px; }
+#hud-controls a.back {
+  min-height: 44px; display: inline-flex; align-items: center;
+  padding: 0 10px; text-decoration: none; font-size: 13px; color: var(--dim);
+}
+#hud-controls .hint { color: var(--dim); font-size: 11px; font-family: var(--mono); flex-basis: 100%; }
+
+/* Скрыть DOM-HUD в XR-сессии (shell.js вешает класс на body) и в automation mode */
+body.in-xr #hud-top, body.in-xr #hud-controls,
+body.automation #hud-top, body.automation #hud-controls { display: none; }
+
+/* Тонкая горизонтальная прокрутка кнопок на узких экранах */
+@media (max-width: 480px) {
+  #hud-controls .row { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  #hud-controls .row::-webkit-scrollbar { display: none; }
+  #hud-controls button { flex: 0 0 auto; }
+}
+
+/* ---------- XR-кнопка XR Blocks (лэндинг вне симулятора) ---------- */
+#XRButtonWrapper {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 1.5rem;
+  text-align: center;
+  pointer-events: none;
+}
+#XRButtonWrapper > * { pointer-events: auto; }
+#XRButtonWrapper h1 {
+  font-weight: 600;
+  font-size: clamp(1.4rem, 5vw, 2.2rem);
+  margin: 0;
+  color: var(--fg);
+  letter-spacing: -0.02rem;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+.XRButton {
+  background: linear-gradient(135deg, #54d6ff 0%, #8a7bff 100%);
+  color: #04060c;
+  border: none;
+  cursor: pointer;
+  border-radius: 9999px;
+  font: 600 1.05rem/1 var(--mono);
+  letter-spacing: .04em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 18px 34px;
+  min-width: 240px;
+  min-height: 56px;
+  transition: transform .2s ease, box-shadow .2s ease;
+  box-shadow: 0 4px 25px rgba(84, 214, 255, 0.25);
+}
+.XRButton:hover { transform: scale(1.02); box-shadow: 0 6px 30px rgba(84, 214, 255, 0.4); }
+.XRButton:active { transform: scale(0.98); }

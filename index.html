@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>XR Testbed — 5 WebXR опытов</title>
+<link rel="stylesheet" href="common/style.css" />
+</head>
+<body>
+<div class="hub">
+  <header>
+    <h1>XR TESTBED <span>// 5 опытов</span></h1>
+    <p>Quest 3 — главная платформа. Каждый опыт: смартфон AR + десктоп-симулятор. Стек: Three.js + XR Blocks, без сборки, деплой — GitHub Pages.</p>
+    <p class="req">Требования: HTTPS + Chrome 136+. XR — на Quest 3 / Android XR. Микрофон и геолокация спрашивают разрешение на месте.</p>
+  </header>
+  <nav class="cards">
+    <a href="reality-field/"><b>REALITY//FIELD</b><span>Комната как физическое поле. Импульсы из пальца бьют в стены, кольца по depth-мешу, DEBUG/DREAM режимы.</span><i>depth mesh · gestures · raycast</i></a>
+    <a href="weather-room/"><b>WEATHER//ROOM</b><span>Гроза внутри комнаты: тёмный купол туч, дождь, ветер-ленты, молнии. Управляй штормом рукой.</span><i>shaders · instancing · gestures</i></a>
+    <a href="city-orbit/"><b>CITY//ORBIT</b><span>Город как световая орбитальная карта над столом. Тап — место, TABLE/360 — композиция.</span><i>hologram · anchors · selection</i></a>
+    <a href="sound-space/"><b>SOUND//SPACE</b><span>Звук лепит спектральную ленту; FREEZE оставляет голос, музыку и удар скульптурами в воздухе.</span><i>Web Audio FFT · mic</i></a>
+    <a href="echo-room/"><b>ECHO//ROOM</b><span>Комната-луковица времени: эхо-слои действий тают, цвет кодирует возраст.</span><i>age gradient · replay</i></a>
+  </nav>
+  <footer><span>Локально: <code>npx http-server -S -p 8080</code> (XR, mic, geo требуют HTTPS).</span></footer>
+</div>
+</body>
+</html>

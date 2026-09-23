@@ -1,8 +1,11 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
-import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
+import {
+  enableAutomation, hideInPassthrough, installLaunchShell, installXrGuards,
+  isAutomation, watchXrButton,
+} from '../common/boot.js?v=mobile-ux-17';
 import { makePoints, shockRingMaterial, dome } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=phone-ui-16';
+import { makeHud } from '../common/hud.js?v=mobile-ux-17';
 
 // REALITY//FIELD — комната как физическое поле.
 // Импульс летит из руки/взгляда, бьётся о depth-mesh (Quest) или
@@ -24,9 +27,9 @@ class RealityField extends xb.Script {
     const sun = new THREE.DirectionalLight(0x88ccff, 1.4);
     sun.position.set(1, 3, 2);
     this.add(sun);
-    const cupola = dome(7);
-    cupola.position.copy(ROOM_C);
-    this.add(cupola);
+    this.cupola = dome(7);
+    this.cupola.position.copy(ROOM_C);
+    this.add(this.cupola);
 
     // --- поле частиц: шейдерные glow-точки ---
     const kit = makePoints(COUNT, { size: 0.045, color: 0xffffff, opacity: 0.95 });
@@ -171,6 +174,8 @@ class RealityField extends xb.Script {
       ],
     });
     this.add(this.hud.card);
+    // Купол — фон для VR/симулятора; в AR он закрашивает passthrough камеры.
+    hideInPassthrough([this.cupola]);
 
     this._fpsN = 0; this._fpsT = 0; this._fps = 0;
     this.stat('READY — CLICK / PINCH = IMPULSE');
@@ -533,6 +538,11 @@ options.setAppDescription('Импульс из pinch бьёт в реальну�
 // requestSession вторую попытку, а опыт остаётся на fallback-геометрии.
 enableAutomation(options);
 installXrGuards();
+installLaunchShell(options, [
+  'Вход — кнопка внизу: камера телефона станет окном в комнату',
+  'Тап / pinch — импульс в реальную геометрию',
+  'Меню — панель внизу экрана',
+]);
 
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new RealityField());

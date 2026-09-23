@@ -78,3 +78,22 @@ body.automation #XRButtonWrapper { display:none !important; }
 }
 .phone-controls__buttons button:active { color:#04121c; background:var(--acc); }
 body:has(#XRButtonWrapper.in-session) .phone-controls { display:none; }
+
+.launch-shell {
+  position:fixed; left:12px; right:12px;
+  top:calc(52px + env(safe-area-inset-top)); z-index:25;
+  max-width:520px; margin:0 auto; padding:18px 20px;
+  color:#eaf9ff; background:rgba(7,14,25,.84);
+  border:1px solid rgba(84,214,255,.55); border-radius:18px;
+  backdrop-filter:blur(10px); text-align:center;
+}
+.launch-shell h2 { margin:0 0 6px; font:600 20px/1.2 system-ui,sans-serif;
+  letter-spacing:.06em; color:var(--acc); }
+.launch-shell p { margin:0; font:400 13px/1.5 system-ui,sans-serif; color:#c7d6ee; }
+.launch-shell ul { margin:10px 0 0; padding:0; list-style:none; display:grid; gap:4px; }
+.launch-shell li { font:400 12px/1.45 system-ui,sans-serif; color:#9fb2d2; }
+.launch-shell__cta { margin-top:12px; font:600 12px/1 system-ui,sans-serif;
+  color:var(--acc); animation:launch-pulse 1.6s ease-in-out infinite; }
+@keyframes launch-pulse { 50% { opacity:.45 } }
+body:has(#XRButtonWrapper.in-session) .launch-shell { display:none; }
+body.automation .launch-shell { display:none; }

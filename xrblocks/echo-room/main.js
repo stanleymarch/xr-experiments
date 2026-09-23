@@ -1,8 +1,11 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { makePoints } from '../common/fx.js';
-import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
-import { makeHud } from '../common/hud.js?v=phone-ui-16';
+import {
+  enableAutomation, installLaunchShell, installXrGuards,
+  isAutomation, watchXrButton,
+} from '../common/boot.js?v=mobile-ux-17';
+import { makeHud } from '../common/hud.js?v=mobile-ux-17';
 
 // ECHO//ROOM — трёхмерный temporal debugger реальности.
 // Каждое движение луча оставляет траекторию, каждый тап — импульс.
@@ -348,6 +351,11 @@ options.setAppDescription('След и импульсы держат минут�
 
 enableAutomation(options);
 installXrGuards();
+installLaunchShell(options, [
+  'Вход — кнопка внизу: комната запомнит минуту движения',
+  'Тап — импульс ✦, тап по старому ✦ — слои времени',
+  'Меню — панель внизу экрана',
+]);
 
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new EchoRoom());

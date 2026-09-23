@@ -73,3 +73,48 @@ export function watchXrButton() {
   });
   io.observe(document.body, { childList: true, subtree: false });
 }
+
+// Стартовый экран опыта. До входа в XR телефон видит тёмный канвас и
+// единственную кнопку — без контекста «куда я попал». Shell даёт название,
+// описание и подсказки управления, а в сессии прячется тем же классом
+// in-session, что и #back.
+export function installLaunchShell(options, hints = []) {
+  if (typeof document === 'undefined' || isAutomation()) return null;
+  const shell = document.createElement('section');
+  shell.className = 'launch-shell';
+  const title = document.createElement('h2');
+  title.textContent = options.xrButton.appTitle || document.title;
+  const desc = document.createElement('p');
+  desc.textContent = options.xrButton.appDescription || '';
+  shell.append(title, desc);
+  if (hints.length) {
+    const list = document.createElement('ul');
+    for (const hint of hints) {
+      const item = document.createElement('li');
+      item.textContent = hint;
+      list.append(item);
+    }
+    shell.append(list);
+  }
+  const cta = document.createElement('p');
+  cta.className = 'launch-shell__cta';
+  cta.textContent = '↓ кнопка входа внизу экрана';
+  shell.append(cta);
+  document.body.append(shell);
+  return shell;
+}
+
+// Купол и дымка — атмосфера для VR/симулятора. В AR-passthrough
+// (environmentBlendMode 'alpha-blend') BackSide-сфера закрашивает весь
+// вид камеры телефона: контент остаётся, обёртка комнаты прячется.
+export function hideInPassthrough(objects) {
+  const xr = xb.core?.renderer?.xr;
+  if (!xr) return;
+  const sync = () => {
+    const session = xr.getSession?.();
+    const ar = Boolean(session) && session.environmentBlendMode === 'alpha-blend';
+    for (const object of objects) if (object) object.visible = !ar;
+  };
+  xr.addEventListener('sessionstart', sync);
+  xr.addEventListener('sessionend', sync);
+}

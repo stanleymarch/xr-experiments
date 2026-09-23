@@ -1,8 +1,11 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { pointsMaterial, shockRingMaterial } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=phone-ui-16';
-import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
+import { makeHud } from '../common/hud.js?v=mobile-ux-17';
+import {
+  enableAutomation, hideInPassthrough, installLaunchShell, installXrGuards,
+  isAutomation, watchXrButton,
+} from '../common/boot.js?v=mobile-ux-17';
 
 // WEATHER//ROOM — погода снаружи становится телом комнаты.
 // Один запрос к Open-Meteo (без ключа), дальше всё локально. Каждое поле
@@ -374,6 +377,8 @@ class WeatherRoom extends xb.Script {
       ],
     });
     this.add(this.hud.card);
+    // Дымка — атмосфера VR; в AR она тонирует весь passthrough камеры.
+    hideInPassthrough([this.hazeMesh]);
     if (isAutomation()) {
       this.state = {
         temp: 7, rh: 92, cloud: 94, wind: 8.5, gust: 14, wdir: 225,
@@ -797,6 +802,11 @@ options.setAppDescription('Погода снаружи — слои частиц
 
 enableAutomation(options);
 installXrGuards();
+installLaunchShell(options, [
+  'Вход — кнопка внизу: погода встанет вокруг тебя',
+  'Слайдер — время −24…+24 ч, LOCATE — погода в твоей точке',
+  'Меню — панель внизу экрана',
+]);
 
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new WeatherRoom());

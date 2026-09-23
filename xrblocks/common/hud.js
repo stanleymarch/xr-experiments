@@ -79,7 +79,7 @@ export function makeHud({
   stat = '',
   buttons = [], // {id, label, icon?, onTap}
   slider = null, // {min, max, step, value, ariaLabel, onInput}
-  offset = [0.82, 0.42, -1.15],
+  offset = [0, -0.32, -0.85],
   width = 0.6,
 }) {
   const children = [
@@ -249,12 +249,13 @@ export function makeHud({
     }
   };
   // AR camera pose becomes valid only when the session starts; re-place then,
-  // without re-enabling any head-follow behaviour.
+  // without re-enabling any head-follow behaviour. The renderer swaps in the
+  // XR camera matrix on the first session frames, so placement waits two
+  // frames rather than using the stale pre-session pose.
   xb.core?.renderer?.xr?.addEventListener('sessionstart', () => {
     setPhoneControlsVisibility();
-    place();
+    requestAnimationFrame(() => requestAnimationFrame(place));
   });
-  xb.core?.renderer?.xr?.addEventListener('sessionend', setPhoneControlsVisibility);
   let lastStat = null;
   return {
     card,

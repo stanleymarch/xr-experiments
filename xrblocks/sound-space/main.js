@@ -3,8 +3,11 @@ import * as xb from 'xrblocks';
 import {
   ribbonMaterial, shockRingMaterial, lineMaterial, makePoints, PALETTES,
 } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=phone-ui-16';
-import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
+import { makeHud } from '../common/hud.js?v=mobile-ux-17';
+import {
+  enableAutomation, installLaunchShell, installXrGuards,
+  isAutomation, watchXrButton,
+} from '../common/boot.js?v=mobile-ux-17';
 
 // SOUND//SPACE — звук строит объём вокруг слушателя, а не плоскую ленту.
 //
@@ -318,7 +321,7 @@ class SoundSpace extends xb.Script {
     this.hud = makeHud({
       title: 'SOUND//SPACE',
       stat: 'MIC — bass at your feet, highs around. FREEZE — drop a snapshot into the room',
-      offset: [-0.82, 0.42, -1.15],
+      // Центрированный дефолт: боковой оффсет не попадает в портретный фрустум.
       buttons: [
         {id: 'mic', label: 'MIC', icon: 'mic', onTap: () => this.enableMic()},
         {id: 'freeze', label: 'FREEZE', onTap: () => this.freeze()},
@@ -726,7 +729,11 @@ options.setAppDescription('Частоты встают вокруг тебя. FR
 
 enableAutomation(options);
 installXrGuards();
-
+installLaunchShell(options, [
+  'Вход — кнопка внизу: спектр встанет вокруг тебя',
+  'MIC — лента из микрофона, FREEZE — скульптура момента',
+  'Меню — панель внизу экрана',
+]);
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new SoundSpace());
   xb.init(options);

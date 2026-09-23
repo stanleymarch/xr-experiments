@@ -132,9 +132,9 @@ const PHONE_PANELS = new Set();
 
 /** true, если активная XR-сессия управляется с экрана телефона. */
 function isPhoneSession() {
-  const session = xb.core?.renderer?.xr?.getSession();
-  if (!session) return false;
-  if (session.interactionMode === 'screen') return true;
+  // MDN: на телефоне в immersive-ar interactionMode === 'screen-space'
+  // (не 'screen'). targetRayMode === 'screen' — второй официальный признак.
+  if (session.interactionMode === 'screen-space') return true;
   try {
     for (const src of session.inputSources) {
       if (src.targetRayMode === 'screen') return true;
@@ -236,10 +236,15 @@ export function spatialControls({ title, status = '…', controls, width = 0.72 
 
   const screen = make();
   const overlay = new xb.UIOverlay({
+    // Компоновка — как в официальном spatial_ui_lab: абсолютное позиционирование
+    // в приватном full-viewport контейнере, world-трансформы игнорируются SDK.
     style: {
-      width: '100%', height: '100%',
-      flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center',
-      padding: 60,
+      width: '94%',
+      maxWidth: 640,
+      position: 'absolute',
+      left: '50%',
+      bottom: 48,
+      transform: { translateX: '-50%' },
     },
     children: [
       new xb.UIPanel({

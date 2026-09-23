@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-12';
+import { makeHud } from '../common/hud.js?v=anchored-ui-14';
 import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
 import { PALETTES } from '../common/fx.js';
 
@@ -1260,6 +1260,7 @@ class CityOrbit extends xb.Script {
   }
 
   update() {
+    this.hud.update();
     this.ring.material.opacity = 0.6 + 0.3 * Math.sin(performance.now() * 0.003);
     this.youRing.scale.setScalar(1 + 0.12 * Math.sin(performance.now() * 0.004));
     if (this.buildingMaterial) {
@@ -1305,6 +1306,7 @@ options.gestures.setGestureEnabled('pinch', true);
 // масштаб города работают и на десктопе; позы рук — по Left Shift.
 options.simulator.modeToggle.enabled = true;
 options.enableReticles();
+options.enableAnchors();
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('CITY//ORBIT');
 options.setAppDescription('OSM-голограмма твоих окрестностей: улицы, корпуса, вода и места. Тап — карточка, две руки — масштаб.');

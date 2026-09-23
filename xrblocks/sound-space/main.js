@@ -3,7 +3,7 @@ import * as xb from 'xrblocks';
 import {
   ribbonMaterial, shockRingMaterial, lineMaterial, makePoints, PALETTES,
 } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-12';
+import { makeHud } from '../common/hud.js?v=anchored-ui-14';
 import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
 
 // SOUND//SPACE — звук строит объём вокруг слушателя, а не плоскую ленту.
@@ -598,6 +598,7 @@ class SoundSpace extends xb.Script {
   }
 
   update() {
+    this.hud.update();
     const dt = Math.min(xb.getDeltaTime(), 0.05);
     this.time += dt;
     const cam = xb.core.camera;
@@ -718,6 +719,7 @@ const options = new xb.Options();
 // пользователя, а ранняя декларация задерживает старт опыта. Доступ
 // запрашивается по кнопке MIC — тогда же создаётся AudioContext.
 options.enableReticles();
+options.enableAnchors();
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('SOUND//SPACE');
 options.setAppDescription('Частоты встают вокруг тебя. FREEZE — поставить снимок в комнату.');

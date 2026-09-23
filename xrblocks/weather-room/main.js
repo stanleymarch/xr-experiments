@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { pointsMaterial, shockRingMaterial } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-12';
+import { makeHud } from '../common/hud.js?v=anchored-ui-14';
 import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
 
 // WEATHER//ROOM — погода снаружи становится телом комнаты.
@@ -675,6 +675,7 @@ class WeatherRoom extends xb.Script {
 
 
   update() {
+    this.hud.update();
     const dt = Math.min(xb.getDeltaTime(), 0.05);
     const t = performance.now() * 0.001;
     const s = this.state;
@@ -784,6 +785,7 @@ class WeatherRoom extends xb.Script {
 const options = new xb.Options();
 options.enableReticles();
 options.enablePlaneDetection();
+options.enableAnchors();
 options.world.planes.showDebugVisualizations =
   new URLSearchParams(window.location.search).has('debug');
 options.xrButton.showEnterSimulatorButton = true;

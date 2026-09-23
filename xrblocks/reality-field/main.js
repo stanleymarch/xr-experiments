@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
 import { makePoints, shockRingMaterial, dome } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-12';
+import { makeHud } from '../common/hud.js?v=anchored-ui-14';
 
 // REALITY//FIELD — комната как физическое поле.
 // Импульс летит из руки/взгляда, бьётся о depth-mesh (Quest) или
@@ -347,6 +347,7 @@ class RealityField extends xb.Script {
   }
 
   update() {
+    this.hud.update();
     const dt = Math.min(xb.getDeltaTime(), 0.05);
     if (this.charge > 0) this.charge = Math.min(2.5, this.charge + dt * 1.5);
     this.emitter();
@@ -513,6 +514,7 @@ options.enableHands();
 options.enableGestures();
 options.enableDepth();
 options.enablePlaneDetection();
+options.enableAnchors();
 options.world.planes.showDebugVisualizations =
   new URLSearchParams(window.location.search).has('debug');
 options.enableReticles();

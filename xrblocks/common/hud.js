@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 
-// Пространственная панель управления опытом — компоненты XR Blocks из
-// официального UI kit. FollowHead держит панель в поле зрения, FaceCamera
-// разворачивает её к пользователю. Один UI работает с лучом/пинчем на Quest,
-// тапом в AR и мышью в симуляторе.
+// Пространственная панель управления опытом. Она ставится в мир один раз
+// перед пользователем и остаётся там: HUD не должен ехать за головой ни в VR,
+// ни в phone AR. UICard сохраняет native hit-targets XR Blocks для луча,
+// pinch, тапа и мыши.
 
 
 export function makeHud({
@@ -87,6 +87,13 @@ export function makeHud({
 
   const card = new xb.UICard({
     size: {width, height: 'auto'},
+    // SDK template: a card is world-space by default; its edge is the
+    // explicit drag target, so a control press never becomes a scene action.
+    manipulation: {
+      actions: {translate: {faceCamera: true}},
+      handle: {action: 'translate'},
+    },
+    edge: true,
     style: {
       flexDirection: 'column',
       gap: 12,
@@ -95,22 +102,83 @@ export function makeHud({
     },
     children,
   });
-  const anchor = new THREE.Group();
-  anchor.add(
-    card,
-    new xb.FollowHead({offset: new THREE.Vector3(...offset), smoothing: 0.1}),
-    new xb.FaceCamera({mode: 'spherical', smoothing: 0.1})
-  );
+  card.name = `${title.toLowerCase().replaceAll('/', '-')}-hud`;
 
+  // World-locked. Placement happens once at startup and once per XR-session
+  // entry; it never follows head pose after that. The transform mirrors the
+  // SDK FaceCamera placement math, but without attaching a tracking script.
+  const cameraPosition = new THREE.Vector3();
+  const cardPosition = new THREE.Vector3();
+  const cardQuaternion = new THREE.Quaternion();
+  const localOffset = new THREE.Vector3(...offset);
+  const matrix = new THREE.Matrix4();
+  let anchorId = null;
+  let anchorPending = false;
+  let manipulating = false;
+
+  const place = () => {
+    const camera = xb.core?.camera;
+    if (!camera) return;
+    camera.updateWorldMatrix(true, false);
+    camera.getWorldPosition(cameraPosition);
+    card.position.copy(localOffset).applyQuaternion(camera.quaternion).add(cameraPosition);
+    matrix.lookAt(cameraPosition, card.position, new THREE.Vector3(0, 1, 0));
+    card.quaternion.setFromRotationMatrix(matrix);
+  };
+
+  const pin = async (replace = false) => {
+    const anchors = xb.core?.world?.anchors;
+    const session = xb.core?.renderer?.xr?.getSession?.();
+    if (
+      !anchors ||
+      !session ||
+      anchorPending ||
+      (!replace && anchorId) ||
+      anchors.capability === 'unsupported' ||
+      typeof XRRigidTransform !== 'function'
+    ) return;
+
+    anchorPending = true;
+    card.getWorldPosition(cardPosition);
+    card.getWorldQuaternion(cardQuaternion);
+    const previousId = replace ? anchorId : null;
+    const tracked = await anchors.create(
+      new XRRigidTransform(
+        {x: cardPosition.x, y: cardPosition.y, z: cardPosition.z},
+        {
+          x: cardQuaternion.x, y: cardQuaternion.y,
+          z: cardQuaternion.z, w: cardQuaternion.w,
+        }
+      ),
+      card.name
+    );
+    anchorPending = false;
+    if (!tracked) return;
+    if (previousId && previousId !== tracked.id) anchors.delete(previousId);
+    anchorId = tracked.id;
+  };
+
+  card.onObjectManipulate = (event) => {
+    manipulating = event.phase === 'start' || event.phase === 'update';
+    if (event.phase === 'end' || event.phase === 'cancel') {
+      manipulating = false;
+      void pin(true);
+    }
+  };
+
+  requestAnimationFrame(place);
+  // AR camera pose becomes valid only when the session starts; re-place then,
+  // without re-enabling any head-follow behaviour.
+  xb.core?.renderer?.xr?.addEventListener('sessionstart', place);
   let lastStat = null;
   return {
-    card: anchor,
+    card,
     owns(target) {
       // Global Script hooks still receive select events after a semantic UI
       // control handled them. Experiences use this guard so a phone tap on a
       // slider/button does not also fire the scene action underneath.
       for (let node = target; node; node = node.parent) {
-        if (node === anchor) return true;
+        if (node === card) return true;
       }
       return false;
     },
@@ -131,6 +199,16 @@ export function makeHud({
     },
     setSliderLabel(value) {
       if (sliderLabel && sliderLabel.text !== value) sliderLabel.text = value;
+    },
+    update() {
+      if (!anchorId) void pin();
+      if (manipulating || !anchorId) return;
+      const referenceSpace = xb.core?.renderer?.xr?.getReferenceSpace?.();
+      const pose = xb.core?.world?.anchors?.getPose(anchorId, referenceSpace);
+      if (!pose) return;
+      const {position, orientation} = pose.transform;
+      card.position.set(position.x, position.y, position.z);
+      card.quaternion.set(orientation.x, orientation.y, orientation.z, orientation.w);
     },
   };
 }

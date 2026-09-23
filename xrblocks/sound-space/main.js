@@ -3,8 +3,8 @@ import * as xb from 'xrblocks';
 import {
   ribbonMaterial, shockRingMaterial, lineMaterial, makePoints, PALETTES,
 } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-9';
-import { installXrGuards, watchXrButton } from '../common/boot.js';
+import { makeHud } from '../common/hud.js?v=spatial-ui-12';
+import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
 
 // SOUND//SPACE — звук строит объём вокруг слушателя, а не плоскую ленту.
 //
@@ -317,13 +317,14 @@ class SoundSpace extends xb.Script {
 
     this.hud = makeHud({
       title: 'SOUND//SPACE',
-      stat: 'MIC — басы у ног, верха вокруг. FREEZE — поставить снимок в комнату',
-      offset: [0, -0.4, -0.7],
+      stat: 'MIC — bass at your feet, highs around. FREEZE — drop a snapshot into the room',
+      offset: [-0.82, 0.42, -1.15],
       buttons: [
         {id: 'mic', label: 'MIC', icon: 'mic', onTap: () => this.enableMic()},
         {id: 'freeze', label: 'FREEZE', onTap: () => this.freeze()},
         {id: 'clear', label: 'CLEAR', onTap: () => this.clear()},
       ],
+      width: 0.62,
     });
     this.add(this.hud.card);
   }
@@ -349,9 +350,9 @@ class SoundSpace extends xb.Script {
       this.perm = true;
       this.frames = 0;
       this.hist.fill(0);
-      this.stat('MIC — говори, хлопай, играй: частоты встают вокруг');
+      this.stat('MIC — speak, clap, play: frequencies rise around you');
     } catch (e) {
-      this.stat(`mic недоступен (${e.name}) — демо-генератор`);
+      this.stat(`mic unavailable (${e.name}) — demo generator`);
     }
   }
 
@@ -514,7 +515,7 @@ class SoundSpace extends xb.Script {
     if (!this.frames) return;
     this.dropSculpture(this.disp);
     this.frozenState = this.state;
-    this.stat(`FREEZE ${this.state} · снимок стоит в комнате`);
+    this.stat(`FREEZE ${this.state} · snapshot stands in the room`);
   }
 
   dropSculpture(disp) {
@@ -593,7 +594,7 @@ class SoundSpace extends xb.Script {
     this.noise = 0;
     this.w = {quiet: 1, speech: 0, music: 0};
     this.tint.copy(TINTS.QUIET);
-    this.stat('CLEAR · комнату вымели, слушаю тишину');
+    this.stat('CLEAR · room swept, listening to silence');
   }
 
   update() {
@@ -721,6 +722,7 @@ options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('SOUND//SPACE');
 options.setAppDescription('Частоты встают вокруг тебя. FREEZE — поставить снимок в комнату.');
 
+enableAutomation(options);
 installXrGuards();
 
 document.addEventListener('DOMContentLoaded', () => {

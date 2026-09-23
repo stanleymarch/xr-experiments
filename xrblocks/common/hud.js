@@ -12,14 +12,14 @@ export function makeHud({
   stat = '',
   buttons = [], // {id, label, icon?, onTap}
   slider = null, // {min, max, step, value, ariaLabel, onInput}
-  offset = [0, -0.28, -1.05],
-  width = 0.62,
+  offset = [0.82, 0.42, -1.15],
+  width = 0.6,
 }) {
   const children = [
     new xb.UIText({
       text: title,
       style: {
-        fontSize: 24,
+        fontSize: 30,
         fontWeight: 'bold',
         textAlign: 'center',
       },
@@ -29,10 +29,10 @@ export function makeHud({
   const statText = new xb.UIText({
     text: stat,
     style: {
-      fontSize: 15,
-      opacity: 0.78,
+      fontSize: 17,
+      opacity: 0.82,
       textAlign: 'center',
-      lineHeight: 1.35,
+      lineHeight: 1.25,
     },
   });
   children.push(statText);
@@ -42,7 +42,7 @@ export function makeHud({
   if (slider) {
     sliderLabel = new xb.UIText({
       text: '',
-      style: {fontSize: 15, flexShrink: 0},
+      style: {fontSize: 16, flexShrink: 0},
     });
     sliderEl = new xb.UISlider({
       ariaLabel: slider.ariaLabel || 'slider',
@@ -50,7 +50,7 @@ export function makeHud({
       max: slider.max,
       step: slider.step,
       value: slider.value,
-      style: {flexGrow: 1, height: 36},
+      style: {flexGrow: 1, height: 40},
       onInput: (v) => slider.onInput(v),
     });
     children.push(
@@ -75,7 +75,7 @@ export function makeHud({
           const element = new xb.UIButton({
             label: button.label,
             icon: button.icon,
-            style: {flexGrow: 1},
+            style: {flexGrow: 1, fontSize: 17, padding: 14},
             onClick: () => button.onTap(),
           });
           byId.set(button.id, element);
@@ -85,7 +85,16 @@ export function makeHud({
     );
   }
 
-  const card = new xb.UICard({size: {width, height: 'auto'}, children});
+  const card = new xb.UICard({
+    size: {width, height: 'auto'},
+    style: {
+      flexDirection: 'column',
+      gap: 12,
+      padding: 18,
+      backgroundColor: '#101726',
+    },
+    children,
+  });
   const anchor = new THREE.Group();
   anchor.add(
     card,

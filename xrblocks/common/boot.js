@@ -12,6 +12,23 @@
 //    края, а этот модуль вешает класс in-session, когда кнопка становится
 //    END XR, — и она ужимается в компактную пилюлю поверх сессии.
 
+import * as xb from 'xrblocks';
+
+export const isAutomation = () =>
+  new URLSearchParams(window.location.search).has('test');
+
+export function enableAutomation(options) {
+  if (!isAutomation()) return false;
+  document.body.classList.add('automation');
+  options.reticles.enabled = false;
+  options.enableAutomationMode({
+    defaultMode: 'User',
+    enableHands: false,
+    enableCamera: true,
+  });
+  return true;
+}
+
 export const xrDropped = [];
 
 export function installXrGuards() {

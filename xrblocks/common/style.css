@@ -21,6 +21,9 @@ canvas { display:block; }
   backdrop-filter:blur(6px); }
 #back:hover { border-color:var(--acc); }
 body:has(#XRButtonWrapper.in-session) #back { display:none; }
+body.automation #back,
+body.automation #XRButtonWrapper { display:none !important; }
+
 
 /* Оверлей входа XR Blocks. Без этих правил wrapper падает голой системной
    кнопкой после канваса — на телефоне его приходится искать скроллом. */

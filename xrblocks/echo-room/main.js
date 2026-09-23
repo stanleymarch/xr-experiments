@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { makePoints } from '../common/fx.js';
-import { installXrGuards, watchXrButton } from '../common/boot.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-9';
+import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
+import { makeHud } from '../common/hud.js?v=spatial-ui-12';
 
 // ECHO//ROOM — трёхмерный temporal debugger реальности.
 // Каждое движение луча оставляет траекторию, каждый тап — импульс.
@@ -81,14 +81,15 @@ class EchoRoom extends xb.Script {
     this.ghostGeo.attributes.color.needsUpdate = true;
     this.hud = makeHud({
       title: 'ECHO//ROOM',
-      stat: 'двигайся — комната помнит минуту. Тап — импульс, слайдер — прошлое',
+      stat: 'MOVE — the room remembers a minute. TAP — impulse, slider — the past',
       slider: {
-        min: -60, max: 0, step: 1, value: 0, ariaLabel: 'скраб времени',
+        min: -60, max: 0, step: 1, value: 0, ariaLabel: 'time scrub',
         onInput: (v) => { this.scrub = v; },
       },
       buttons: [{id: 'clear', label: 'CLEAR', onTap: () => this.wipe()}],
     });
     this.add(this.hud.card);
+    this._autoT = isAutomation() ? 0 : null;
   }
 
   stat(s) { this.hud.setStat(s); }
@@ -107,7 +108,7 @@ class EchoRoom extends xb.Script {
     this.scrub = 0;
     this.hud.setSliderValue(0);
     this.ghostPts.visible = false;
-    this.stat('история стёрта');
+    this.stat('history cleared');
   }
 
   aim() {
@@ -163,12 +164,12 @@ class EchoRoom extends xb.Script {
       l.line.visible = true;
     }
     this.selected = pulse;
-    this.stat(`слой вокруг ✦ ${this.fmtAgo(t0)} · NOW / −1с / −2с / −3с / −4с`);
+    this.stat(`layers around ✦ ${this.fmtAgo(t0)} · NOW / -1s / -2s / -3s / -4s`);
   }
 
   fmtAgo(t) {
     const d = performance.now() / 1000 - t;
-    return d < 1 ? 'только что' : `${d.toFixed(0)}с назад`;
+    return d < 1 ? 'just now' : `${d.toFixed(0)}s ago`;
   }
 
   prune() {
@@ -186,6 +187,28 @@ class EchoRoom extends xb.Script {
     const dt = Math.min(xb.getDeltaTime(), 0.05);
     const now = performance.now() / 1000;
     this.aim();
+    // Automation: статичная камера не оставляет следов — сеем импульсы сами,
+    if (this._autoT !== null && (this._autoT += dt) >= 2.5) {
+      this._autoT = 0;
+      const a = Math.random() * Math.PI * 2;
+      const r = 0.7 + Math.random() * 0.6;
+      const pos = this._sel.set(Math.cos(a) * r, 0.7 + Math.random() * 0.9, -0.6 - Math.abs(Math.sin(a)) * r);
+      const m = new THREE.Mesh(this.ringGeo, new THREE.MeshBasicMaterial({
+        color: 0x9fe8ff, transparent: true, opacity: 0.9,
+        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+      }));
+      m.position.copy(pos);
+      m.lookAt(xb.core.camera.position);
+      this.add(m);
+      const t = now;
+      this.pulses.push({ mesh: m, at: t, pos: pos.clone() });
+      this.log.push({ t, kind: 'pulse', pos: pos.clone() });
+      if (this.pulses.length > MAX_PULSES) {
+        const old = this.pulses.shift();
+        this.remove(old.mesh); old.mesh.material.dispose();
+      }
+      this.prune();
+    }
 
     // пишем точку траектории каждый кадр — сразу в обе половины буфера
     this._tip.copy(this._o).addScaledVector(this._d.normalize(), 1.0);
@@ -245,8 +268,8 @@ class EchoRoom extends xb.Script {
     if ((this._st = (this._st || 0) + dt) > 0.5) {
       this._st = 0;
       this.stat(
-        (this.scrub < -0.5 ? `СКРАБ ${this.scrub.toFixed(0)}с · призрак стоит` : `событий в памяти: ${this.log.length} · импульсов: ${this.pulses.length}`) +
-        (this.selected ? ` · слои: ${n} точек` : (this.scrub < -0.5 ? '' : ' · кликни по ✦ чтобы развернуть слои'))
+        (this.scrub < -0.5 ? `SCRUB ${this.scrub.toFixed(0)}s · ghost stands` : `events in memory: ${this.log.length} · pulses: ${this.pulses.length}`) +
+        (this.selected ? ` · layers: ${n} points` : (this.scrub < -0.5 ? '' : ' · click a ✦ to unfold layers'))
       );
     }
     // История поз: голова всегда; руки — контроллеры, иначе плечи из базиса
@@ -321,6 +344,7 @@ options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('ECHO//ROOM');
 options.setAppDescription('След и импульсы держат минуту. Тап по ✦ — временные слои.');
 
+enableAutomation(options);
 installXrGuards();
 
 document.addEventListener('DOMContentLoaded', () => {

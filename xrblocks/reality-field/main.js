@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
-import { installXrGuards, watchXrButton } from '../common/boot.js';
+import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
 import { makePoints, shockRingMaterial, dome } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-9';
+import { makeHud } from '../common/hud.js?v=spatial-ui-12';
 
 // REALITY//FIELD — комната как физическое поле.
 // Импульс летит из руки/взгляда, бьётся о depth-mesh (Quest) или
@@ -41,13 +41,19 @@ class RealityField extends xb.Script {
     this.homeCol = new Float32Array(COUNT * 3);
     this.hue = new Float32Array(COUNT);
     const c = new THREE.Color();
+    const strands = 22;
+    const rows = Math.ceil(COUNT / strands);
     for (let i = 0; i < COUNT; i++) {
-      const x = (Math.random() * 2 - 1) * 3;
-      const y = Math.random() * 2.6 + 0.1;
-      const z = (Math.random() * 2 - 1) * 3;
+      const strand = i % strands;
+      const u = Math.floor(i / strands) / Math.max(1, rows - 1);
+      const radius = 0.55 + strand / (strands - 1) * 2.3;
+      const a = strand / strands * Math.PI * 2 + u * Math.PI * 3.4;
+      const x = Math.sin(a) * radius;
+      const y = 0.15 + u * 2.7 + Math.sin(a * 1.7) * 0.07;
+      const z = Math.cos(a) * radius * 0.78;
       pos.set([x, y, z], i * 3);
       this.home.set([x, y, z], i * 3);
-      this.hue[i] = 0.52 + Math.random() * 0.18;
+      this.hue[i] = 0.52 + 0.16 * strand / strands;
       c.setHSL(this.hue[i], 0.9, 0.55);
       col.set([c.r, c.g, c.b], i * 3);
       this.homeCol.set([c.r, c.g, c.b], i * 3);
@@ -56,20 +62,34 @@ class RealityField extends xb.Script {
     this.pgeo.attributes.color.needsUpdate = true;
     this.pmat = this.points.material;
 
-    // тонкие светящиеся силовые линии: 90 отрезков между соседями по дому
-    const SEG = 90;
-    const lpos = new Float32Array(SEG * 6);
-    this.links = new THREE.BufferGeometry();
-    this.links.setAttribute('position', new THREE.BufferAttribute(lpos, 3));
-    this.linkLines = new THREE.LineSegments(this.links, new THREE.LineBasicMaterial({
-      color: 0x2a7fa8, transparent: true, opacity: 0.28,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    }));
-    this.linkLines.frustumCulled = false;
-    this.add(this.linkLines);
-    // пары: i-й линк соединяет точки (i*7)%N и (i*13+5)%N
-    this.linkPairs = [];
-    for (let l = 0; l < SEG; l++) this.linkPairs.push([(l * 7) % COUNT, (l * 13 + 5) % COUNT]);
+    // Непрерывные силовые траектории: частицы читаются как поле, а не пыль.
+    this.fieldLines = new THREE.Group();
+    this.flowMaterials = [];
+    for (let strand = 0; strand < strands; strand++) {
+      const path = [];
+      const radius = 0.55 + strand / (strands - 1) * 2.3;
+      for (let row = 0; row < rows; row++) {
+        const u = row / Math.max(1, rows - 1);
+        const a = strand / strands * Math.PI * 2 + u * Math.PI * 3.4;
+        path.push(new THREE.Vector3(
+          Math.sin(a) * radius,
+          0.15 + u * 2.7 + Math.sin(a * 1.7) * 0.07,
+          Math.cos(a) * radius * 0.78
+        ));
+      }
+      c.setHSL(0.52 + 0.16 * strand / strands, 0.92, 0.6);
+      const material = new THREE.MeshBasicMaterial({
+        color: c, transparent: true, opacity: 0.28,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const curve = new THREE.CatmullRomCurve3(path, false, 'centripetal');
+      this.fieldLines.add(new THREE.Mesh(
+        new THREE.TubeGeometry(curve, 96, 0.0045, 5, false),
+        material
+      ));
+      this.flowMaterials.push(material);
+    }
+    this.add(this.fieldLines);
 
     // --- fallback-комната: пол + сфера (видны только в DEBUG) ---
     this.floor = new THREE.Mesh(
@@ -106,6 +126,7 @@ class RealityField extends xb.Script {
     this.charge = 0;
     this.debug = false;
     this.dream = false;
+    this._autoFire = isAutomation() ? 0 : null;
     this.raycaster = new THREE.Raycaster();
     this.raycaster.far = 9;
     this._ray = new THREE.Ray();
@@ -143,7 +164,7 @@ class RealityField extends xb.Script {
     g.addEventListener('gestureend', this._ge);
     this.hud = makeHud({
       title: 'REALITY//FIELD',
-      stat: 'ready — click / pinch = импульс',
+      stat: 'READY — CLICK / PINCH = IMPULSE',
       buttons: [
         {id: 'debug', label: 'DEBUG', onTap: () => this.setDebug(!this.debug)},
         {id: 'dream', label: 'DREAM', onTap: () => this.setDream(!this.dream)},
@@ -152,7 +173,7 @@ class RealityField extends xb.Script {
     this.add(this.hud.card);
 
     this._fpsN = 0; this._fpsT = 0; this._fps = 0;
-    this.stat('ready — click / pinch = импульс');
+    this.stat('READY — CLICK / PINCH = IMPULSE');
   }
 
   stat(s) { this.hud.setStat(s); }
@@ -177,7 +198,7 @@ class RealityField extends xb.Script {
     this.dream = on;
     this.hud.setLabel('dream', on ? 'DREAM ·on' : 'DREAM');
     this.pmat.uniforms.uSize.value = on ? 0.08 : 0.045;
-    this.linkLines.material.opacity = on ? 0.12 : 0.28;
+    for (const material of this.flowMaterials) material.opacity = on ? 0.14 : 0.28;
   }
 
   onGesture(detail, start) {
@@ -329,6 +350,10 @@ class RealityField extends xb.Script {
     const dt = Math.min(xb.getDeltaTime(), 0.05);
     if (this.charge > 0) this.charge = Math.min(2.5, this.charge + dt * 1.5);
     this.emitter();
+    if (this._autoFire !== null && (this._autoFire += dt) >= 3) {
+      this._autoFire = 0;
+      this.fire(1.2);
+    }
     const ex = this._o.x, ey = this._o.y, ez = this._o.z;
     if (this.debug) {
       const a = this.debugRayGeo.attributes.position.array;
@@ -429,12 +454,11 @@ class RealityField extends xb.Script {
     this.pgeo.attributes.position.needsUpdate = true;
     this.pgeo.attributes.color.needsUpdate = true;
 
-    // силовые линии следуют за концами
-    const lp = this.links.attributes.position.array;
-    this.linkPairs.forEach(([a, b], l) => {
-      lp.set([p[a * 3], p[a * 3 + 1], p[a * 3 + 2], p[b * 3], p[b * 3 + 1], p[b * 3 + 2]], l * 6);
-    });
-    this.links.attributes.position.needsUpdate = true;
+    const pulse = performance.now() * 0.0007;
+    for (let i = 0; i < this.flowMaterials.length; i++) {
+      this.flowMaterials[i].opacity = (this.dream ? 0.1 : 0.21)
+        + 0.13 * (0.5 + 0.5 * Math.sin(pulse + i * 0.46));
+    }
 
     for (const r of this.rings) {
       if (r.t >= r.dur) { r.mesh.visible = false; continue; }
@@ -470,7 +494,10 @@ class RealityField extends xb.Script {
     g.removeEventListener('gesturestart', this._gs);
     g.removeEventListener('gestureend', this._ge);
     this.pgeo.dispose(); this.pmat.dispose();
-    this.links.dispose(); this.linkLines.material.dispose();
+    for (const line of this.fieldLines.children) {
+      line.geometry.dispose();
+      line.material.dispose();
+    }
     this.debugRayGeo.dispose(); this.debugRay.material.dispose();
     this.normalArrow.line.geometry.dispose(); this.normalArrow.line.material.dispose();
     this.normalArrow.cone.geometry.dispose(); this.normalArrow.cone.material.dispose();
@@ -502,6 +529,7 @@ options.setAppDescription('Импульс из pinch бьёт в реальну�
 
 // Телефон без depth/hand-tracking получит сессию без них: boot.js даёт
 // requestSession вторую попытку, а опыт остаётся на fallback-геометрии.
+enableAutomation(options);
 installXrGuards();
 
 document.addEventListener('DOMContentLoaded', () => {

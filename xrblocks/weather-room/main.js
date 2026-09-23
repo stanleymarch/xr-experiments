@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { pointsMaterial, shockRingMaterial } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-9';
-import { installXrGuards, watchXrButton } from '../common/boot.js';
+import { makeHud } from '../common/hud.js?v=spatial-ui-12';
+import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
 
 // WEATHER//ROOM — погода снаружи становится телом комнаты.
 // Один запрос к Open-Meteo (без ключа), дальше всё локально. Каждое поле
@@ -41,23 +41,23 @@ const C = {
   moteCold: new THREE.Color(0x9fc4ff),
   moteWarm: new THREE.Color(0xffd2a0),
   splash: new THREE.Color(0xcfeaff),
-  deckDay: new THREE.Color(0xfff2e2),
-  deckNight: new THREE.Color(0x33405f),
-  hazeDay: new THREE.Color(0xbcd2e6),
-  hazeNight: new THREE.Color(0x2c3a56),
+  deckDay: new THREE.Color(0x18243a),
+  deckNight: new THREE.Color(0x080e1c),
+  hazeDay: new THREE.Color(0x334861),
+  hazeNight: new THREE.Color(0x11182b),
 };
 
 // Коды WMO: [от, до, имя].
 const WMO = [
-  [0, 0, 'ЯСНО'], [1, 1, 'ПРЕИМ. ЯСНО'], [2, 2, 'ПЕРЕМЕННАЯ ОБЛАЧНОСТЬ'], [3, 3, 'ПАСМУРНО'],
-  [45, 48, 'ТУМАН'], [51, 55, 'МОРОСЬ'], [56, 57, 'ЛЕДЯНАЯ МОРОСЬ'],
-  [61, 61, 'НЕБОЛЬШОЙ ДОЖДЬ'], [63, 63, 'ДОЖДЬ'], [65, 65, 'СИЛЬНЫЙ ДОЖДЬ'],
-  [66, 67, 'ЛЕДЯНОЙ ДОЖДЬ'], [71, 71, 'НЕБОЛЬШОЙ СНЕГ'], [73, 73, 'СНЕГ'],
-  [75, 75, 'СИЛЬНЫЙ СНЕГ'], [77, 77, 'СНЕЖНАЯ КРУПА'], [80, 80, 'ЛИВЕНЬ'],
-  [81, 81, 'СИЛЬНЫЙ ЛИВЕНЬ'], [82, 82, 'ОЧЕНЬ СИЛЬНЫЙ ЛИВЕНЬ'], [85, 86, 'СНЕЖНЫЙ ЛИВЕНЬ'],
-  [95, 95, 'ГРОЗА'], [96, 99, 'ГРОЗА С ГРАДОМ'],
+  [0, 0, 'CLEAR'], [1, 1, 'MOSTLY CLEAR'], [2, 2, 'PARTLY CLOUDY'], [3, 3, 'OVERCAST'],
+  [45, 48, 'FOG'], [51, 55, 'DRIZZLE'], [56, 57, 'FREEZING DRIZZLE'],
+  [61, 61, 'LIGHT RAIN'], [63, 63, 'RAIN'], [65, 65, 'HEAVY RAIN'],
+  [66, 67, 'FREEZING RAIN'], [71, 71, 'LIGHT SNOW'], [73, 73, 'SNOW'],
+  [75, 75, 'HEAVY SNOW'], [77, 77, 'SNOW GRAINS'], [80, 80, 'SHOWERS'],
+  [81, 81, 'HEAVY SHOWERS'], [82, 82, 'VIOLENT SHOWERS'], [85, 86, 'SNOW SHOWERS'],
+  [95, 95, 'THUNDERSTORM'], [96, 99, 'THUNDERSTORM + HAIL'],
 ];
-const ROSE = ['С', 'СВ', 'В', 'ЮВ', 'Ю', 'ЮЗ', 'З', 'СЗ'];
+const ROSE = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const num = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -174,11 +174,11 @@ const DECK_FRAG = /* glsl */`
   }
 
   void main() {
-    vec2 p = vUv * 6.0 + uDrift;
-    float n = vnoise(p, 6.0) * 0.68 + vnoise(p * 2.0, 12.0) * 0.32;
-    float t = clamp((n - (1.02 - uCover)) / 0.3, 0.0, 1.0);
-    float edge = smoothstep(1.0, 0.35, length(vUv - 0.5) * 2.0);
-    gl_FragColor = vec4(uColor * uLum * (0.55 + 0.45 * t), t * edge * 0.6);
+    vec2 p = vUv * 7.0 + uDrift;
+    float n = vnoise(p, 7.0) * 0.62 + vnoise(p * 2.3, 16.0) * 0.26 + vnoise(p * 4.7, 33.0) * 0.12;
+    float t = clamp((n - (1.06 - uCover * 1.05)) / 0.22, 0.0, 1.0);
+    float edge = smoothstep(1.0, 0.3, length(vUv - 0.5) * 2.0);
+    gl_FragColor = vec4(uColor * uLum * (0.5 + 0.6 * t), uCover * t * edge * 0.92);
   }`;
 
 // Мгла — сфера вокруг комнаты: чем хуже видимость, тем гуще аддитивная пелена,
@@ -196,6 +196,50 @@ const HAZE_FRAG = /* glsl */`
   void main() {
     gl_FragColor = vec4(uColor * uLum, uFog * mix(0.5, 0.05, vY));
   }`;
+function rainMaterial({ size, color, opacity }) {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    vertexColors: true,
+    uniforms: {
+      uSize: { value: size },
+      uColor: { value: color.clone() },
+      uOpacity: { value: opacity },
+      uTilt: { value: new THREE.Vector2() },
+    },
+    vertexShader: `
+      varying vec3 vColor;
+      uniform float uSize;
+      uniform vec2 uTilt;
+      void main() {
+        vColor = color;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        float dist = max(0.45, -mv.z);
+        gl_PointSize = clamp(uSize * 900.0 / dist, 6.0, 26.0);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      varying vec3 vColor;
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      uniform vec2 uTilt;
+      void main() {
+        vec2 p = gl_PointCoord - 0.5;
+        vec2 q = vec2(
+          p.x * uTilt.y - p.y * uTilt.x,
+          p.x * uTilt.x + p.y * uTilt.y
+        );
+        float shaft = smoothstep(0.16, 0.0, abs(q.x));
+        float caps = smoothstep(0.6, 0.3, abs(q.y));
+        float head = mix(0.5, 1.0, 0.5 - q.y);
+        float a = shaft * caps * head * uOpacity;
+        if (a < 0.01) discard;
+        gl_FragColor = vec4(uColor * vColor * 1.35, a);
+      }`,
+  });
+}
+
 
 class WeatherRoom extends xb.Script {
   init() {
@@ -239,7 +283,7 @@ class WeatherRoom extends xb.Script {
 
     this.deckMat = new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       uniforms: {
         uColor: { value: C.deckDay.clone() },
         uDrift: { value: new THREE.Vector2() },
@@ -256,7 +300,7 @@ class WeatherRoom extends xb.Script {
 
     this.hazeMat = new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, side: THREE.BackSide,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       uniforms: { uColor: { value: C.hazeDay.clone() }, uFog: { value: 0 }, uLum: { value: 1 } },
       vertexShader: HAZE_VERT, fragmentShader: HAZE_FRAG,
     });
@@ -264,6 +308,33 @@ class WeatherRoom extends xb.Script {
     this.hazeMesh.position.y = 1;
     this.hazeMesh.renderOrder = -5;
     this.add(this.hazeMesh);
+    // Поток ветра читается отдельными объёмными нитями, а не только сносом капель.
+    this.windRibbons = new THREE.Group();
+    for (let ribbon = 0; ribbon < 12; ribbon++) {
+      const path = [];
+      const y = 0.4 + ribbon % 4 * 0.55;
+      const z = -1.5 + Math.floor(ribbon / 4) * 1.5;
+      for (let step = 0; step <= 32; step++) {
+        const u = step / 32;
+        path.push(new THREE.Vector3(
+          -3.2 + u * 6.4,
+          y + Math.sin(u * Math.PI * 3 + ribbon) * 0.06,
+          z + Math.sin(u * Math.PI * 2 + ribbon * 0.7) * 0.16
+        ));
+      }
+      const curve = new THREE.CatmullRomCurve3(path, false, 'centripetal');
+      const material = new THREE.MeshBasicMaterial({
+        color: ribbon % 3 ? 0x8fdcff : 0xc5a7ff,
+        transparent: true,
+        opacity: 0.12,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 0.004, 5, false), material);
+      mesh.userData.phase = ribbon * 0.71;
+      this.windRibbons.add(mesh);
+    }
+    this.add(this.windRibbons);
 
     // Всплески капель: пул колец, лежащих горизонтально на поверхности.
     this.splashGeo = new THREE.RingGeometry(0.9, 1.0, 32);
@@ -303,7 +374,18 @@ class WeatherRoom extends xb.Script {
       ],
     });
     this.add(this.hud.card);
-    this.locate();
+    if (isAutomation()) {
+      this.state = {
+        temp: 7, rh: 92, cloud: 94, wind: 8.5, gust: 14, wdir: 225,
+        press: 994, vis: 5000, rain: 1.2, showers: 3.8, snow: 0,
+        code: 95, isDay: 1, precip: 5,
+      };
+      this.derive();
+      this.refreshLook();
+      this.hud.setSliderLabel('NOW · DEMO STORM');
+    } else {
+      this.locate();
+    }
   }
 
   stat(s) { this.hud.setStat(s); }
@@ -318,7 +400,9 @@ class WeatherRoom extends xb.Script {
     pa.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('position', pa);
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const mat = pointsMaterial({ size, opacity });
+    const mat = kind === 'drizzle' || kind === 'shower'
+      ? rainMaterial({ size, color: base, opacity })
+      : pointsMaterial({ size, opacity });
     const points = new THREE.Points(geo, mat);
     points.frustumCulled = false;
     this.add(points);
@@ -389,7 +473,7 @@ class WeatherRoom extends xb.Script {
 
   locate() {
     if (!navigator.geolocation) return this.load(this.lat, this.lon);
-    this.stat('запрос геопозиции…');
+    this.stat('LOCATING…');
     navigator.geolocation.getCurrentPosition(
       (p) => {
         this.lat = +p.coords.latitude.toFixed(3);
@@ -402,13 +486,13 @@ class WeatherRoom extends xb.Script {
   }
 
   async load(lat, lon) {
-    this.stat(`метео ${lat.toFixed(2)}, ${lon.toFixed(2)} …`);
+    this.stat(`METEO ${lat.toFixed(2)}, ${lon.toFixed(2)} …`);
     try {
       this.data = await fetchWeather(lat, lon);
-      this.stat(`live · open-meteo · ${lat.toFixed(2)}, ${lon.toFixed(2)}`);
+      this.stat(`LIVE · OPEN-METEO · ${lat.toFixed(2)}, ${lon.toFixed(2)}`);
     } catch (e) {
       this.data = demoData();
-      this.stat(`офлайн-демо (сеть недоступна): ${e.message}`);
+      this.stat(`OFFLINE DEMO (no network): ${e.message}`);
     }
     this.applyHour();
   }
@@ -448,8 +532,8 @@ class WeatherRoom extends xb.Script {
     this.refreshLook();
     const when = new Date(Date.parse(h.time[i]));
     this.hud.setSliderLabel(
-      `${this.offset === 0 ? 'NOW · ' : ''}${when.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} ` +
-      `· ${this.offset >= 0 ? '+' : ''}${this.offset}ч`);
+      `${this.offset === 0 ? 'NOW · ' : ''}${when.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} ` +
+      `· ${this.offset >= 0 ? '+' : ''}${this.offset}h`);
   }
 
   // Физика состояния → числа для сцены: высота базы облаков, мгла, уровень
@@ -492,8 +576,8 @@ class WeatherRoom extends xb.Script {
   // Имя текущего состояния: физика осадков важнее кода модели.
   condition() {
     const s = this.state;
-    if (s.snow > 0.05 && s.code < 70) return 'СНЕГ';
-    if (s.rain + s.showers > 0.05 && s.code < 50) return 'ДОЖДЬ';
+    if (s.snow > 0.05 && s.code < 70) return 'SNOW';
+    if (s.rain + s.showers > 0.05 && s.code < 50) return 'RAIN';
     return conditionName(s.code);
   }
 
@@ -612,6 +696,16 @@ class WeatherRoom extends xb.Script {
     this.stepRain(this.shower, dt, wx, wz, 3.6 + 2.2 * this.rate.shower, 0.6);
     this.stepSnow(this.snow, dt, wx, wz, t);
     this.stepMotes(dt, wx, wz, t);
+    // Наклон капли в экране пропорционален сносу ветра: штрих дождя
+    // поворачивается вслед потоку, а не падает отвесно при любом ветре.
+    for (const L of [this.drizzle, this.shower]) {
+      const horiz = Math.hypot(wx, wz) || 1e-3;
+      const fall = L.kind === 'drizzle'
+        ? 2.6 + 1.4 * this.rate.drizzle
+        : 3.6 + 2.2 * this.rate.shower;
+      const tiltX = clamp(horiz / fall, 0, 1.2) * Math.sign(wx || 1);
+      L.mat.uniforms.uTilt.value.set(tiltX, 1).normalize();
+    }
 
     // Плавная подстройка слоёв к целям текущего часа: часы на слайдере
     // не должны «щёлкать», а цвета — это только uniform-ы, без перезаписи буферов.
@@ -623,7 +717,7 @@ class WeatherRoom extends xb.Script {
       L.base.lerp(L.baseT, k);
       L.op += (L.opT - L.op) * k;
       L.mat.uniforms.uColor.value.copy(L.base).multiplyScalar(L.gain);
-      L.mat.uniforms.uOpacity.value = L.op;
+      if (L.mat.uniforms.uOpacity) L.mat.uniforms.uOpacity.value = L.op;
     }
 
     this.cloud += (this.cloudT - this.cloud) * k;
@@ -637,7 +731,16 @@ class WeatherRoom extends xb.Script {
 
     this.hazeMat.uniforms.uFog.value += (this.fogK - this.hazeMat.uniforms.uFog.value) * k;
     this.hazeMat.uniforms.uColor.value.lerp(this.hazeColorT, k);
-    this.hazeMat.uniforms.uLum.value = 0.5 + 0.5 * this.dayK + this.flash * 0.3;
+    this.hazeMat.uniforms.uLum.value = 0.35 + 0.65 * this.dayK + this.flash * 0.3;
+    // Нити ветра дышат силой потока и плывут по его же направлению.
+    const windK = clamp(this.state.wind / 10, 0.1, 1.3);
+    for (const ribbon of this.windRibbons.children) {
+      const phase = ribbon.userData.phase || 0;
+      ribbon.material.opacity = (0.05 + 0.1 * windK)
+        * (0.55 + 0.45 * Math.sin(t * 0.9 + phase));
+      ribbon.position.x = Math.sin(t * 0.5 + phase) * 0.25 * windK;
+      ribbon.position.z = Math.cos(t * 0.4 + phase * 0.6) * 0.25 * windK;
+    }
 
     const splashLit = 0.45 + 0.85 * lit;
     for (const sp of this.splashes) {
@@ -652,19 +755,22 @@ class WeatherRoom extends xb.Script {
     this._fp += dt;
     if (this._fp > 0.5) {
       this._fp = 0;
-      const vis = s.vis >= 1000 ? `${(s.vis / 1000).toFixed(1)} км` : `${Math.round(s.vis)} м`;
+      const vis = s.vis >= 1000 ? `${(s.vis / 1000).toFixed(1)} km` : `${Math.round(s.vis)} m`;
       this.stat(
-        `${this.condition()} · ${s.temp.toFixed(1)}°C · ветер ${s.wind.toFixed(1)} м/с ${dirName(s.wdir)}, порыв ${s.gust.toFixed(1)} · ` +
-        `облака ${Math.round(s.cloud)}% · влажн ${Math.round(s.rh)}% · видим ${vis} · ${Math.round(s.press)} гПа · ` +
-        `дождь ${s.rain.toFixed(2)} · ливень ${s.showers.toFixed(2)} · снег ${s.snow.toFixed(2)} см/ч · ` +
-        `частиц ${this.drizzle.active}/${this.shower.active}/${this.snow.active}`
+        `${this.condition()} · ${s.temp.toFixed(1)}°C · wind ${s.wind.toFixed(1)} m/s ${dirName(s.wdir)}, gust ${s.gust.toFixed(1)} · ` +
+        `cloud ${Math.round(s.cloud)}% · rh ${Math.round(s.rh)}% · vis ${vis} · ${Math.round(s.press)} hPa · ` +
+        `rain ${s.rain.toFixed(2)} · showers ${s.showers.toFixed(2)} · snow ${s.snow.toFixed(2)} cm/h · ` +
+        `drops ${this.drizzle.active}/${this.shower.active}/${this.snow.active}`
       );
     }
   }
 
   dispose() {
     for (const L of this.strata) { L.geo.dispose(); L.mat.dispose(); }
-    for (const sp of this.splashes) sp.mesh.material.dispose();
+    for (const ribbon of this.windRibbons.children) {
+      ribbon.geometry.dispose();
+      ribbon.material.dispose();
+    }
     this.splashGeo.dispose();
     this.deckMesh.geometry.dispose();
     this.deckMat.dispose();
@@ -684,6 +790,7 @@ options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('WEATHER//ROOM');
 options.setAppDescription('Погода снаружи — слои частиц внутри. Каждое поле метео видно глазом.');
 
+enableAutomation(options);
 installXrGuards();
 
 document.addEventListener('DOMContentLoaded', () => {

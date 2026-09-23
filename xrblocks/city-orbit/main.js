@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { makeHud } from '../common/hud.js?v=spatial-ui-9';
-import { installXrGuards, watchXrButton } from '../common/boot.js';
+import { makeHud } from '../common/hud.js?v=spatial-ui-12';
+import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
 import { PALETTES } from '../common/fx.js';
 
 // CITY//ORBIT — район из OpenStreetMap как голограмма.
@@ -245,12 +245,12 @@ function isNoise(t) {
 // каждой категории (см. glyphGeometry), поэтому «памятник» и «природа» не
 // могут слиться в одинаковые шарики.
 const CATEGORIES = {
-  heritage: { label: 'Наследие', color: 0xffe9a8 },
-  monument: { label: 'Памятник', color: 0xffc46b },
-  religious: { label: 'Религия', color: 0xb9a7ff },
-  museum: { label: 'Музей', color: 0x35f2ff },
-  sight: { label: 'Достопримечательность', color: 0xff7ad0 },
-  nature: { label: 'Природа', color: 0x7dff9a },
+  heritage: { label: 'Heritage', color: 0xffe9a8 },
+  monument: { label: 'Monument', color: 0xffc46b },
+  religious: { label: 'Religious', color: 0xb9a7ff },
+  museum: { label: 'Museum', color: 0x35f2ff },
+  sight: { label: 'Sight', color: 0xff7ad0 },
+  nature: { label: 'Nature', color: 0x7dff9a },
 };
 
 const RELIGIOUS_HISTORIC = /^(church|chapel|cathedral|monastery|mosque|synagogue|temple|shrine|wayside_chapel)$/;
@@ -904,7 +904,7 @@ class CityOrbit extends xb.Script {
 
     this.hud = makeHud({
       title: 'CITY//ORBIT',
-      stat: 'запрос геопозиции…',
+      stat: 'LOCATING…',
       buttons: [
         {id: 'geo', label: 'LOCATE', onTap: () => this.locate()},
         {
@@ -928,7 +928,7 @@ class CityOrbit extends xb.Script {
 
   locate() {
     if (!navigator.geolocation) return this.load(this.lat, this.lon);
-    this.stat('запрос геопозиции…');
+    this.stat('LOCATING…');
     navigator.geolocation.getCurrentPosition(
       (p) => {
         this.lat = +p.coords.latitude.toFixed(4);
@@ -963,11 +963,11 @@ class CityOrbit extends xb.Script {
       this.center = { lat, lon };
       this._via = got.via;
       this.build(got.scene);
-      this.stat(this.describe(got.scene, `live · ${r} м · ${new URL(got.via).host}`));
+      this.stat(this.describe(got.scene, `live · ${r} m · ${new URL(got.via).host}`));
       return;
     }
-    if (!this.scene) this.showDemo('demo-quarter', 'демо-квартал · Эрмитаж · ждём live …');
-    else this.stat(`overpass · ${lat.toFixed(4)}, ${lon.toFixed(4)} · ждём live …`);
+    if (!this.scene) this.showDemo('demo-quarter', 'demo quarter · Hermitage · waiting for live …');
+    else this.stat(`overpass · ${lat.toFixed(4)}, ${lon.toFixed(4)} · waiting …`);
     const started = performance.now();
     try {
       const { json, via } = await overpass(sceneQuery(lat, lon, tier));
@@ -977,7 +977,7 @@ class CityOrbit extends xb.Script {
       this.center = { lat, lon };
       this._via = via;
       this.build(scene);
-      this.stat(this.describe(scene, `live · ${r} м · ${new URL(via).host}`));
+      this.stat(this.describe(scene, `live · ${r} m · ${new URL(via).host}`));
     } catch (e) {
       // Быстрый отказ — это отвергнутый запрос, и есть смысл попробовать
       // короткий «только POI». Медленный — это сеть: второй раз не ждём.
@@ -991,19 +991,19 @@ class CityOrbit extends xb.Script {
             this.center = { lat, lon };
             this._via = via;
             this.build(scene);
-            this.stat(this.describe(scene, `live · ${r} м · только точки · ${new URL(via).host}`));
+            this.stat(this.describe(scene, `live · ${r} m · POI only · ${new URL(via).host}`));
             return;
           }
-          throw new Error('нет мест');
+          throw new Error('no POIs');
         } catch (e2) {
-          this.showDemo('offline-demo', `офлайн-демо · Эрмитаж (${e2.message})`);
+          this.showDemo('offline-demo', `offline demo · Hermitage (${e2.message})`);
           return;
         }
       }
       if (this.scene && !this.scene.demo) {
-        this.stat(`live недоступен (${e.message}) · оставлен показанный квартал`);
+        this.stat(`live unavailable (${e.message}) · keeping shown quarter`);
       } else {
-        this.showDemo('offline-demo', `офлайн-демо (${e.message}) · Эрмитаж`);
+        this.showDemo('offline-demo', `offline demo (${e.message}) · Hermitage`);
       }
     }
   }
@@ -1017,7 +1017,7 @@ class CityOrbit extends xb.Script {
     this.center = DEMO_CENTER;
     this._via = via;
     this.build(scene);
-    this.stat(`${text} · ${scene.roads.length} улиц · ${scene.buildings.length} домов · ${scene.pois.length} мест`);
+    this.stat(`${text} · ${scene.roads.length} roads · ${scene.buildings.length} buildings · ${scene.pois.length} places`);
   }
 
   project(lat, lon) {
@@ -1251,9 +1251,9 @@ class CityOrbit extends xb.Script {
     this.selected = poi;
     const meta = CATEGORIES[poi.cat];
     this.cardTitle.text = poi.name;
-    const parts = [meta.label, `${poi.dist} м`, poi.osm];
-    if (poi.tags?.heritage) parts.push(`наследие ${poi.tags.heritage}`);
-    if (this.scene?.demo || String(this._via).includes('demo')) parts.push('демо');
+    const parts = [meta.label, `${poi.dist} m`, poi.osm];
+    if (poi.tags?.heritage) parts.push(`heritage ${poi.tags.heritage}`);
+    if (this.scene?.demo || String(this._via).includes('demo')) parts.push('demo');
     this.cardBody.text = parts.join(' · ');
     this.card.visible = true;
     this.placeGlyphs();
@@ -1275,7 +1275,7 @@ class CityOrbit extends xb.Script {
         if (this._prevPinchDist > 0.05 && Math.abs(d - this._prevPinchDist) > 0.12) {
           this.setRadius(Math.min(2, Math.max(0, this.radiusIdx + (d > this._prevPinchDist ? 1 : -1))));
           this._prevPinchDist = d;
-          this.stat(`масштаб → ${RADII[this.radiusIdx]} м`);
+          this.stat(`scale -> ${RADII[this.radiusIdx]} m`);
           return;
         }
         this._prevPinchDist = d;
@@ -1309,6 +1309,7 @@ options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('CITY//ORBIT');
 options.setAppDescription('OSM-голограмма твоих окрестностей: улицы, корпуса, вода и места. Тап — карточка, две руки — масштаб.');
 
+enableAutomation(options);
 installXrGuards();
 
 document.addEventListener('DOMContentLoaded', () => {

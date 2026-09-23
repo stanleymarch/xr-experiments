@@ -4,8 +4,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeHud } from '../common/hud.js?v=mobile-ux-17';
 import {
   enableAutomation, installLaunchShell, installXrGuards,
-  isAutomation, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-17';
+  isAutomation, previewFromEyeHeight, watchXrButton,
+} from '../common/boot.js?v=mobile-ux-18';
 import { PALETTES } from '../common/fx.js';
 
 // CITY//ORBIT — район из OpenStreetMap как голограмма.
@@ -1322,6 +1322,7 @@ installLaunchShell(options, [
   'Тап — карточка места, два pinch — масштаб радиуса',
   'Меню — панель внизу экрана',
 ]);
+previewFromEyeHeight();
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new CityOrbit());
   xb.init(options);

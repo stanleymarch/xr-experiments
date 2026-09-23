@@ -74,6 +74,18 @@ export function watchXrButton() {
   io.observe(document.body, { childList: true, subtree: false });
 }
 
+// Превью до входа в XR. На десктопе без WebXR симулятор сам ставит камеру
+// на 1.5 м (SimulatorOptions.initialCameraPosition). Телефон WebXR
+// поддерживает — симулятор не стартует, камера остаётся в (0,0,0), то есть
+// в полу: превью показывает срез сцены у ног. Ставим глаз-хайт вручную;
+// в сессии рендерер XR подменит позу камеры своей, это безвредно.
+export function previewFromEyeHeight(height = 1.5) {
+  if (isAutomation()) return;
+  if (!globalThis.navigator?.xr) return; // симулятор знает высоту сам
+  const camera = xb.core?.camera;
+  if (camera) camera.position.set(0, height, 0);
+}
+
 // Стартовый экран опыта. До входа в XR телефон видит тёмный канвас и
 // единственную кнопку — без контекста «куда я попал». Shell даёт название,
 // описание и подсказки управления, а в сессии прячется тем же классом

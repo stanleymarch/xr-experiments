@@ -4,8 +4,8 @@ import { pointsMaterial, shockRingMaterial } from '../common/fx.js';
 import { makeHud } from '../common/hud.js?v=mobile-ux-17';
 import {
   enableAutomation, hideInPassthrough, installLaunchShell, installXrGuards,
-  isAutomation, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-17';
+  isAutomation, previewFromEyeHeight, watchXrButton,
+} from '../common/boot.js?v=mobile-ux-18';
 
 // WEATHER//ROOM — погода снаружи становится телом комнаты.
 // Один запрос к Open-Meteo (без ключа), дальше всё локально. Каждое поле
@@ -807,6 +807,7 @@ installLaunchShell(options, [
   'Слайдер — время −24…+24 ч, LOCATE — погода в твоей точке',
   'Меню — панель внизу экрана',
 ]);
+previewFromEyeHeight();
 
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new WeatherRoom());

@@ -6,8 +6,8 @@ import {
 import { makeHud } from '../common/hud.js?v=mobile-ux-17';
 import {
   enableAutomation, installLaunchShell, installXrGuards,
-  isAutomation, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-17';
+  isAutomation, previewFromEyeHeight, watchXrButton,
+} from '../common/boot.js?v=mobile-ux-18';
 
 // SOUND//SPACE — звук строит объём вокруг слушателя, а не плоскую ленту.
 //
@@ -734,6 +734,7 @@ installLaunchShell(options, [
   'MIC — лента из микрофона, FREEZE — скульптура момента',
   'Меню — панель внизу экрана',
 ]);
+previewFromEyeHeight();
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new SoundSpace());
   xb.init(options);

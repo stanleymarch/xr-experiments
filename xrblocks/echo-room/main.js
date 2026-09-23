@@ -3,8 +3,8 @@ import * as xb from 'xrblocks';
 import { makePoints } from '../common/fx.js';
 import {
   enableAutomation, installLaunchShell, installXrGuards,
-  isAutomation, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-17';
+  isAutomation, previewFromEyeHeight, watchXrButton,
+} from '../common/boot.js?v=mobile-ux-18';
 import { makeHud } from '../common/hud.js?v=mobile-ux-17';
 
 // ECHO//ROOM — трёхмерный temporal debugger реальности.
@@ -356,6 +356,7 @@ installLaunchShell(options, [
   'Тап — импульс ✦, тап по старому ✦ — слои времени',
   'Меню — панель внизу экрана',
 ]);
+previewFromEyeHeight();
 
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new EchoRoom());

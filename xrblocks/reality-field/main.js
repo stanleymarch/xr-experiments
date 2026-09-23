@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import {
   enableAutomation, hideInPassthrough, installLaunchShell, installXrGuards,
-  isAutomation, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-17';
+  isAutomation, previewFromEyeHeight, watchXrButton,
+} from '../common/boot.js?v=mobile-ux-18';
 import { makePoints, shockRingMaterial, dome } from '../common/fx.js';
 import { makeHud } from '../common/hud.js?v=mobile-ux-17';
 
@@ -543,6 +543,7 @@ installLaunchShell(options, [
   'Тап / pinch — импульс в реальную геометрию',
   'Меню — панель внизу экрана',
 ]);
+previewFromEyeHeight();
 
 document.addEventListener('DOMContentLoaded', () => {
   xb.add(new RealityField());

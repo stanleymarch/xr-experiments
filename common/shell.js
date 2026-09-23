@@ -38,6 +38,11 @@ export function baseOptions({ title, description, depth = false, bloom = false }
   options.enableReticles();
   options.reticles.projectOnDepthMesh = true;
   options.reticles.defaultRenderDistance = 0; // промах → ретикл скрыт, не парит
+  // Телефон: тап прямой, ретикл не нужен — плавающий белый круг здесь
+  // только мешает попаданию. Десктоп/симулятор ретикл сохраняет.
+  if (typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches) {
+    options.reticles.enabled = false;
+  }
   // Контент привязывается к реальным поверхностям и не «улетает».
   options.world.enableAnchors();
   options.world.anchors.simulatorFallback = true;
@@ -108,40 +113,105 @@ export function createHud({ title, controls = [], hint = '', backHref = '../' })
   return {
     el: top,
     setStatus(s) { stat.textContent = s; },
-    setToggle(id, on) {
+    setLabel(id, text) {
       const b = buttons.get(id);
       if (!b) return;
-      b.classList.toggle('on', on);
-      b.setAttribute('aria-pressed', String(on));
+      b.textContent = text;
     },
-  };
+     setToggle(id, on) {
+       const b = buttons.get(id);
+       if (!b) return;
+       b.classList.toggle('on', on);
+       b.setAttribute('aria-pressed', String(on));
+     },
+   };
+ }
+ 
+/** Панели, для которых watchSession переключает world-карту и screen-overlay. */
+const PHONE_PANELS = new Set();
+
+/** true, если активная XR-сессия управляется с экрана телефона. */
+function isPhoneSession() {
+  const session = xb.core?.renderer?.xr?.getSession();
+  if (!session) return false;
+  if (session.interactionMode === 'screen') return true;
+  try {
+    for (const src of session.inputSources) {
+      if (src.targetRayMode === 'screen') return true;
+    }
+  } catch { /* inputSources может быть недоступен */ }
+  return false;
 }
 
-/** Вешает/снимает класс in-xr на body по событиям XR-сессии three.js. */
-export function watchSession() {
-  const xr = xb.core?.renderer?.xr;
-  if (!xr) return;
-  xr.addEventListener('sessionstart', () => document.body.classList.add('in-xr'));
-  xr.addEventListener('sessionend', () => document.body.classList.remove('in-xr'));
-}
+/** Вешает/снимает класс in-xr на body и переключает панели по типу сессии. */
+ export function watchSession() {
+   const xr = xb.core?.renderer?.xr;
+   if (!xr) return;
+  xr.addEventListener('sessionstart', () => {
+    document.body.classList.add('in-xr');
+    // Телефон в immersive-ar: world-панель вращается вместе с миром при
+    // движении телефона, и по её кнопкам невозможно попасть. Вместо неё
+    // показываем экранную UIOverlay того же опыта (см. spatialControls).
+    const phone = isPhoneSession();
+    document.body.classList.toggle('phone-xr', phone);
+    for (const p of PHONE_PANELS) {
+      p.overlay.visible = phone;
+      p.card.visible = !phone;
+    }
+  });
+  xr.addEventListener('sessionend', () => {
+    document.body.classList.remove('in-xr', 'phone-xr');
+    for (const p of PHONE_PANELS) {
+      p.overlay.visible = false;
+      p.card.visible = true;
+    }
+  });
+ }
 
 
 /**
- * Пространственная панель управления — единственный UI внутри XR-сессии.
- * Тёмная тема, кнопки ≥ удобного для луча/пальца размера, статус обновляется
- * из кода опыта. Ставится перед пользователем на panelDistance.
+ * Пространственная панель управления для XR-сессии. Строится в двух видах
+ * с одинаковым содержимым и API:
+ *  - card (xb.UICard): world-панель для шлема и десктопа; ставится перед
+ *    пользователем, опыт может двигать её через card.position.
+ *  - overlay (xb.UIOverlay): экранная панель для телефона в immersive-ar.
+ *    XR Blocks не запрашивает dom-overlay, а world-панель на телефоне
+ *    вращается вместе с миром при движении устройства — по кнопкам нельзя
+ *    попасть. UIOverlay привязана к камере и стоит на месте.
+ * Переключение делает watchSession() по признаку screen-сессии.
  * @param {{title: string, status?: string, controls: Array<{id: string, label: string, icon?: string, toggle?: boolean, onClick: ()=>void}>, width?: number}} cfg
- * @returns {{card: xb.UICard, setStatus(s:string):void, setToggle(id:string,on:boolean):void}}
+ * @returns {{card: xb.UICard, overlay: xb.UIOverlay, setStatus(s:string):void, setToggle(id:string,on:boolean):void, setLabel(id:string,text:string):void}}
  */
 export function spatialControls({ title, status = '…', controls, width = 0.72 }) {
-  const statusText = new xb.UIText({
-    text: status,
-    style: {
-      fontSize: 26, lineHeight: 1.3, color: '#8ea0c2',
-      textAlign: 'center', flexGrow: 1,
-    },
-  });
-  const buttons = new Map();
+  const make = () => {
+    const statusText = new xb.UIText({
+      text: status,
+      style: {
+        fontSize: 26, lineHeight: 1.3, color: '#8ea0c2',
+        textAlign: 'center', flexGrow: 1,
+      },
+    });
+    const buttons = new Map();
+    const row = new xb.UIPanel({
+      style: { width: '100%', flexDirection: 'row', gap: 14 },
+      children: controls.map((c) => {
+        const btn = new xb.UIButton({
+          label: c.label,
+          icon: c.icon,
+          onClick: c.onClick,
+          style: {
+            flexGrow: 1, fontSize: 24, padding: 18,
+            backgroundColor: COLORS.panelLight,
+          },
+        });
+        buttons.set(c.id, btn);
+        return btn;
+      }),
+    });
+    return { statusText, buttons, row };
+  };
+
+  const world = make();
   const card = new xb.UICard({
     size: { width, height: 'auto' },
     manipulation: true,
@@ -158,32 +228,59 @@ export function spatialControls({ title, status = '…', controls, width = 0.72 
           color: '#54d6ff', textAlign: 'center',
         },
       }),
-      statusText,
-      new xb.UIPanel({
-        style: { width: '100%', flexDirection: 'row', gap: 14 },
-        children: controls.map((c) => {
-          const btn = new xb.UIButton({
-            label: c.label,
-            icon: c.icon,
-            onClick: c.onClick,
-            style: {
-              flexGrow: 1, fontSize: 24, padding: 18,
-              backgroundColor: COLORS.panelLight,
-            },
-          });
-          buttons.set(c.id, btn);
-          return btn;
-        }),
-      }),
+      world.statusText,
+      world.row,
     ],
   });
   card.position.set(0, xb.user.height, -xb.user.panelDistance);
+
+  const screen = make();
+  const overlay = new xb.UIOverlay({
+    style: {
+      width: '100%', height: '100%',
+      flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center',
+      padding: 60,
+    },
+    children: [
+      new xb.UIPanel({
+        style: {
+          flexDirection: 'column', gap: 16, padding: 26,
+          backgroundColor: COLORS.panel,
+        },
+        children: [
+          new xb.UIText({
+            text: title,
+            style: {
+              fontSize: 34, fontWeight: 'bold',
+              color: '#54d6ff', textAlign: 'center',
+            },
+          }),
+          screen.statusText,
+          screen.row,
+        ],
+      }),
+    ],
+  });
+  overlay.visible = false;
+  xb.scene.add(overlay);
+  PHONE_PANELS.add({ card, overlay });
+
+  const both = (fn) => { fn(world); fn(screen); };
   return {
     card,
-    setStatus(s) { statusText.text = s; },
+    overlay,
+    setStatus(s) { both((p) => { p.statusText.text = s; }); },
     setToggle(id, on) {
-      const b = buttons.get(id);
-      if (b) b.style.backgroundColor = on ? '#1d3a52' : COLORS.panelLight;
+      both((p) => {
+        const b = p.buttons.get(id);
+        if (b) b.style.backgroundColor = on ? '#1d3a52' : COLORS.panelLight;
+      });
+    },
+    setLabel(id, text) {
+      both((p) => {
+        const b = p.buttons.get(id);
+        if (b) b.label = text;
+      });
     },
   };
 }

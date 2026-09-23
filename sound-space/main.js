@@ -1,6 +1,11 @@
-// SOUND//SPACE — звук как живая спектральная лента и замороженные скульптуры.
-// Микрофон запускается только явным нажатием START MIC; без разрешения и в
-// ?test=1 работает детерминированный синтетический сигнал.
+// SOUND//SPACE — спектральная лента и замороженные звуковые скульптуры.
+//
+// Микрофон включается только явным нажатием МИК и всегда показывает своё
+// состояние: ВЫКЛ / ЗАПРОС… / ВКЛ / ОТКАЗ (+ причина) / Н/Д (нет HTTPS).
+// Без микрофона лента живёт на детерминированном демо-сигнале — это не сбой.
+//
+// ГОЛОС / МУЗЫКА / УДАР — это выбор ФОРМЫ скульптуры, то есть визуализации.
+// Микрофон ничего не распознаёт и не классифицирует: он даёт только спектр.
 
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
@@ -9,14 +14,28 @@ import {
   anchorRoot, fpsMeter, isTestMode,
 } from '../common/shell.js';
 import { ribbonMaterial, hologramMaterial, ringShockMaterial, tickMaterials } from '../common/shaders.js';
-import { glowTexture, starTexture, spritePool } from '../common/sprites.js';
+import { glowTexture, spritePool } from '../common/sprites.js';
 
 const BANDS = 16;
-const TYPES = ['VOICE', 'MUSIC', 'IMPACT'];
-const TYPE_COLORS = [0x54d6ff, 0xff4bd4, 0x8a7bff];
+// Формы скульптуры. Форма — это выбор пользователя, а не результат анализа звука.
+const SHAPES = [
+  { id: 'voice', name: 'ГОЛОС', label: 'ГОЛОС · РЕЛЬЕФ', kind: 'рельеф', desc: 'спектральный рельеф', color: 0x54d6ff, text: '#8eeaff' },
+  { id: 'music', name: 'МУЗЫКА', label: 'МУЗЫКА · КОЛЬЦА', kind: 'кольца', desc: 'гармонические кольца', color: 0xff4bd4, text: '#ff79df' },
+  { id: 'impact', name: 'УДАР', label: 'УДАР · ВСПЫШКА', kind: 'вспышка', desc: 'ядро и фронтальный удар', color: 0x8a7bff, text: '#b8a9ff' },
+];
+const MIC_LABEL = {
+  off: 'МИК: ВЫКЛ', asking: 'МИК: ЗАПРОС…', on: 'МИК: ВКЛ', denied: 'МИК: ОТКАЗ', unsupported: 'МИК: Н/Д',
+};
+const MIC_NOTE = {
+  off: 'мик выкл · демо-сигнал',
+  asking: 'ждём доступ к микрофону…',
+  on: 'микрофон вкл',
+  denied: 'нет доступа · демо-сигнал',
+  unsupported: 'мик недоступен · демо-сигнал',
+};
 
-window.__SS_VER = 1;
-document.documentElement.dataset.ssVer = '1';
+window.__SS_VER = 2;
+document.documentElement.dataset.ssVer = '2';
 
 function textSprite(text, color = '#dff8ff') {
   const c = document.createElement('canvas'); c.width = 512; c.height = 108;
@@ -68,50 +87,118 @@ class SoundSpace extends xb.Script {
 
     this.frozenRoot = new THREE.Group(); this.frozenRoot.position.y = -0.5; this.root.add(this.frozenRoot);
     this.frozen = [];
-    this.glints = spritePool(starTexture({ rays: 6 }), { count: 8, dur: 0.9, grow: 2.1, color: 0xffffff });
-    this.root.add(this.glints.group);
+
+    // Маленькие цветные вспышки по форме: 0.11 → максимум ~0.14 мира.
+    this.sparks = SHAPES.map((s) => {
+      const p = spritePool(glowTexture({ core: 0.18 }), { count: 3, dur: 0.42, grow: 1.3, color: s.color });
+      this.frozenRoot.add(p.group);
+      return p;
+    });
 
     this.bands = new Float32Array(BANDS);
     this.freq = new Uint8Array(256);
-    this.typeIndex = 0; this.freezeCount = 0; this.audioMode = 'SYNTH';
+    this.shapeIndex = 0; this.freezeCount = 0;
+    this.micState = 'off'; this.micError = null; this.audio = null;
 
     const freeze = () => this.freeze();
-    const nextType = () => { this.typeIndex = (this.typeIndex + 1) % TYPES.length; this.stat(); };
-    const startMic = () => this.startMic();
+    const nextShape = () => { this.shapeIndex = (this.shapeIndex + 1) % SHAPES.length; this.stat(); };
+    const toggleMic = () => this.toggleMic();
     this.hud = createHud({
       title: 'SOUND//SPACE',
       controls: [
-        { id: 'freeze', label: 'FREEZE', onClick: freeze },
-        { id: 'type', label: 'VOICE', onClick: nextType },
-        { id: 'mic', label: 'START MIC', onClick: startMic },
+        { id: 'freeze', label: 'ЗАМОРОЗИТЬ', onClick: freeze },
+        { id: 'type', label: SHAPES[0].label, onClick: nextShape },
+        { id: 'mic', label: MIC_LABEL.off, onClick: toggleMic },
       ],
-      hint: 'звук лепит ленту · FREEZE сохраняет голос / музыку / удар в пространстве',
+      hint: 'тап — заморозить момент · ФОРМА задаёт вид скульптуры (голос — рельеф, музыка — кольца, удар — вспышка: это визуализация, не распознавание звука) · МИК включает и выключает микрофон',
     });
     this.spatial = spatialControls({
-      title: 'SOUND//SPACE', status: 'LIVE · SYNTH · VOICE',
+      title: 'SOUND//SPACE', status: '…',
       controls: [
-        { id: 'freeze', label: 'FREEZE', onClick: freeze },
-        { id: 'type', label: 'TYPE', onClick: nextType },
-        { id: 'mic', label: 'MIC', onClick: startMic },
-      ], width: 0.68,
+        { id: 'freeze', label: 'ЗАМОРОЗИТЬ', onClick: freeze },
+        { id: 'type', label: SHAPES[0].label, onClick: nextShape },
+        { id: 'mic', label: MIC_LABEL.off, onClick: toggleMic },
+      ], width: 0.78,
     });
     this.spatial.card.position.set(-0.78, 1.72, -1.25); this.add(this.spatial.card);
 
     this.fpsTick = fpsMeter((fps) => { this.fps = fps; }); this.fps = 0;
+    this.stat();
     window.__soundSpace = this;
   }
 
+  /** Полное состояние микрофона строкой для UI: причина отказа не теряется. */
+  micLine() {
+    const note = MIC_NOTE[this.micState];
+    let line = this.micError && this.micState !== 'asking' ? `${note} (${this.micError})` : note;
+    if (this.micState === 'on' && this.audio && this.audio.ctx.state !== 'running') {
+      line += ' (аудио-контекст ждёт жеста)';
+    }
+    return line;
+  }
+
+  toggleMic() {
+    if (this.micState === 'on') this.stopMic('мик выключен пользователем');
+    else if (this.micState === 'asking') {
+      // Запрос нельзя отменить программно, но пользователь не должен застрять
+      // в «ЗАПРОС…»: снимаем состояние, а пришедший поток отбрасываем.
+      this.stopMic('запрос доступа отменён');
+    } else this.startMic();
+  }
+
   async startMic() {
-    if (this.audioMode === 'MIC') return;
+    if (this.micState === 'on' || this.micState === 'asking') return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.micState = 'unsupported';
+      this.micError = 'нет navigator.mediaDevices (нужен HTTPS)';
+      document.documentElement.dataset.ssMicErr = this.micError;
+      this.stat();
+      return;
+    }
+    this.micState = 'asking'; this.micError = null; this.stat();
+    const req = (this._micReq = (this._micReq || 0) + 1);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false }, video: false });
-      const ctx = new AudioContext(); const src = ctx.createMediaStreamSource(stream); const a = ctx.createAnalyser();
-      a.fftSize = 512; a.smoothingTimeConstant = 0.82; src.connect(a);
-      this.audio = { stream, ctx, analyser: a }; this.freq = new Uint8Array(a.frequencyBinCount); this.audioMode = 'MIC';
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new Ctx();
+      // resume() не должен блокировать состояние: в среде без аудио-выхода
+      // промис может не разрешиться, а лента оживёт, когда контекст пойдёт.
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512; analyser.smoothingTimeConstant = 0.82; src.connect(analyser);
+      // Запрос отменён или перезапущен, пока ждали разрешения — поток не наш.
+      if (this.micState !== 'asking' || this._micReq !== req) {
+        for (const t of stream.getTracks()) t.stop();
+        await ctx.close();
+        return;
+      }
+      this.audio = { stream, ctx, src, analyser };
+      this.freq = new Uint8Array(analyser.frequencyBinCount);
+      this.micState = 'on'; this.micError = null;
+      delete document.documentElement.dataset.ssMicErr;
+      // Дорожку могут закрыть извне (система/пользователь) — не молчим об этом.
+      stream.getAudioTracks()[0]?.addEventListener('ended', () => {
+        if (this.audio?.stream !== stream) return;
+        this.stopMic('поток микрофона закрыт системой');
+      });
     } catch (e) {
-      this.audioMode = 'SYNTH';
-      document.documentElement.dataset.ssMicErr = (e && e.message) || String(e);
+      if (this._micReq !== req) return; // устаревший отказ — не перетирает новое состояние
+      this.micState = 'denied';
+      this.micError = (e && (e.name ? `${e.name}: ${e.message}` : e.message)) || 'микрофон недоступен';
+      document.documentElement.dataset.ssMicErr = this.micError;
     }
+    this.stat();
+  }
+
+  stopMic(reason = '') {
+    const a = this.audio; this.audio = null;
+    if (a) {
+      for (const t of a.stream.getTracks()) t.stop();
+      try { a.ctx.close(); } catch { /* контекст уже закрыт */ }
+    }
+    this.micState = 'off';
+    if (reason) this.micError = reason;
     this.stat();
   }
 
@@ -133,14 +220,16 @@ class SoundSpace extends xb.Script {
   }
 
   freeze() {
-    const type = TYPES[this.typeIndex]; const color = TYPE_COLORS[this.typeIndex];
+    const shape = SHAPES[this.shapeIndex];
+    const color = shape.color;
     const group = new THREE.Group();
     const slot = this.freezeCount % 3;
     group.position.set((slot - 1) * 0.7, -0.08, 0.18 + slot * 0.02);
     group.scale.setScalar(1.15);
-    const snapshot = Array.from(this.bands);
+    // Тихая запись не должна давать плоский ноль — оставляем видимую базу.
+    const snapshot = Array.from(this.bands, (v) => Math.max(v, 0.04));
 
-    if (type === 'VOICE') {
+    if (shape.id === 'voice') {
       // Голос — заполненный спектральный рельеф с тремя смещёнными контурами.
       const positions = []; const indices = [];
       for (let i = 0; i < BANDS; i++) {
@@ -168,7 +257,7 @@ class SoundSpace extends xb.Script {
         }
         group.add(line(p, color, 1 - layer * 0.2));
       }
-    } else if (type === 'MUSIC') {
+    } else if (shape.id === 'music') {
       // Музыка — объёмная гармоническая клетка из замкнутых спектральных траекторий.
       for (let ring = 0; ring < 4; ring++) {
         const p = [];
@@ -191,28 +280,43 @@ class SoundSpace extends xb.Script {
       const disc = new THREE.Mesh(new THREE.CircleGeometry(0.24, 64), ringShockMaterial({ color, harmonics: 2, width: 0.16 }));
       disc.position.y = 0.15; disc.material.uniforms.uProgress.value = 0.72; group.add(disc);
     }
-    const label = textSprite(`${type} ${String(this.freezeCount + 1).padStart(2, '0')}`, ['#8eeaff', '#ff79df', '#b8a9ff'][this.typeIndex]);
+    const label = textSprite(`${shape.name} ${String(this.freezeCount + 1).padStart(2, '0')}`, shape.text);
     label.position.y = 0.4; group.add(label);
     this.frozenRoot.add(group); this.frozen.push(group);
     if (this.frozen.length > 3) { const old = this.frozen.shift(); old.removeFromParent(); old.traverse((o) => { o.geometry?.dispose?.(); o.material?.dispose?.(); o.userData?.dispose?.(); }); }
-    this.glints.spawn(group.position.clone().add(this.frozenRoot.position).add(new THREE.Vector3(0, 0.18, 0)), 0.28);
+    this.sparks[this.shapeIndex].spawn(group.position, 0.11);
     this.freezeCount++; this.stat();
   }
 
   onSelectEnd(event) { if (!event?.target?.isUI) this.freeze(); }
 
   stat() {
-    const type = TYPES[this.typeIndex];
-    const s = `LIVE / ${this.audioMode} / ${type} / SAVED ${this.freezeCount} / ${this.fps || 0} FPS`;
-    this.hud.setStatus(s); this.spatial.setStatus(`LIVE / ${this.audioMode}\n${type} / SAVED ${this.freezeCount}`);
-    this.hud.setToggle('type', this.typeIndex > 0);
-    document.documentElement.dataset.ssState = JSON.stringify({ fps: this.fps, audio: this.audioMode, type, frozen: this.freezeCount, bands: BANDS, anchor: this.anchor.capability });
+    const s = SHAPES[this.shapeIndex];
+    const mic = this.micLine();
+    this.hud.setStatus(`${s.name} — ${s.kind} · ${mic} · сохранено ${this.freezeCount} · ${this.fps || '—'} FPS`);
+    this.spatial.setStatus(`${s.name} — ${s.desc}\n${mic}\nсохранено: ${this.freezeCount}\nформа скульптуры: визуализация, не распознавание звука`);
+    this.hud.setLabel('type', s.label);
+    this.spatial.setLabel('type', s.label);
+    this.hud.setLabel('mic', MIC_LABEL[this.micState]);
+    this.spatial.setLabel('mic', MIC_LABEL[this.micState]);
+    this.hud.setToggle('mic', this.micState === 'on');
+    this.spatial.setToggle('mic', this.micState === 'on');
+    document.documentElement.dataset.ssState = JSON.stringify({
+      fps: this.fps, mic: this.micState, micError: this.micError, micSupported: !!navigator.mediaDevices?.getUserMedia,
+      shape: s.name, shapeId: s.id, shapeKind: s.kind, frozen: this.freezeCount, bands: BANDS,
+      demoSignal: this.micState !== 'on', anchor: this.anchor.capability,
+    });
   }
 
   update() {
     const dt = Math.min(xb.getDeltaTime(), 0.05); this.fpsTick(dt);
     const cmd = document.documentElement.dataset.ssCmd;
-    if (cmd) { delete document.documentElement.dataset.ssCmd; if (cmd === 'freeze') this.freeze(); else if (cmd === 'type') { this.typeIndex = (this.typeIndex + 1) % TYPES.length; this.stat(); } }
+    if (cmd) {
+      delete document.documentElement.dataset.ssCmd;
+      if (cmd === 'freeze') this.freeze();
+      else if (cmd === 'type') { this.shapeIndex = (this.shapeIndex + 1) % SHAPES.length; this.stat(); }
+      else if (cmd === 'mic') this.toggleMic();
+    }
     if (!this.anchor.active && !this.anchor._pending && this.anchor.capability !== 'unsupported') this.anchor.create(this.root);
     this.anchor.follow(this.root);
     const t = xb.getElapsedTime?.() ?? performance.now() / 1000;
@@ -222,25 +326,26 @@ class SoundSpace extends xb.Script {
       e.mat.uniforms.uBands.value.set(e.lag);
     }
     tickMaterials(t, [this.ribbonMat, ...this.echoRibbons.map((e) => e.mat)]);
-    this.glints.update(dt);
+    for (const p of this.sparks) p.update(dt);
     this._statT = (this._statT || 0) + dt; if (this._statT > 0.5) { this._statT = 0; this.stat(); }
   }
 
   dispose() {
-    this.anchor.dispose(); this.glints.dispose();
-    if (this.audio) { for (const t of this.audio.stream.getTracks()) t.stop(); this.audio.ctx.close(); }
+    this.anchor.dispose();
+    for (const p of this.sparks) p.dispose();
+    if (this.audio) { for (const t of this.audio.stream.getTracks()) t.stop(); try { this.audio.ctx.close(); } catch { /* уже закрыт */ } }
     this.root.traverse((o) => { o.geometry?.dispose?.(); o.material?.dispose?.(); o.userData?.dispose?.(); });
     delete window.__soundSpace;
   }
 }
 
-const options = baseOptions({ title: 'SOUND//SPACE', description: 'Живая спектральная лента и замороженные звуковые скульптуры. FREEZE сохраняет момент.', bloom: false });
+const options = baseOptions({ title: 'SOUND//SPACE', description: 'Живая спектральная лента и замороженные звуковые скульптуры. Форма (голос/музыка/удар) — выбор визуализации, микрофон включается кнопкой МИК.', bloom: false });
 options.enableHands();
 options.controllers.visualizeRays = false;
 
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     const script = new SoundSpace(); xb.add(script); await xb.init(options); watchSession();
-    if (isTestMode()) { script.freeze(); script.typeIndex = 1; script.freeze(); script.typeIndex = 2; script.freeze(); script.typeIndex = 0; }
+    if (isTestMode()) { script.freeze(); script.shapeIndex = 1; script.freeze(); script.shapeIndex = 2; script.freeze(); script.shapeIndex = 0; }
   } catch (e) { document.documentElement.dataset.ssInitErr = (e && e.message) || String(e); console.error('[SS] BOOT FAIL', e); }
 });

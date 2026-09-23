@@ -377,8 +377,10 @@ class WeatherRoom extends xb.Script {
       ],
     });
     this.add(this.hud.card);
-    // Дымка — атмосфера VR; в AR она тонирует весь passthrough камеры.
-    hideInPassthrough([this.hazeMesh]);
+    // Дымка, палуба и пол — VR-костюм комнаты. В AR-passthrough это тёмные
+    // кляксы поверх камеры: остаются только погодные слои (частицы, всплески,
+    // ленты ветра).
+    hideInPassthrough([this.hazeMesh, this.deckMesh, this.floor]);
     if (isAutomation()) {
       this.state = {
         temp: 7, rh: 92, cloud: 94, wind: 8.5, gust: 14, wdir: 225,

@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { pointsMaterial, shockRingMaterial } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=mobile-ux-17';
+import { makeHud } from '../common/hud.js?v=mobile-ux-20';
 import {
   enableAutomation, hideInPassthrough, installLaunchShell, installXrGuards,
-  isAutomation, previewFromEyeHeight, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-18';
+  isAutomation, isPassthrough, previewFromEyeHeight, watchXrButton,
+} from '../common/boot.js?v=mobile-ux-20';
 
 // WEATHER//ROOM — погода снаружи становится телом комнаты.
 // Один запрос к Open-Meteo (без ключа), дальше всё локально. Каждое поле
@@ -621,6 +621,10 @@ class WeatherRoom extends xb.Script {
   }
 
   splash(x, y, z) {
+    // В телефонном AR без найденных поверхностей всплеск рисуется по
+    // виртуальному полу y=0 — случайные пятна поверх реального. Только
+    // реальные поверхности (planes/depth) дают всплеск в passthrough.
+    if (isPassthrough() && !this.surfaces.length) return;
     const s = this.splashes.find((c) => c.t >= c.dur) || this.splashes[0];
     s.t = 0;
     s.mesh.visible = true;
@@ -759,7 +763,7 @@ class WeatherRoom extends xb.Script {
       if (sp.t >= sp.dur) { sp.mesh.visible = false; continue; }
       sp.t += dt;
       const f = Math.min(1, sp.t / sp.dur);
-      sp.mesh.scale.setScalar(0.03 + f * 0.16);
+      sp.mesh.scale.setScalar(0.012 + f * 0.048);
       sp.mesh.material.uniforms.uT.value = f;
     }
 

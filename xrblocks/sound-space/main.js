@@ -3,11 +3,11 @@ import * as xb from 'xrblocks';
 import {
   ribbonMaterial, shockRingMaterial, lineMaterial, makePoints, PALETTES,
 } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=mobile-ux-17';
+import { makeHud } from '../common/hud.js?v=mobile-ux-20';
 import {
   enableAutomation, installLaunchShell, installXrGuards,
   isAutomation, previewFromEyeHeight, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-18';
+} from '../common/boot.js?v=mobile-ux-20';
 
 // SOUND//SPACE — звук строит объём вокруг слушателя, а не плоскую ленту.
 //
@@ -625,7 +625,8 @@ class SoundSpace extends xb.Script {
     for (const im of [...this.impacts]) {
       im.t += dt;
       const t = im.t / 0.9;
-      im.mesh.scale.setScalar(0.5 + t * 2.9);
+      // Геометрия 1.0 м: финал ~0.35 м радиуса, а не 3.4-метровые диски.
+      im.mesh.scale.setScalar(0.08 + t * 0.27);
       im.mesh.material.uniforms.uT.value = Math.min(1, t);
       if (t >= 1) {
         this.remove(im.mesh);

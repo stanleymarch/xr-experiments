@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { makeHud } from '../common/hud.js?v=mobile-ux-17';
+import { makeHud } from '../common/hud.js?v=mobile-ux-20';
 import {
   enableAutomation, installLaunchShell, installXrGuards,
   isAutomation, previewFromEyeHeight, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-18';
+} from '../common/boot.js?v=mobile-ux-20';
 import { PALETTES } from '../common/fx.js';
 
 // CITY//ORBIT — район из OpenStreetMap как голограмма.

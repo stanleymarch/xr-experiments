@@ -178,9 +178,12 @@ export function makeHud({
   // the spatial copy visible would invite taps that Chrome reports globally.
   if (phoneControls) card.visible = false;
 
-  // World-locked. Placement happens once at startup and once per XR-session
-  // entry; it never follows head pose after that. The transform mirrors the
-  // SDK FaceCamera placement math, but without attaching a tracking script.
+  // World-locked placement. В VR (Quest) карточка встаёт в мир один раз на
+  // старте сессии и стоит: голова носится — интерфейс остаётся на месте.
+  // В телефонном AR world-lock с первого кадра означает «повернул телефон —
+  // интерфейса нет»: там карточка следует за взглядом с демпфированием, пока
+  // пользователь не перетащит её сам — с этого момента она якорится в мире.
+  const UP = new THREE.Vector3(0, 1, 0);
   const cameraPosition = new THREE.Vector3();
   const cardPosition = new THREE.Vector3();
   const cardQuaternion = new THREE.Quaternion();
@@ -189,6 +192,7 @@ export function makeHud({
   let anchorId = null;
   let anchorPending = false;
   let manipulating = false;
+  let userPinned = false;
 
   const place = () => {
     const camera = xb.core?.camera;
@@ -196,8 +200,23 @@ export function makeHud({
     camera.updateWorldMatrix(true, false);
     camera.getWorldPosition(cameraPosition);
     card.position.copy(localOffset).applyQuaternion(camera.quaternion).add(cameraPosition);
-    matrix.lookAt(cameraPosition, card.position, new THREE.Vector3(0, 1, 0));
+    matrix.lookAt(cameraPosition, card.position, UP);
     card.quaternion.setFromRotationMatrix(matrix);
+  };
+
+  // Мягкое следование за камерой: экспоненциальный демпфер, а не приклейка
+  // к позе — карточка «догоняет» взгляд, и её можно рассмотреть в покое.
+  const follow = () => {
+    const camera = xb.core?.camera;
+    if (!camera) return;
+    camera.updateWorldMatrix(true, false);
+    camera.getWorldPosition(cameraPosition);
+    cardPosition.copy(localOffset).applyQuaternion(camera.quaternion).add(cameraPosition);
+    matrix.lookAt(cameraPosition, cardPosition, UP);
+    cardQuaternion.setFromRotationMatrix(matrix);
+    const k = 1 - Math.exp(-Math.min(xb.getDeltaTime(), 0.05) * 6);
+    card.position.lerp(cardPosition, k);
+    card.quaternion.slerp(cardQuaternion, k);
   };
 
   const pin = async (replace = false) => {
@@ -236,6 +255,9 @@ export function makeHud({
     manipulating = event.phase === 'start' || event.phase === 'update';
     if (event.phase === 'end' || event.phase === 'cancel') {
       manipulating = false;
+      // Перетаскивание — явное «оставь тут»: после него карточка живёт
+      // в мире (якорь), а не следует за взглядом.
+      userPinned = true;
       void pin(true);
     }
   };
@@ -291,6 +313,15 @@ export function makeHud({
       phoneControls?.setSliderLabel(value);
     },
     update() {
+      const session = xb.core?.renderer?.xr?.getSession?.();
+      const phoneAr =
+        Boolean(session) && session.environmentBlendMode === 'alpha-blend';
+      // Телефонный AR до ручной установки: карточка в поле зрения, мир не
+      // транслируется вслед за ней (follow пишет только локальную позу).
+      if (phoneAr && !userPinned) {
+        if (!manipulating) follow();
+        return;
+      }
       if (!anchorId) void pin();
       if (manipulating || !anchorId) return;
       const referenceSpace = xb.core?.renderer?.xr?.getReferenceSpace?.();

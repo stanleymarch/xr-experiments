@@ -4,8 +4,8 @@ import { makePoints } from '../common/fx.js';
 import {
   enableAutomation, installLaunchShell, installXrGuards,
   isAutomation, previewFromEyeHeight, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-18';
-import { makeHud } from '../common/hud.js?v=mobile-ux-17';
+} from '../common/boot.js?v=mobile-ux-20';
+import { makeHud } from '../common/hud.js?v=mobile-ux-20';
 
 // ECHO//ROOM — трёхмерный temporal debugger реальности.
 // Каждое движение луча оставляет траекторию, каждый тап — импульс.

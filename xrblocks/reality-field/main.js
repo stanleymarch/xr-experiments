@@ -3,9 +3,9 @@ import * as xb from 'xrblocks';
 import {
   enableAutomation, hideInPassthrough, installLaunchShell, installXrGuards,
   isAutomation, previewFromEyeHeight, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-18';
+} from '../common/boot.js?v=mobile-ux-20';
 import { makePoints, shockRingMaterial, dome } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=mobile-ux-17';
+import { makeHud } from '../common/hud.js?v=mobile-ux-20';
 
 // REALITY//FIELD — комната как физическое поле.
 // Импульс летит из руки/взгляда, бьётся о depth-mesh (Quest) или
@@ -470,7 +470,10 @@ class RealityField extends xb.Script {
       if (r.t >= r.dur) { r.mesh.visible = false; continue; }
       r.t += dt;
       const k = r.t / r.dur;
-      r.mesh.scale.setScalar(0.2 + k * 3.2);
+      // Геометрия кольца — 0.5 м радиуса; финальный масштаб ≤0.9 держит
+      // удар в пределах ~45 см. Раньше скейлилось до 3.4: в телефонном AR
+      // каждый тап рисовал 1.7-метровые диски поверх реального пола.
+      r.mesh.scale.setScalar(0.15 + k * 0.75);
       r.mesh.material.uniforms.uT.value = k;
     }
     if (this.normalArrow.visible && (this._normalAge += dt) > 1.4) {

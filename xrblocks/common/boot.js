@@ -130,3 +130,10 @@ export function hideInPassthrough(objects) {
   xr.addEventListener('sessionstart', sync);
   xr.addEventListener('sessionend', sync);
 }
+
+// Телефонный AR-passthrough. Quest отдаёт 'additive', телефоны —
+// 'alpha-blend'; проверяем только его, чтобы не задевать гарнитуры.
+export function isPassthrough() {
+  const session = xb.core?.renderer?.xr?.getSession?.();
+  return Boolean(session) && session.environmentBlendMode === 'alpha-blend';
+}

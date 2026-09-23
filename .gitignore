@@ -1,3 +1,4 @@
 _site/
+.verify/
 .DS_Store
 *.log

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { pointsMaterial, shockRingMaterial } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=anchored-ui-14';
+import { makeHud } from '../common/hud.js?v=phone-ui-16';
 import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
 
 // WEATHER//ROOM — погода снаружи становится телом комнаты.
@@ -509,6 +509,9 @@ class WeatherRoom extends xb.Script {
   }
 
   applyHour() {
+    // Mobile controls are available before geolocation/network resolves.
+    // Until hourly data exists the displayed loading state is authoritative.
+    if (!this.data?.hourly) return;
     const h = this.data.hourly;
     const i = Math.min(h.time.length - 1, Math.max(0, this.nowIndex() + this.offset));
     const g = (key, d = 0) => num(h[key] && h[key][i], d);

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { makePoints } from '../common/fx.js';
 import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
-import { makeHud } from '../common/hud.js?v=anchored-ui-14';
+import { makeHud } from '../common/hud.js?v=phone-ui-16';
 
 // ECHO//ROOM — трёхмерный temporal debugger реальности.
 // Каждое движение луча оставляет траекторию, каждый тап — импульс.

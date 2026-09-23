@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
 import { makePoints, shockRingMaterial, dome } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=anchored-ui-14';
+import { makeHud } from '../common/hud.js?v=phone-ui-16';
 
 // REALITY//FIELD — комната как физическое поле.
 // Импульс летит из руки/взгляда, бьётся о depth-mesh (Quest) или

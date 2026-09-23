@@ -3,7 +3,7 @@ import * as xb from 'xrblocks';
 import {
   ribbonMaterial, shockRingMaterial, lineMaterial, makePoints, PALETTES,
 } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=anchored-ui-14';
+import { makeHud } from '../common/hud.js?v=phone-ui-16';
 import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
 
 // SOUND//SPACE — звук строит объём вокруг слушателя, а не плоскую ленту.

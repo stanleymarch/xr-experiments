@@ -7,6 +7,73 @@ import * as xb from 'xrblocks';
 // pinch, тапа и мыши.
 
 
+function makePhoneControls({title, stat, buttons, slider}) {
+  const coarsePointer =
+    globalThis.matchMedia?.('(pointer: coarse)').matches ||
+    globalThis.navigator?.maxTouchPoints > 0;
+  if (typeof document === 'undefined' || !coarsePointer) return null;
+
+  const root = document.createElement('section');
+  root.className = 'phone-controls';
+  root.setAttribute('aria-label', `${title} controls`);
+  const heading = document.createElement('strong');
+  heading.textContent = title;
+  const status = document.createElement('span');
+  status.textContent = stat;
+  status.className = 'phone-controls__status';
+  root.append(heading, status);
+
+  let input = null;
+  let value = null;
+  if (slider) {
+    const row = document.createElement('label');
+    row.className = 'phone-controls__slider';
+    input = document.createElement('input');
+    input.type = 'range';
+    input.min = slider.min;
+    input.max = slider.max;
+    input.step = slider.step;
+    input.value = slider.value;
+    input.setAttribute('aria-label', slider.ariaLabel || 'slider');
+    value = document.createElement('output');
+    input.addEventListener('input', (event) => {
+      event.stopPropagation();
+      slider.onInput(Number(input.value));
+    });
+    row.append(input, value);
+    root.append(row);
+  }
+
+  const controls = new Map();
+  if (buttons.length) {
+    const row = document.createElement('div');
+    row.className = 'phone-controls__buttons';
+    for (const button of buttons) {
+      const element = document.createElement('button');
+      element.type = 'button';
+      element.textContent = button.label;
+      element.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        button.onTap();
+      });
+      controls.set(button.id, element);
+      row.append(element);
+    }
+    root.append(row);
+  }
+  root.addEventListener('pointerdown', (event) => event.stopPropagation());
+  document.body.append(root);
+
+  return {
+    root,
+    setStat(text) { status.textContent = text; },
+    setLabel(id, text) { controls.get(id)?.replaceChildren(text); },
+    setSliderValue(number) { if (input) input.value = number; },
+    setSliderLabel(text) { if (value) value.textContent = text; },
+  };
+}
+
 export function makeHud({
   title,
   stat = '',
@@ -103,6 +170,13 @@ export function makeHud({
     children,
   });
   card.name = `${title.toLowerCase().replaceAll('/', '-')}-hud`;
+  // Android Chrome's canvas touch path does not always resolve UIKit hit
+  // surfaces. The SDK samples use a DOM action for that route; keep the same
+  // domain callbacks and hide this deterministic fallback inside XR sessions.
+  const phoneControls = makePhoneControls({title, stat, buttons, slider});
+  // In handheld canvas mode the DOM panel is the only input surface. Keeping
+  // the spatial copy visible would invite taps that Chrome reports globally.
+  if (phoneControls) card.visible = false;
 
   // World-locked. Placement happens once at startup and once per XR-session
   // entry; it never follows head pose after that. The transform mirrors the
@@ -167,9 +241,20 @@ export function makeHud({
   };
 
   requestAnimationFrame(place);
+  const setPhoneControlsVisibility = () => {
+    const inSession = Boolean(xb.core?.renderer?.xr?.getSession?.());
+    if (phoneControls) {
+      phoneControls.root.hidden = inSession;
+      card.visible = inSession;
+    }
+  };
   // AR camera pose becomes valid only when the session starts; re-place then,
   // without re-enabling any head-follow behaviour.
-  xb.core?.renderer?.xr?.addEventListener('sessionstart', place);
+  xb.core?.renderer?.xr?.addEventListener('sessionstart', () => {
+    setPhoneControlsVisibility();
+    place();
+  });
+  xb.core?.renderer?.xr?.addEventListener('sessionend', setPhoneControlsVisibility);
   let lastStat = null;
   return {
     card,
@@ -189,16 +274,20 @@ export function makeHud({
       if (value === lastStat) return;
       lastStat = value;
       statText.text = value;
+      phoneControls?.setStat(value);
     },
     setLabel(id, text) {
       const element = byId.get(id);
       if (element && element.label !== text) element.label = text;
+      phoneControls?.setLabel(id, text);
     },
     setSliderValue(value) {
       if (sliderEl && sliderEl.value !== value) sliderEl.value = value;
+      phoneControls?.setSliderValue(value);
     },
     setSliderLabel(value) {
       if (sliderLabel && sliderLabel.text !== value) sliderLabel.text = value;
+      phoneControls?.setSliderLabel(value);
     },
     update() {
       if (!anchorId) void pin();

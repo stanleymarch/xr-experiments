@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { makeHud } from '../common/hud.js?v=anchored-ui-14';
+import { makeHud } from '../common/hud.js?v=phone-ui-16';
 import { enableAutomation, installXrGuards, isAutomation, watchXrButton } from '../common/boot.js';
 import { PALETTES } from '../common/fx.js';
 

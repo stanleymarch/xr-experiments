@@ -4,6 +4,21 @@
 
 import * as THREE from 'three';
 
+// Аддитивное свечение, безопасное для premultiplied-alpha канваса телефонного
+// AR. Обычный AdditiveBlending копит не только RGB, но и альфу: композитор
+// браузера трактует канвас как premultiplied и гасит камеру под «свечением» —
+// вместо света получается грязное пятно. Раздельный blend складывает RGB и
+// оставляет альфу канваса нулевой: out = glow + camera. В opaque-VR и на
+// тёмном превью различий нет (альфа там не участвует).
+export function glowBlending(material) {
+  material.blending = THREE.CustomBlending;
+  material.blendSrc = THREE.SrcAlphaFactor;
+  material.blendDst = THREE.OneFactor;
+  material.blendSrcAlpha = THREE.ZeroFactor;
+  material.blendDstAlpha = THREE.OneFactor;
+  return material;
+}
+
 // Процедурный мягкий спрайт: радиальный спад + лёгкое четырёхлучье.
 // Рисуется один раз на shared-canvas, раздаётся всем опытам.
 let _sprite = null;
@@ -44,10 +59,9 @@ export const PALETTES = {
 // Мягкие аддитивные точки с затуханием по размеру и глубине.
 // color: базовый цвет; per-point цвет идёт через атрибут color.
 export function pointsMaterial({ size = 0.035, color = 0xffffff, opacity = 0.9 } = {}) {
-  return new THREE.ShaderMaterial({
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
     uniforms: {
       map: { value: glowSprite() },
       uSize: { value: size },
@@ -77,17 +91,16 @@ export function pointsMaterial({ size = 0.035, color = 0xffffff, opacity = 0.9 }
         float a = texture2D(map, gl_PointCoord).a;
         gl_FragColor = vec4(vColor * uColor * vFog, a * uOpacity);
       }`,
-  });
+  }));
 }
 
 // Светящееся кольцо ударной волны: тонкое кольцо с мягкими краями,
 // затухание по нормали к взгляду не нужно — аддитив и так плоский.
 export function shockRingMaterial(color = 0x9fe8ff) {
-  return new THREE.ShaderMaterial({
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending,
     uniforms: {
       uColor: { value: new THREE.Color(color) },
       uT: { value: 0 }, // 0..1 жизнь кольца
@@ -109,26 +122,24 @@ export function shockRingMaterial(color = 0x9fe8ff) {
         float a = band * (1.0 - uT) * (1.0 - uT);
         gl_FragColor = vec4(uColor * (1.0 + (1.0 - uT) * 2.0), a);
       }`,
-  });
+  }));
 }
 
 // Тонкая светящаяся линия (ленты, слои, лучи): цвет + прозрачность.
 export function lineMaterial(color = 0x54d6ff, opacity = 0.6) {
-  return new THREE.LineBasicMaterial({
+  return glowBlending(new THREE.LineBasicMaterial({
     color, transparent: true, opacity,
-    blending: THREE.AdditiveBlending, depthWrite: false,
-  });
+  }));
 }
 
 // Лента звука (SOUND//SPACE): амплитуда уже записана в position.z геометрии,
 // поэтому шейдеру не нужны отдельные атрибуты — он красит по высоте рельефа.
 // Живая лента пульсирует сканирующей волной, замороженная застывает ровно.
 export function ribbonMaterial({ color = 0x54d6ff, opacity = 0.85, live = false } = {}) {
-  return new THREE.ShaderMaterial({
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending,
     uniforms: {
       uColor: { value: new THREE.Color(color) },
       uOpacity: { value: opacity },
@@ -158,7 +169,7 @@ export function ribbonMaterial({ color = 0x54d6ff, opacity = 0.85, live = false 
         a *= mix(1.0, 0.72 + 0.28 * scan, uLive);
         gl_FragColor = vec4(c, a);
       }`,
-  });
+  }));
 }
 
 // Маркер-точки для города/импульсов: сферический импостер не нужен —

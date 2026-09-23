@@ -193,6 +193,11 @@ export function makeHud({
   let anchorPending = false;
   let manipulating = false;
   let userPinned = false;
+  // Placement-скрипты SDK для телефонного AR (Placement manual: «FollowHead —
+  // view-relative HUD», FaceCamera — читаемость). Управляет только фазой
+  // «следует за взглядом»; после ручного перетаскивания снимаются.
+  let followHead = null;
+  let faceCamera = null;
 
   const place = () => {
     const camera = xb.core?.camera;
@@ -204,20 +209,6 @@ export function makeHud({
     card.quaternion.setFromRotationMatrix(matrix);
   };
 
-  // Мягкое следование за камерой: экспоненциальный демпфер, а не приклейка
-  // к позе — карточка «догоняет» взгляд, и её можно рассмотреть в покое.
-  const follow = () => {
-    const camera = xb.core?.camera;
-    if (!camera) return;
-    camera.updateWorldMatrix(true, false);
-    camera.getWorldPosition(cameraPosition);
-    cardPosition.copy(localOffset).applyQuaternion(camera.quaternion).add(cameraPosition);
-    matrix.lookAt(cameraPosition, cardPosition, UP);
-    cardQuaternion.setFromRotationMatrix(matrix);
-    const k = 1 - Math.exp(-Math.min(xb.getDeltaTime(), 0.05) * 6);
-    card.position.lerp(cardPosition, k);
-    card.quaternion.slerp(cardQuaternion, k);
-  };
 
   const pin = async (replace = false) => {
     const anchors = xb.core?.world?.anchors;
@@ -251,13 +242,27 @@ export function makeHud({
     anchorId = tracked.id;
   };
 
+  const attachFollowScripts = () => {
+    if (userPinned || followHead) return;
+    followHead = new xb.FollowHead({offset: localOffset.clone(), smoothing: 0.1});
+    faceCamera = new xb.FaceCamera({mode: 'spherical', smoothing: 0.1});
+    card.add(followHead, faceCamera);
+  };
+  const detachFollowScripts = () => {
+    if (!followHead) return;
+    card.remove(followHead, faceCamera);
+    followHead = faceCamera = null;
+  };
+
   card.onObjectManipulate = (event) => {
     manipulating = event.phase === 'start' || event.phase === 'update';
     if (event.phase === 'end' || event.phase === 'cancel') {
       manipulating = false;
-      // Перетаскивание — явное «оставь тут»: после него карточка живёт
-      // в мире (якорь), а не следует за взглядом.
+      // Перетаскивание — явное «оставь тут»: placement-скрипты снимаются,
+      // карточка живёт в мире (якорь), а не следует за взглядом. Во время
+      // перетаскивания SDK сам ставит их на паузу (suspendTransformScripts).
       userPinned = true;
+      detachFollowScripts();
       void pin(true);
     }
   };
@@ -270,14 +275,19 @@ export function makeHud({
       card.visible = inSession;
     }
   };
-  // AR camera pose becomes valid only when the session starts; re-place then,
-  // without re-enabling any head-follow behaviour. The renderer swaps in the
-  // XR camera matrix on the first session frames, so placement waits two
-  // frames rather than using the stale pre-session pose.
+  // В VR карточка world-lock'ится один раз на стартовую позу (два кадра —
+  // ждём валидную XR-позу камеры). В телефонном AR до закрепления её ведут
+  // FollowHead+FaceCamera; после выхода из сессии скрипты снимаются.
   xb.core?.renderer?.xr?.addEventListener('sessionstart', () => {
     setPhoneControlsVisibility();
+    const session = xb.core?.renderer?.xr?.getSession?.();
+    if (session?.environmentBlendMode === 'alpha-blend') {
+      attachFollowScripts();
+      return;
+    }
     requestAnimationFrame(() => requestAnimationFrame(place));
   });
+  xb.core?.renderer?.xr?.addEventListener('sessionend', detachFollowScripts);
   let lastStat = null;
   return {
     card,
@@ -313,15 +323,9 @@ export function makeHud({
       phoneControls?.setSliderLabel(value);
     },
     update() {
-      const session = xb.core?.renderer?.xr?.getSession?.();
-      const phoneAr =
-        Boolean(session) && session.environmentBlendMode === 'alpha-blend';
-      // Телефонный AR до ручной установки: карточка в поле зрения, мир не
-      // транслируется вслед за ней (follow пишет только локальную позу).
-      if (phoneAr && !userPinned) {
-        if (!manipulating) follow();
-        return;
-      }
+      // Телефонный AR до закрепления: позу ведут FollowHead+FaceCamera,
+      // якорить нечего — мир не транслируется вслед за карточкой.
+      if (followHead) return;
       if (!anchorId) void pin();
       if (manipulating || !anchorId) return;
       const referenceSpace = xb.core?.renderer?.xr?.getReferenceSpace?.();

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
-import { pointsMaterial, shockRingMaterial } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=mobile-ux-20';
+import { glowBlending, pointsMaterial, shockRingMaterial } from '../common/fx.js?v=mobile-ux-22';
+import { makeHud } from '../common/hud.js?v=mobile-ux-22';
 import {
   enableAutomation, hideInPassthrough, installLaunchShell, installXrGuards,
   isAutomation, isPassthrough, previewFromEyeHeight, watchXrButton,
@@ -200,10 +200,9 @@ const HAZE_FRAG = /* glsl */`
     gl_FragColor = vec4(uColor * uLum, uFog * mix(0.5, 0.05, vY));
   }`;
 function rainMaterial({ size, color, opacity }) {
-  return new THREE.ShaderMaterial({
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
     vertexColors: true,
     uniforms: {
       uSize: { value: size },
@@ -240,7 +239,7 @@ function rainMaterial({ size, color, opacity }) {
         if (a < 0.01) discard;
         gl_FragColor = vec4(uColor * vColor * 1.35, a);
       }`,
-  });
+  }));
 }
 
 
@@ -326,13 +325,12 @@ class WeatherRoom extends xb.Script {
         ));
       }
       const curve = new THREE.CatmullRomCurve3(path, false, 'centripetal');
-      const material = new THREE.MeshBasicMaterial({
+      const material = glowBlending(new THREE.MeshBasicMaterial({
         color: ribbon % 3 ? 0x8fdcff : 0xc5a7ff,
         transparent: true,
         opacity: 0.12,
-        blending: THREE.AdditiveBlending,
         depthWrite: false,
-      });
+      }));
       const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 0.004, 5, false), material);
       mesh.userData.phase = ribbon * 0.71;
       this.windRibbons.add(mesh);
@@ -381,6 +379,16 @@ class WeatherRoom extends xb.Script {
     // кляксы поверх камеры: остаются только погодные слои (частицы, всплески,
     // ленты ветра).
     hideInPassthrough([this.hazeMesh, this.deckMesh, this.floor]);
+    // В AR слои ярче: свечение поверх камеры нуждается в запасе яркости.
+    this._arGain = 1;
+    this._arOp = 1;
+    const xr = xb.core?.renderer?.xr;
+    const syncArGain = () => {
+      this._arGain = isPassthrough() ? 1.3 : 1;
+      this._arOp = isPassthrough() ? 1.5 : 1;
+    };
+    xr?.addEventListener('sessionstart', syncArGain);
+    xr?.addEventListener('sessionend', syncArGain);
     if (isAutomation()) {
       this.state = {
         temp: 7, rh: 92, cloud: 94, wind: 8.5, gust: 14, wdir: 225,
@@ -725,14 +733,14 @@ class WeatherRoom extends xb.Script {
     // Плавная подстройка слоёв к целям текущего часа: часы на слайдере
     // не должны «щёлкать», а цвета — это только uniform-ы, без перезаписи буферов.
     const k = Math.min(1, dt * 2.2);
-    const lit = this.lumK * (1 + this.flash * 0.9);
+    const lit = this.lumK * (1 + this.flash * 0.9) * this._arGain;
     for (const L of this.strata) {
       const gainT = L.kind === 'star' ? this.starK : lit;
       L.gain += (gainT - L.gain) * k;
       L.base.lerp(L.baseT, k);
       L.op += (L.opT - L.op) * k;
       L.mat.uniforms.uColor.value.copy(L.base).multiplyScalar(L.gain);
-      if (L.mat.uniforms.uOpacity) L.mat.uniforms.uOpacity.value = L.op;
+      if (L.mat.uniforms.uOpacity) L.mat.uniforms.uOpacity.value = L.op * this._arOp;
     }
 
     this.cloud += (this.cloudT - this.cloud) * k;

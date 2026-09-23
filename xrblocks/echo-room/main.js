@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
-import { makePoints } from '../common/fx.js';
+import { glowBlending, makePoints } from '../common/fx.js?v=mobile-ux-22';
 import {
   enableAutomation, installLaunchShell, installXrGuards,
   isAutomation, previewFromEyeHeight, watchXrButton,
 } from '../common/boot.js?v=mobile-ux-20';
-import { makeHud } from '../common/hud.js?v=mobile-ux-20';
+import { makeHud } from '../common/hud.js?v=mobile-ux-22';
 
 // ECHO//ROOM — трёхмерный temporal debugger реальности.
 // Каждое движение луча оставляет траекторию, каждый тап — импульс.
@@ -132,10 +132,10 @@ class EchoRoom extends xb.Script {
     // свой импульс или выбор старого следа?
     const pick = this.pickPulse(pos);
     if (pick) { this.inspect(pick); return; }
-    const m = new THREE.Mesh(this.ringGeo, new THREE.MeshBasicMaterial({
+    const m = new THREE.Mesh(this.ringGeo, glowBlending(new THREE.MeshBasicMaterial({
       color: 0x9fe8ff, transparent: true, opacity: 0.9,
-      side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
-    }));
+      side: THREE.DoubleSide, depthWrite: false,
+    })));
     m.position.copy(pos);
     m.lookAt(xb.core.camera.position);
     this.add(m);
@@ -197,10 +197,10 @@ class EchoRoom extends xb.Script {
       const a = Math.random() * Math.PI * 2;
       const r = 0.7 + Math.random() * 0.6;
       const pos = this._sel.set(Math.cos(a) * r, 0.7 + Math.random() * 0.9, -0.6 - Math.abs(Math.sin(a)) * r);
-      const m = new THREE.Mesh(this.ringGeo, new THREE.MeshBasicMaterial({
+      const m = new THREE.Mesh(this.ringGeo, glowBlending(new THREE.MeshBasicMaterial({
         color: 0x9fe8ff, transparent: true, opacity: 0.9,
-        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
-      }));
+        side: THREE.DoubleSide, depthWrite: false,
+      })));
       m.position.copy(pos);
       m.lookAt(xb.core.camera.position);
       this.add(m);

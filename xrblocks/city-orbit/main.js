@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { makeHud } from '../common/hud.js?v=mobile-ux-20';
+import { makeHud } from '../common/hud.js?v=mobile-ux-22';
 import {
   enableAutomation, installLaunchShell, installXrGuards,
   isAutomation, previewFromEyeHeight, watchXrButton,
 } from '../common/boot.js?v=mobile-ux-20';
-import { PALETTES } from '../common/fx.js';
+import { PALETTES } from '../common/fx.js?v=mobile-ux-22';
 
 // CITY//ORBIT — район из OpenStreetMap как голограмма.
 // Стол: макет 1.2 м перед тобой. 360°: город вокруг тебя. Указка/луч камеры +
@@ -733,11 +733,10 @@ function buildingGeometry(scene, project) {
 // Настоящий голографический материал: форма остаётся читаемой, но здания
 // полупрозрачны, светятся по краям и сканируются горизонтальной строкой.
 function buildingHologramMaterial() {
-  return new THREE.ShaderMaterial({
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending,
     uniforms: { uTime: { value: 0 } },
     vertexShader: /* glsl */`
       attribute vec3 color;
@@ -767,7 +766,7 @@ function buildingHologramMaterial() {
         float alpha = 0.16 + edge * 0.3 + scan * 0.42;
         gl_FragColor = vec4(glow, alpha);
       }`,
-  });
+  }));
 }
 
 // Знаки мест: у каждой категории своя форма — ступенчатая пирамида наследия,
@@ -1052,10 +1051,9 @@ class CityOrbit extends xb.Script {
 
     const roadGeo = roadGeometry(scene, project);
     if (roadGeo.getAttribute('position').count) {
-      const roads = new THREE.LineSegments(roadGeo, new THREE.LineBasicMaterial({
-        vertexColors: true, transparent: true, opacity: 0.95,
-        blending: THREE.AdditiveBlending, depthWrite: false,
-      }));
+      const roads = new THREE.LineSegments(roadGeo, glowBlending(new THREE.LineBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false,
+      })));
       roads.renderOrder = 1;
       roads.xb = { pointerEvents: 'none' };
       this.map.add(roads);

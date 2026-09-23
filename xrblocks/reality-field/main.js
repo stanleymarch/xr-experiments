@@ -2,10 +2,10 @@ import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import {
   enableAutomation, hideInPassthrough, installLaunchShell, installXrGuards,
-  isAutomation, previewFromEyeHeight, watchXrButton,
+  isAutomation, isPassthrough, previewFromEyeHeight, watchXrButton,
 } from '../common/boot.js?v=mobile-ux-20';
-import { makePoints, shockRingMaterial, dome } from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=mobile-ux-20';
+import { glowBlending, makePoints, shockRingMaterial, dome } from '../common/fx.js?v=mobile-ux-22';
+import { makeHud } from '../common/hud.js?v=mobile-ux-22';
 
 // REALITY//FIELD — комната как физическое поле.
 // Импульс летит из руки/взгляда, бьётся о depth-mesh (Quest) или
@@ -81,10 +81,9 @@ class RealityField extends xb.Script {
         ));
       }
       c.setHSL(0.52 + 0.16 * strand / strands, 0.92, 0.6);
-      const material = new THREE.MeshBasicMaterial({
-        color: c, transparent: true, opacity: 0.28,
-        blending: THREE.AdditiveBlending, depthWrite: false,
-      });
+      const material = glowBlending(new THREE.MeshBasicMaterial({
+        color: c, transparent: true, opacity: 0.28, depthWrite: false,
+      }));
       const curve = new THREE.CatmullRomCurve3(path, false, 'centripetal');
       this.fieldLines.add(new THREE.Mesh(
         new THREE.TubeGeometry(curve, 96, 0.0045, 5, false),
@@ -108,6 +107,14 @@ class RealityField extends xb.Script {
     this.roomMesh.position.copy(ROOM_C);
     this.roomMesh.visible = false;
     this.add(this.floor, this.roomMesh);
+    // В AR линии поля ярче: свечение поверх камеры нуждается в запасе.
+    const xr = xb.core?.renderer?.xr;
+    const syncFlowGain = () => {
+      const k = isPassthrough() ? 1.8 : 1;
+      for (const material of this.flowMaterials) material.opacity = 0.28 * k;
+    };
+    xr?.addEventListener('sessionstart', syncFlowGain);
+    xr?.addEventListener('sessionend', syncFlowGain);
 
     // --- пул шейдерных колец удара ---
     this.rings = [];
@@ -526,6 +533,7 @@ options.world?.enableAnchors?.();
 options.world.planes.showDebugVisualizations =
   new URLSearchParams(window.location.search).has('debug');
 options.enableReticles();
+options.reticles.projectOnDepthMesh = true; // прицел на реальной геометрии (Quest)
 options.controllers.visualizeRays = true;
 options.hands.visualization = true;
 options.hands.visualizeJoints = true;

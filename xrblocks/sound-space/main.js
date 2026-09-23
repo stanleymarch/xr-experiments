@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import {
-  ribbonMaterial, shockRingMaterial, lineMaterial, makePoints, PALETTES,
-} from '../common/fx.js';
-import { makeHud } from '../common/hud.js?v=mobile-ux-20';
+  glowBlending, ribbonMaterial, shockRingMaterial, lineMaterial, makePoints, PALETTES,
+} from '../common/fx.js?v=mobile-ux-22';
+import { makeHud } from '../common/hud.js?v=mobile-ux-22';
 import {
   enableAutomation, installLaunchShell, installXrGuards,
   isAutomation, previewFromEyeHeight, watchXrButton,
@@ -88,11 +88,10 @@ function circleGeometry(radius, segs = 72) {
 // каждый кадр, поэтому шейдер свой — он же и переключает состояние:
 // рябь речи, волна музыки, ровное дыхание тишины.
 function liveBladeMaterial() {
-  return new THREE.ShaderMaterial({
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending,
     uniforms: {
       uTime: {value: 0},
       uOpacity: {value: 0.92},
@@ -167,7 +166,7 @@ function liveBladeMaterial() {
                    * (1.0 - 0.45 * smoothstep(0.80, 1.0, vUv.y));
         gl_FragColor = vec4(c, clamp(a * edge, 0.0, 1.0));
       }`,
-  });
+  }));
 }
 
 // Единая геометрия всех осей: один draw call на всю архитектуру.

@@ -341,7 +341,7 @@ class EchoRoom extends xb.Script {
 
 const options = new xb.Options();
 options.enableReticles();
-options.enableAnchors();
+options.world?.enableAnchors?.();
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('ECHO//ROOM');
 options.setAppDescription('След и импульсы держат минуту. Тап по ✦ — временные слои.');

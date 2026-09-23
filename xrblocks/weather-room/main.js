@@ -785,7 +785,7 @@ class WeatherRoom extends xb.Script {
 const options = new xb.Options();
 options.enableReticles();
 options.enablePlaneDetection();
-options.enableAnchors();
+options.world?.enableAnchors?.();
 options.world.planes.showDebugVisualizations =
   new URLSearchParams(window.location.search).has('debug');
 options.xrButton.showEnterSimulatorButton = true;

@@ -719,7 +719,7 @@ const options = new xb.Options();
 // пользователя, а ранняя декларация задерживает старт опыта. Доступ
 // запрашивается по кнопке MIC — тогда же создаётся AudioContext.
 options.enableReticles();
-options.enableAnchors();
+options.world?.enableAnchors?.();
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('SOUND//SPACE');
 options.setAppDescription('Частоты встают вокруг тебя. FREEZE — поставить снимок в комнату.');

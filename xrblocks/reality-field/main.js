@@ -514,7 +514,7 @@ options.enableHands();
 options.enableGestures();
 options.enableDepth();
 options.enablePlaneDetection();
-options.enableAnchors();
+options.world?.enableAnchors?.();
 options.world.planes.showDebugVisualizations =
   new URLSearchParams(window.location.search).has('debug');
 options.enableReticles();

@@ -1306,7 +1306,7 @@ options.gestures.setGestureEnabled('pinch', true);
 // масштаб города работают и на десктопе; позы рук — по Left Shift.
 options.simulator.modeToggle.enabled = true;
 options.enableReticles();
-options.enableAnchors();
+options.world?.enableAnchors?.();
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('CITY//ORBIT');
 options.setAppDescription('OSM-голограмма твоих окрестностей: улицы, корпуса, вода и места. Тап — карточка, две руки — масштаб.');

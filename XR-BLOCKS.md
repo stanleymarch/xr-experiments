@@ -6,13 +6,13 @@
 раздел «Источники» и сверить diff.
 
 ## Источники (в порядке авторитетности)
-
 | Что | Где |
 |---|---|
+| **Скиллы (установлены)** | `.agents/skills/xb-*` — 8 штук, подхватываются OMP-провайдером; sync: `npm run skills:sync` (= postinstall) |
 | Полный исходник SDK | `node_modules/xrblocks/src/` (npm-пакет несёт `build/ skills/ src/`) |
-| Официальные скиллы (методики) | `node_modules/xrblocks/skills/`: `xb-add-interactions`, `xb-add-spatial-ui`, `xb-add-world-sensing`, `xb-anchors` |
-| Мануалы | <https://xrblocks.github.io/docs/manual/>: Interaction, Placement, UI, World, Depth, Simulator и др. |
-| Репо с шаблонами/сэмплами | <https://github.com/google/xrblocks> (`templates/`, `samples/`, `demos/`) — **не входят в npm-пакет** |
+| **Апстрим-зеркало** | `../xrblocks-reference/` — sparse clone google/xrblocks: `templates/` (15), `samples/`, `demos/`, `docs/docs/manual/` (22 мануала в сыром md) |
+| Мануалы онлайн | <https://xrblocks.github.io/docs/manual/>: Interaction, Placement, UI, World, Depth, Simulator и др. |
+| Правила для агентов | `AGENTS.md` в корне (читается харнессом автоматически) |
 | Типы API | `node_modules/xrblocks/build/xrblocks.d.ts` |
 
 Правило скиллов перед любым изменением: сначала сверить каждый планируемый

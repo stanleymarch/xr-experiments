@@ -563,6 +563,7 @@ class RealityField extends xb.Script {
 
   /** Тап по UI (кнопки панели в шлеме) не должен стрелять по сцене. */
   isUiTarget(event) {
+    if (this.spatial?.owns(event?.target)) return true;
     const target = event?.target;
     if (!target) return false;
     if (target.isUI) return true;

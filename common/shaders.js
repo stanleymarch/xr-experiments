@@ -19,7 +19,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 // нулевой: out = glow + camera. В opaque-VR и на тёмном превью различий нет.
 // Правило: каждый светящийся материал — через glowBlending(), голый
 // THREE.AdditiveBlending в проекте запрещён (см. .agents/skills и XR-BLOCKS.md
-// соседнего проекта xrblocks).
+// канонического проекта xr-experiments).
 export function glowBlending(material) {
   material.blending = THREE.CustomBlending;
   material.blendSrc = THREE.SrcAlphaFactor;

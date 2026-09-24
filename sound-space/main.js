@@ -290,7 +290,7 @@ class SoundSpace extends xb.Script {
     this.freezeCount++; this.stat();
   }
 
-  onSelectEnd(event) { if (event?.completed === false || event?.target?.isUI) return; this.freeze(); }
+  onSelectEnd(event) { if (this.spatial.owns(event?.target)) return; if (event?.completed === false || event?.target?.isUI) return; this.freeze(); }
 
   stat() {
     const s = SHAPES[this.shapeIndex];

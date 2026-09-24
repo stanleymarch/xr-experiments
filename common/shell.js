@@ -32,7 +32,7 @@ export function isTestMode() {
  * @param {{title: string, description: string, depth?: boolean}} cfg
  */
 /**
- * Телефонный guard (канон соседнего проекта xrblocks/common/boot.js:
+ * Телефонный guard (канон xr-experiments/common/boot.js:
  * installXrGuards). XR Blocks помечает depth-sensing / local-floor /
  * hand-tracking как requiredFeatures, когда опыт их включил. Телефонный
  * Chrome такие сессии отклоняет целиком, а кнопка ENTER XR молча ничего
@@ -94,6 +94,66 @@ export function baseOptions({ title, description, depth = false, bloom = false }
     });
   }
   return options;
+}
+
+/**
+ * Канон (xr-experiments/common/hud.js: makePhoneControls):
+ * тач-путь Android Chrome не всегда резолвит UIKit hit-поверхности, поэтому
+ * на coarse-pointer рядом с пространственной картой строится детерминированный
+ * DOM-дубль с теми же доменными колбэками. Вне сессии DOM-HUD виден, карта
+ * скрыта (иначе тап по карте Chrome отдаёт глобально); в сессии наоборот:
+ * DOM-панель прячется, управление — у пространственной карты.
+ * @returns {{root: HTMLElement, setStat(s:string):void, setLabel(id:string,t:string):void, setToggle(id:string,on:boolean):void}|null}
+ */
+function makePhoneControls({ title, stat, controls, force = false }) {
+  const coarsePointer =
+    globalThis.matchMedia?.('(pointer: coarse)').matches ||
+    globalThis.navigator?.maxTouchPoints > 0;
+  if (typeof document === 'undefined' || (!coarsePointer && !force)) return null;
+
+  const root = document.createElement('section');
+  root.className = 'phone-controls';
+  root.setAttribute('aria-label', `${title} controls`);
+  const heading = document.createElement('strong');
+  heading.textContent = title;
+  const status = document.createElement('span');
+  status.textContent = stat;
+  status.className = 'phone-controls__status';
+  root.append(heading, status);
+
+  const buttons = new Map();
+  if (controls.length) {
+    const row = document.createElement('div');
+    row.className = 'phone-controls__buttons';
+    for (const c of controls) {
+      const element = document.createElement('button');
+      element.type = 'button';
+      element.textContent = c.label;
+      element.setAttribute('aria-pressed', 'false');
+      element.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        c.onClick();
+      });
+      buttons.set(c.id, element);
+      row.append(element);
+    }
+    root.append(row);
+  }
+  root.addEventListener('pointerdown', (event) => event.stopPropagation());
+  document.body.append(root);
+
+  return {
+    root,
+    setStat(text) { status.textContent = text; },
+    setLabel(id, text) { buttons.get(id)?.replaceChildren(text); },
+    setToggle(id, on) {
+      const b = buttons.get(id);
+      if (!b) return;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    },
+  };
 }
 
 /**
@@ -179,29 +239,30 @@ function isPhoneSession() {
 }
 
 /** Вешает/снимает класс in-xr на body и переключает панели по типу сессии. */
- export function watchSession() {
-   const xr = xb.core?.renderer?.xr;
-   if (!xr) return;
+export function watchSession() {
+  const xr = xb.core?.renderer?.xr;
+  if (!xr) return;
+  // Канон (hud.js): вне сессии DOM-панель — единственный ввод, карта скрыта
+  // (иначе тап по карте Chrome отдаёт глобально); в сессии наоборот.
+  const applySession = (inSession, phone) => {
+    document.body.classList.toggle('in-xr', inSession);
+    document.body.classList.toggle('phone-xr', inSession && phone);
+    for (const p of PHONE_PANELS) {
+      if (p.phone) p.phone.root.hidden = inSession;
+      p.overlay.visible = inSession && phone;
+      p.card.visible = inSession ? !phone : !!p.phone;
+    }
+  };
+  // До сессии: DOM виден, карта скрыта (только если есть DOM-дубль).
+  applySession(false, false);
   xr.addEventListener('sessionstart', () => {
-    document.body.classList.add('in-xr');
     // Телефон в immersive-ar: world-панель вращается вместе с миром при
     // движении телефона, и по её кнопкам невозможно попасть. Вместо неё
     // показываем экранную UIOverlay того же опыта (см. spatialControls).
-    const phone = isPhoneSession();
-    document.body.classList.toggle('phone-xr', phone);
-    for (const p of PHONE_PANELS) {
-      p.overlay.visible = phone;
-      p.card.visible = !phone;
-    }
+    applySession(true, isPhoneSession());
   });
-  xr.addEventListener('sessionend', () => {
-    document.body.classList.remove('in-xr', 'phone-xr');
-    for (const p of PHONE_PANELS) {
-      p.overlay.visible = false;
-      p.card.visible = true;
-    }
-  });
- }
+  xr.addEventListener('sessionend', () => applySession(false, false));
+}
 
 
 /**
@@ -301,28 +362,42 @@ export function spatialControls({ title, status = '…', controls, width = 0.72 
       }),
     ],
   });
-  overlay.visible = false;
-  xb.scene.add(overlay);
-  PHONE_PANELS.add({ card, overlay });
-
   const both = (fn) => { fn(world); fn(screen); };
-  return {
+  // DOM-дубль для тач-пути телефона (см. makePhoneControls): те же доменные
+  // колбэки, видимость переключает watchSession. В ?test=1 форсируем: иначе
+  // headless-эмуляцию телефона (coarse/touch) не отличить от десктопа.
+  const phone = makePhoneControls({ title, stat: status, controls, force: isTestMode() });
+  const api = {
     card,
     overlay,
-    setStatus(s) { both((p) => { p.statusText.text = s; }); },
+    phone,
+    owns(target) {
+      // Global Script hooks всё равно получают select после семантического
+      // UI-контрола. Опыты используют гард, чтобы тап по кнопке не стрелял
+      // и в сцену под ней.
+      for (let node = target; node; node = node.parent) {
+        if (node === card) return true;
+      }
+      return false;
+    },
+    setStatus(s) { both((p) => { p.statusText.text = s; }); phone?.setStat(s); },
     setToggle(id, on) {
       both((p) => {
         const b = p.buttons.get(id);
         if (b) b.style.backgroundColor = on ? '#1d3a52' : COLORS.panelLight;
       });
+      phone?.setToggle(id, on);
     },
     setLabel(id, text) {
       both((p) => {
         const b = p.buttons.get(id);
         if (b) b.label = text;
       });
+      phone?.setLabel(id, text);
     },
   };
+  PHONE_PANELS.add({ card, overlay, phone });
+  return api;
 }
 
 /**

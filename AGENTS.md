@@ -55,14 +55,14 @@
 ## Скиллы и источники (читать перед правками)
 
 - Официальные скиллы SDK лежат в `.agents/skills/xb-*` (синк из
-  `node_modules/xrblocks/skills` соседнего проекта `../xrblocks`:
-  `cp -r ../xrblocks/node_modules/xrblocks/skills/* .agents/skills/`).
+  `node_modules/xrblocks/skills` канонического проекта `../xr-experiments`:
+  `cp -r ../xr-experiments/node_modules/xrblocks/skills/* .agents/skills/`).
   Перед задачей читать профильный: `xb-add-spatial-ui` (карточки/оверлеи),
   `xb-add-interactions` (ввод/события), `xb-add-world-sensing` (depth/planes),
   `xb-anchors`, `xb-debug-app`, `xb-build-app`.
-- Контракты SDK — `../xrblocks/XR-BLOCKS.md`; полное зеркало апстрима —
+- Контракты SDK — `../xr-experiments/XR-BLOCKS.md`; полное зеркало апстрима —
   `../xrblocks-reference/` (templates/samples/demos/docs); символы сверять
-  с `../xrblocks/node_modules/xrblocks/src/`, мануал — Spatial UI
+  с `../xr-experiments/node_modules/xrblocks/src/`, мануал — Spatial UI
   (`UICard` — мир/метры, `UIOverlay` — view-space/приватный viewport,
   retained-обновления, `xb.ui.validate()`).
 - Ветки docs по interactionMode: SDK его не использует; признак телефона —

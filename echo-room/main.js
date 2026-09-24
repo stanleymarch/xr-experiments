@@ -130,7 +130,7 @@ class EchoRoom extends xb.Script {
   }
 
   onSelectEnd(event) {
-    if (event?.completed === false || event?.target?.isUI) return;
+    if (this.spatial.owns(event?.target)) return;
     // Точка — из разрешённого попадания пайплайна, а не из взгляда камеры:
     // иначе слой появляется не там, куда попали. Фолбэк — луч камеры.
     const hit = event?.intersection?.point;

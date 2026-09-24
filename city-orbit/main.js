@@ -365,7 +365,9 @@ class CityOrbit extends xb.Script {
   }
 
   onSelectEnd(event) {
-    if (event?.completed === false || event?.target?.isUI) return;
+    // Тап по пространственной кнопке не должен стрелять и в сцену под ней:
+    // global-хуки получают select даже после семантического UI-контрола.
+    if (this.spatial.owns(event?.target)) return;
     // Метка — на группе точки (stem/halo/tip/node/label наследуют её при
     // подъёме по родителям). Резолвим из зафиксированного surface пайплайна:
     // intersection на отпускании может отсутствовать при дрожании луча.

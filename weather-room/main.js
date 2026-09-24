@@ -708,12 +708,12 @@ class WeatherRoom extends xb.Script {
   // --- ввод ---
 
   onSelectStart(event) {
-    if (event?.target?.isUI) return;
+    if (this.spatial.owns(event?.target) || event?.target?.isUI) return;
     this.holdHeld = true;
   }
 
   onSelectEnd(event) {
-    if (event?.target?.isUI) return;
+    if (this.spatial.owns(event?.target) || event?.target?.isUI) return;
     this.holdHeld = false;
     this.gustFromUser();
   }

@@ -8,7 +8,7 @@ import {
   COLORS, baseOptions, createHud, watchSession, spatialControls,
   anchorRoot, fpsMeter,
 } from '../common/shell.js';
-import { softParticlesMaterial, particleAttributes, tickMaterials } from '../common/shaders.js';
+import { glowBlending, softParticlesMaterial, particleAttributes, tickMaterials } from '../common/shaders.js';
 import { glowTexture } from '../common/sprites.js';
 
 // Возраст эха кодируем цветом на CPU: ice blue → violet → muted coral.
@@ -71,7 +71,7 @@ class EchoRoom extends xb.Script {
     this.root.add(this.points);
     this.tickRing = new THREE.Mesh(
       new THREE.RingGeometry(0.48, 0.53, 64),
-      new THREE.MeshBasicMaterial({ color: COLORS.accent, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false })
+      glowBlending(new THREE.MeshBasicMaterial({ color: COLORS.accent, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }))
     );
     this.tickRing.rotation.x = -Math.PI / 2; this.tickRing.position.y = 0.01;
     this.root.add(this.tickRing);
@@ -79,13 +79,20 @@ class EchoRoom extends xb.Script {
     this.echoes = [];
     this.echoKind = 0; this.captured = 0; this.playing = false; this.playT = 0; this.autoT = 1.6;
 
+    const KIND_NAMES = ['КОЛЬЦО', 'ПЛИТА', 'СФЕРА'];
     const replay = () => this.startReplay();
-    const nextKind = () => { this.echoKind = (this.echoKind + 1) % 3; this.stat(); };
+    const nextKind = () => {
+      this.echoKind = (this.echoKind + 1) % 3;
+      const name = KIND_NAMES[this.echoKind];
+      this.hud.setLabel('kind', name);
+      this.spatial.setLabel('kind', name);
+      this.stat();
+    };
     this.hud = createHud({
       title: 'ECHO//ROOM',
       controls: [
         { id: 'replay', label: 'REPLAY', onClick: replay },
-        { id: 'kind', label: 'RING FORM', onClick: nextKind },
+        { id: 'kind', label: 'КОЛЬЦО', onClick: nextKind },
       ],
       hint: 'тап — оставить эхо-слой · REPLAY — воспроизвести все слои · температура цвета = возраст',
     });
@@ -93,7 +100,7 @@ class EchoRoom extends xb.Script {
       title: 'ECHO//ROOM', status: 'LAYERS 0 · REPLAY OFF',
       controls: [
         { id: 'replay', label: 'REPLAY', onClick: replay },
-        { id: 'kind', label: 'FORM', onClick: nextKind },
+        { id: 'kind', label: 'КОЛЬЦО', onClick: nextKind },
       ], width: 0.66,
     });
     this.spatial.card.position.set(0.84, 1.72, -1.3); this.add(this.spatial.card);
@@ -104,7 +111,7 @@ class EchoRoom extends xb.Script {
   }
 
   addEcho(point) {
-    const mat = new THREE.MeshBasicMaterial({ color: ageColor(0), transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const mat = glowBlending(new THREE.MeshBasicMaterial({ color: ageColor(0), transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
     const mesh = new THREE.Mesh(makeEchoGeometry(this.echoKind), mat);
     mesh.position.copy(point); mesh.position.y = Math.max(0.5, Math.min(1.9, point.y));
     mesh.rotation.y = Math.random() * Math.PI * 2;
@@ -123,11 +130,14 @@ class EchoRoom extends xb.Script {
   }
 
   onSelectEnd(event) {
-    if (event?.target?.isUI) return;
+    if (event?.completed === false || event?.target?.isUI) return;
+    // Точка — из разрешённого попадания пайплайна, а не из взгляда камеры:
+    // иначе слой появляется не там, куда попали. Фолбэк — луч камеры.
+    const hit = event?.intersection?.point;
+    if (hit) { this.addEcho(hit.clone()); return; }
     xb.core.camera.getWorldPosition(this._v);
     const dir = new THREE.Vector3(); xb.core.camera.getWorldDirection(dir);
-    const hit = this._v.clone().addScaledVector(dir, 1.1);
-    this.addEcho(hit);
+    this.addEcho(this._v.clone().addScaledVector(dir, 1.1));
   }
 
   stat() {
@@ -189,8 +199,9 @@ class EchoRoom extends xb.Script {
   }
 }
 
+// Руки не просим: ввод — тап/клик, hand-tracking делал бы сессию required
+// и ронял вход на телефоне (канон: даунгрейд фич сессии).
 const options = baseOptions({ title: 'ECHO//ROOM', description: 'Комната-луковица времени: эхо-слои действий тают, цвет кодирует возраст.', depth: false, bloom: false });
-options.enableHands();
 options.controllers.visualizeRays = false;
 
 document.addEventListener('DOMContentLoaded', async () => {

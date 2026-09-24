@@ -13,7 +13,7 @@ import {
   COLORS, baseOptions, createHud, watchSession, spatialControls,
   anchorRoot, fpsMeter, isTestMode,
 } from '../common/shell.js';
-import { ribbonMaterial, hologramMaterial, ringShockMaterial, tickMaterials } from '../common/shaders.js';
+import { glowBlending, ribbonMaterial, hologramMaterial, ringShockMaterial, tickMaterials } from '../common/shaders.js';
 import { glowTexture, spritePool } from '../common/sprites.js';
 
 const BANDS = 16;
@@ -55,7 +55,7 @@ function textSprite(text, color = '#dff8ff') {
 function line(points, color, opacity = 0.8) {
   return new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(points),
-    new THREE.LineBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false })
+    glowBlending(new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false }))
   );
 }
 
@@ -157,8 +157,9 @@ class SoundSpace extends xb.Script {
     }
     this.micState = 'asking'; this.micError = null; this.stat();
     const req = (this._micReq = (this._micReq || 0) + 1);
+    let stream = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false }, video: false });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false }, video: false });
       const Ctx = window.AudioContext || window.webkitAudioContext;
       const ctx = new Ctx();
       // resume() не должен блокировать состояние: в среде без аудио-выхода
@@ -183,6 +184,7 @@ class SoundSpace extends xb.Script {
         this.stopMic('поток микрофона закрыт системой');
       });
     } catch (e) {
+      if (stream) for (const t of stream.getTracks()) t.stop();
       if (this._micReq !== req) return; // устаревший отказ — не перетирает новое состояние
       this.micState = 'denied';
       this.micError = (e && (e.name ? `${e.name}: ${e.message}` : e.message)) || 'микрофон недоступен';
@@ -244,10 +246,10 @@ class SoundSpace extends xb.Script {
       const reliefGeometry = new THREE.BufferGeometry();
       reliefGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       reliefGeometry.setIndex(indices); reliefGeometry.computeVertexNormals();
-      const reliefMaterial = new THREE.MeshBasicMaterial({
+      const reliefMaterial = glowBlending(new THREE.MeshBasicMaterial({
         color, transparent: true, opacity: 0.32, side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending, depthWrite: false,
-      });
+        depthWrite: false,
+      }));
       group.add(new THREE.Mesh(reliefGeometry, reliefMaterial));
       for (let layer = 0; layer < 3; layer++) {
         const p = [];
@@ -269,7 +271,7 @@ class SoundSpace extends xb.Script {
         const curve = new THREE.CatmullRomCurve3(p, true, 'centripetal');
         const tube = new THREE.Mesh(
           new THREE.TubeGeometry(curve, 96, 0.007 + ring * 0.0015, 6, true),
-          new THREE.MeshBasicMaterial({ color: ring % 2 ? COLORS.violet : color, transparent: true, opacity: 0.72, blending: THREE.AdditiveBlending, depthWrite: false })
+          glowBlending(new THREE.MeshBasicMaterial({ color: ring % 2 ? COLORS.violet : color, transparent: true, opacity: 0.72, depthWrite: false }))
         );
         group.add(tube);
       }
@@ -288,7 +290,7 @@ class SoundSpace extends xb.Script {
     this.freezeCount++; this.stat();
   }
 
-  onSelectEnd(event) { if (!event?.target?.isUI) this.freeze(); }
+  onSelectEnd(event) { if (event?.completed === false || event?.target?.isUI) return; this.freeze(); }
 
   stat() {
     const s = SHAPES[this.shapeIndex];
@@ -340,7 +342,6 @@ class SoundSpace extends xb.Script {
 }
 
 const options = baseOptions({ title: 'SOUND//SPACE', description: 'Живая спектральная лента и замороженные звуковые скульптуры. Форма (голос/музыка/удар) — выбор визуализации, микрофон включается кнопкой МИК.', bloom: false });
-options.enableHands();
 options.controllers.visualizeRays = false;
 
 document.addEventListener('DOMContentLoaded', async () => {

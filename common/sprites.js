@@ -4,11 +4,12 @@
 // градиента, длина лучей звезды, мягкость кроны всплеска. Процедурная
 // генерация даёт полный контроль и ноль сетевых зависимостей.
 //
-// Использование: THREE.Sprite с SpriteMaterial({map, blending: Additive,
-// depthWrite:false}) для одиночных вспышек; либо как uMap в точечных
+// Использование: THREE.Sprite с glowBlending(SpriteMaterial({map, ...}))
+// (см. common/shaders.js) для одиночных вспышек; либо как uMap в точечных
 // шейдерах (семплирование в gl_PointCoord) для тысяч частиц.
 
 import * as THREE from 'three';
+import { glowBlending } from './shaders.js';
 
 const cache = new Map();
 
@@ -137,10 +138,10 @@ export function spritePool(texture, { count = 12, dur = 0.5, grow = 2.2, color =
   const group = new THREE.Group();
   const items = [];
   for (let i = 0; i < count; i++) {
-    const mat = new THREE.SpriteMaterial({
+    const mat = glowBlending(new THREE.SpriteMaterial({
       map: texture, color, transparent: true, opacity: 0,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    });
+      depthWrite: false,
+    }));
     const spr = new THREE.Sprite(mat);
     spr.visible = false;
     group.add(spr);

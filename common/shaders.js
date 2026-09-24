@@ -11,6 +11,24 @@ import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
+// ---------- 0. Premultiplied-alpha контракт (общий для всех свечений) ----------
+// Рендерер XR Blocks создаётся с alpha:true, канвас — premultiplied. Обычный
+// AdditiveBlending копит не только RGB, но и альфу канваса: композитор браузера
+// в alpha-blend-сессии гасит камеру под каждым «свечением» — вместо света
+// грязное пятно. Раздельный blend складывает RGB и оставляет альфу канваса
+// нулевой: out = glow + camera. В opaque-VR и на тёмном превью различий нет.
+// Правило: каждый светящийся материал — через glowBlending(), голый
+// THREE.AdditiveBlending в проекте запрещён (см. .agents/skills и XR-BLOCKS.md
+// соседнего проекта xrblocks).
+export function glowBlending(material) {
+  material.blending = THREE.CustomBlending;
+  material.blendSrc = THREE.SrcAlphaFactor;
+  material.blendDst = THREE.OneFactor;
+  material.blendSrcAlpha = THREE.ZeroFactor;
+  material.blendDstAlpha = THREE.OneFactor;
+  return material;
+}
+
 // ---------- Общие GLSL-куски ----------
 
 export const NOISE_GLSL = /* glsl */ `
@@ -66,10 +84,9 @@ export const CURL_GLSL = /* glsl */ `
 export function softParticlesMaterial({
   size = 0.02, color = 0x54d6ff, twinkle = 1.0, opacity = 0.9, map = null,
 } = {}) {
-  return new THREE.ShaderMaterial({
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
     uniforms: {
       uTime: { value: 0 },
       uSize: { value: size },
@@ -120,9 +137,8 @@ export function softParticlesMaterial({
         gl_FragColor = vec4(col * a, a);
       }
     `,
-  });
+  }));
 }
-
 /** Атрибуты aScale/aTwinkle/aColor для softParticlesMaterial. */
 export function particleAttributes(geometry, { scaleRandom = 0.5, count = null } = {}) {
   const n = count ?? geometry.getAttribute('position').count;
@@ -145,10 +161,9 @@ export function particleAttributes(geometry, { scaleRandom = 0.5, count = null }
 // (lookAt нормали); анимация — uProgress 0→1: главное кольцо + гармоника.
 
 export function ringShockMaterial({ color = 0x54d6ff, harmonics = 2, width = 0.10 } = {}) {
-  return new THREE.ShaderMaterial({
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
     uniforms: {
       uProgress: { value: 0 },
@@ -185,7 +200,7 @@ export function ringShockMaterial({ color = 0x54d6ff, harmonics = 2, width = 0.1
         gl_FragColor = vec4(uColor * a * 1.6, a);
       }
     `,
-  });
+  }));
 }
 
 // ---------- 3. Луч-импульс ----------
@@ -193,10 +208,9 @@ export function ringShockMaterial({ color = 0x54d6ff, harmonics = 2, width = 0.1
 // Ярче к точке удара, лёгкое мерцание, мягкие края по радиусу.
 
 export function beamMaterial({ color = 0x54d6ff } = {}) {
-  return new THREE.ShaderMaterial({
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
     uniforms: {
       uTime: { value: 0 },
@@ -224,7 +238,7 @@ export function beamMaterial({ color = 0x54d6ff } = {}) {
         gl_FragColor = vec4(col * a * 1.8, a);
       }
     `,
-  });
+  }));
 }
 
 // ---------- 4. Облачный купол (weather-room) ----------
@@ -287,10 +301,9 @@ export function cloudDomeMaterial({ radius = 4.2 } = {}) {
 // шейдере, tilt по ветру, альфа по скорости.Splash — ringShockMaterial.
 
 export function rainMaterial({ color = 0xa8d8f0, area = new THREE.Vector2(6, 6), height = 3.2 } = {}) {
-  const mat = new THREE.ShaderMaterial({
+  const mat = glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
     uniforms: {
       uTime: { value: 0 },
@@ -332,7 +345,7 @@ export function rainMaterial({ color = 0xa8d8f0, area = new THREE.Vector2(6, 6),
         gl_FragColor = vec4(uColor * a, a);
       }
     `,
-  });
+  }));
   return mat;
 }
 
@@ -363,10 +376,9 @@ export function makeRainField(count = 900, area = new THREE.Vector2(6, 6)) {
 // Френель-кромка, сканлайны, лёгкий глитч; подсветка выбранного узла.
 
 export function hologramMaterial({ color = 0x54d6ff, rim = 0x8a7bff, opacity = 0.8 } = {}) {
-  return new THREE.ShaderMaterial({
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
     uniforms: {
       uTime: { value: 0 },
       uSelected: { value: 0.0 },
@@ -401,7 +413,7 @@ export function hologramMaterial({ color = 0x54d6ff, rim = 0x8a7bff, opacity = 0
         gl_FragColor = vec4(col * a, a);
       }
     `,
-  });
+  }));
 }
 
 // ---------- 7. Спектральная лента (sound-space) ----------
@@ -409,11 +421,12 @@ export function hologramMaterial({ color = 0x54d6ff, rim = 0x8a7bff, opacity = 0
 // градиент циан→маджента, бегущие линии потока.
 
 export function ribbonMaterial({ bands = 16 } = {}) {
-  return new THREE.ShaderMaterial({
+  // GLSL-массив ниже жёстко [16]: больше полос шейдер молча обрежет.
+  if (bands > 16) throw new Error(`ribbonMaterial: bands=${bands} > 16 (GLSL uBands[16])`);
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending,
     uniforms: {
       uTime: { value: 0 },
       uAmp: { value: 0.35 },
@@ -456,17 +469,15 @@ export function ribbonMaterial({ bands = 16 } = {}) {
         gl_FragColor = vec4(col * a * 1.5, a);
       }
     `,
-  });
+  }));
 }
 
 // ---------- 8. Послесвечение по возрасту (echo-room) ----------
 // Ледяной голубой (сейчас) → фиолетовый → приглушённый коралл (старое).
-
 export function ageGradientMaterial({ maxAge = 4.0 } = {}) {
-  return new THREE.ShaderMaterial({
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
     uniforms: {
       uTime: { value: 0 },
@@ -498,18 +509,16 @@ export function ageGradientMaterial({ maxAge = 4.0 } = {}) {
         gl_FragColor = vec4(col * a * 1.4, a);
       }
     `,
-  });
+  }));
 }
 
 // ---------- Ветер-филаменты (weather-room) ----------
 // Полоса-лента, гуляющая по curl-noise; белый-циановый поток.
-
 export function windFilamentMaterial({ color = 0xdff4ff } = {}) {
-  return new THREE.ShaderMaterial({
+  return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending,
     uniforms: {
       uTime: { value: 0 },
       uColor: { value: new THREE.Color(color) },
@@ -543,7 +552,7 @@ export function windFilamentMaterial({ color = 0xdff4ff } = {}) {
         gl_FragColor = vec4(uColor * a, a);
       }
     `,
-  });
+  }));
 }
 
 // ---------- Bloom (пост-обработка XR Blocks) ----------

@@ -29,7 +29,7 @@ import {
   anchorRoot, fpsMeter,
 } from '../common/shell.js';
 import {
-  softParticlesMaterial, particleAttributes, ringShockMaterial,
+  glowBlending, softParticlesMaterial, particleAttributes, ringShockMaterial,
   beamMaterial, tickMaterials,
 } from '../common/shaders.js';
 import { glowTexture, spritePool } from '../common/sprites.js';
@@ -161,8 +161,8 @@ class RealityField extends xb.Script {
         title: 'REALITY//FIELD',
         status: 'CHARGE 0% / 0 FPS',
         controls: [
-          { id: 'debug', label: 'DEBUG', onClick: toggleDebug },
-          { id: 'dream', label: 'DREAM', onClick: toggleDream },
+          { id: 'debug', label: 'DEBUG REALITY', onClick: toggleDebug },
+          { id: 'dream', label: 'DREAM REALITY', onClick: toggleDream },
         ], width: 0.68,
       });
       // Основное поле и точка удара должны оставаться открыты: панель уводим
@@ -243,10 +243,10 @@ class RealityField extends xb.Script {
         ));
       }
       c.setHSL(0.52 + 0.16 * (strand / strands), 0.92, 0.6);
-      const material = new THREE.MeshBasicMaterial({
+      const material = glowBlending(new THREE.MeshBasicMaterial({
         color: c, transparent: true, opacity: 0.3,
-        blending: THREE.AdditiveBlending, depthWrite: false,
-      });
+        depthWrite: false,
+      }));
       const curve = new THREE.CatmullRomCurve3(path, false, 'centripetal');
       const strandMesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 96, 0.0045, 5, false), material);
       this.fieldLines.add(strandMesh);
@@ -261,19 +261,14 @@ class RealityField extends xb.Script {
     // полом: это не «отсканированная комната», но и не выдумка.
     this.floor = new THREE.Mesh(
       new THREE.PlaneGeometry(9, 9),
-      new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, opacity: 0.25, color: COLORS.accent })
+      glowBlending(new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, opacity: 0.25, color: COLORS.accent }))
     );
     this.floor.rotation.x = -Math.PI / 2;
     this.floor.visible = false;
     this.roomMesh = new THREE.Mesh(
       new THREE.SphereGeometry(ROOM_R, 24, 16),
-      new THREE.MeshBasicMaterial({ wireframe: true, side: THREE.BackSide, transparent: true, opacity: 0.16, color: COLORS.accent })
+      glowBlending(new THREE.MeshBasicMaterial({ wireframe: true, side: THREE.BackSide, transparent: true, opacity: 0.16, color: COLORS.accent }))
     );
-    this.roomMesh.position.copy(ROOM_C);
-    this.roomMesh.visible = false;
-    this.root.add(this.floor, this.roomMesh);
-
-    // --- визуальные эффекты удара (шейдеры + спрайты) ---
     // Шоквейв-кольца: единичный диск, uProgress 0→1, ориентация нормалью.
     this.rings = [];
     const rgeo = new THREE.CircleGeometry(1, 48);
@@ -333,12 +328,14 @@ class RealityField extends xb.Script {
     this._b2 = new THREE.Vector3();
     this._q = new THREE.Quaternion();
     this._inv = new THREE.Matrix4();
+    this._zAxis = new THREE.Vector3(0, 0, 1); // нормаль диска CircleGeometry
+    this._ray = new THREE.Ray(); // скретч для getRay: без аллокаций в кадре
 
     // --- события ---
-    const g = xb.core?.gestureRecognition;
     // gestureRecognition существует только при включённом hand-tracking.
     // На телефоне его нет: прежнее обращение к нему роняло init целиком
     // (чёрный экран вместо опыта).
+    const g = xb.core?.gestureRecognition;
     this._gs = null;
     this._ge = null;
     if (typeof g?.addEventListener === 'function') {
@@ -399,7 +396,17 @@ class RealityField extends xb.Script {
   _sessionStarted(session) {
     this._session = session || null;
     hideFatal();
-    if (this._depthWanted && sessionFeature(session, 'depth-sensing') === false) {
+    // Повторный вход может выдать depth там, где его не было: восстанавливаем
+    // желание и глушим только если фичи снова нет. has() вместо === false —
+    // depth'а не было и в запросе, глушить нечего.
+    if (sessionFeature(session, 'depth-sensing')) {
+      this._depthWanted = true;
+      try {
+        const d = xb.core?.depth;
+        if (d?.options) d.options.enabled = true;
+        if (d) d.enabled = true;
+      } catch { /* noop */ }
+    } else if (this._depthWanted && sessionFeature(session, 'depth-sensing') === false) {
       this._dropDepth('сессия без depth-sensing');
     }
     this.stat();
@@ -492,15 +499,17 @@ class RealityField extends xb.Script {
     const depthState = !this._depthWanted
       ? 'depth НЕТ · виртуальная поверхность'
       : this.depthLive() ? 'depth LIVE' : 'depth ждёт данных';
-    const chargePct = Math.round(Math.min(this.charge, 1.5) / 1.5 * 100);
+    const chargePct = Math.round(Math.min(this.charge, 2.5) / 2.5 * 100);
     const field = [...this.fx].join('+');
     const mode = this.dream ? 'DREAM' : this.debug ? 'DEBUG' : (field || 'PULSE');
     const err = this._err ? ` / ОШИБКА: ${this._err}` : '';
     const s = `CHARGE ${chargePct}% / ${this.fps || 0} FPS / ${depthState} / ${mode}${err}`;
     this.hud.setStatus(s);
+    // В шлеме DOM не виден: фатальная ошибка обязана быть и на панели.
     this.spatial?.setStatus(`CHARGE ${chargePct}% / ${this.fps || 0} FPS\n${depthState}` +
       (mode === 'PULSE' ? '' : `\nMODE ${mode}`) +
-      (this._notes.length ? `\n${this._notes.at(-1)}` : ''));
+      (this._notes.length ? `\n${this._notes.at(-1)}` : '') +
+      (this._err ? `\nОШИБКА: ${this._err}` : ''));
     // Канал состояния для универсальных тестов (?test=1) и отладки:
     // DOM общий для всех миров, в отличие от window.
     document.documentElement.dataset.rfState = JSON.stringify({
@@ -582,7 +591,7 @@ class RealityField extends xb.Script {
     this._fromController = false;
     try {
       xb.user.getControllerPosition(0, this._o);
-      const r = xb.user.getRay(0, new THREE.Ray());
+      const r = xb.user.getRay(0, this._ray);
       if (r && r.direction.lengthSq() > 0.5) {
         this._d.copy(r.direction).normalize();
         this._fromController = true;
@@ -598,9 +607,10 @@ class RealityField extends xb.Script {
    *  вырождается на экране в точку (камера смотрит вдоль него). */
   muzzleOrigin(o, d) {
     if (this._fromController) return o.clone();
-    const right = new THREE.Vector3().crossVectors(d, new THREE.Vector3(0, 1, 0)).normalize();
+    // Скретч-векторы вместо аллокаций в горячем цикле.
+    const right = this._k1.crossVectors(d, this._up).normalize();
     if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
-    return o.clone().addScaledVector(right, 0.14).add(new THREE.Vector3(0, -0.1, 0));
+    return o.clone().addScaledVector(right, 0.14).add(this._k2.set(0, -0.1, 0));
   }
 
   /* ---------- мир ↔ локальные координаты root ---------- */
@@ -688,7 +698,9 @@ class RealityField extends xb.Script {
     ring.t = 0;
     ring.mesh.visible = true;
     ring.mesh.position.copy(point).addScaledVector(normal, 0.006); // чуть над поверхностью
-    ring.mesh.lookAt(this._v.copy(point).add(normal));
+    // lookAt здесь нельзя: point/normal — локальные координаты root, а lookAt
+    // работает в мировых (смещение root на 2.4 м разворачивало кольцо ребром).
+    ring.mesh.quaternion.setFromUnitVectors(this._zAxis, normal);
     ring.mesh.scale.setScalar(0.12);
   }
 
@@ -863,7 +875,8 @@ class RealityField extends xb.Script {
       r.t += dt;
       const k = Math.min(r.t / RING_DUR, 1);
       r.mesh.material.uniforms.uProgress.value = k;
-      r.mesh.scale.setScalar(0.12 + k * RING_MAX);
+      // Компактное кольцо референса: радиус 0.06 → 0.38 (диаметр ≤ 0.76 м).
+      r.mesh.scale.setScalar(0.06 + k * RING_MAX);
     }
     for (const b of this.beams) {
       if (b.t >= BEAM_DUR) { b.mesh.visible = false; continue; }

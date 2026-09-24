@@ -31,12 +31,45 @@ export function isTestMode() {
  * Базовые Options для опыта: якоря, ретиклы по depth-мешу, симулятор.
  * @param {{title: string, description: string, depth?: boolean}} cfg
  */
+/**
+ * Телефонный guard (канон соседнего проекта xrblocks/common/boot.js:
+ * installXrGuards). XR Blocks помечает depth-sensing / local-floor /
+ * hand-tracking как requiredFeatures, когда опыт их включил. Телефонный
+ * Chrome такие сессии отклоняет целиком, а кнопка ENTER XR молча ничего
+ * не делает. Перехватываем requestSession: при отказе из-за тяжёлых фич
+ * повторяем запрос без них — опытам остаются fallback-геометрия и тапы.
+ * Вызывать один раз до xb.init() — baseOptions() делает это сам.
+ * Отброшенные фичи видны в installXrGuards.dropped.
+ */
+export function installXrGuards() {
+  const xr = navigator.xr;
+  if (!xr || xr.__downgradeGuard) return installXrGuards;
+  xr.__downgradeGuard = true;
+  const orig = xr.requestSession.bind(xr);
+  xr.requestSession = (mode, init) =>
+    orig(mode, init).catch((err) => {
+      const required = (init && init.requiredFeatures) || [];
+      const heavy = required.filter(
+        (f) => f === 'depth-sensing' || f === 'hand-tracking' || f === 'local-floor'
+      );
+      // Причина отказа не в тяжёлых фичах — пробрасываем как есть.
+      if (!heavy.length) throw err;
+      installXrGuards.dropped.push(...heavy);
+      init.requiredFeatures = required.filter((f) => !heavy.includes(f));
+      return orig(mode, init);
+    });
+  return installXrGuards;
+}
+installXrGuards.dropped = [];
+
 export function baseOptions({ title, description, depth = false, bloom = false }) {
+  installXrGuards();
   const options = new xb.Options();
   if (depth) options.enableDepth();
   if (bloom) options.usePostprocessing = true; // стерео-совместимый XREffects
   options.enableReticles();
-  options.reticles.projectOnDepthMesh = true;
+  // Флаг читается только при включённом depth (Core ставит его на depthMesh).
+  if (depth) options.reticles.projectOnDepthMesh = true;
   options.reticles.defaultRenderDistance = 0; // промах → ретикл скрыт, не парит
   // Телефон: тап прямой, ретикл не нужен — плавающий белый круг здесь
   // только мешает попаданию. Десктоп/симулятор ретикл сохраняет.
@@ -132,8 +165,10 @@ const PHONE_PANELS = new Set();
 
 /** true, если активная XR-сессия управляется с экрана телефона. */
 function isPhoneSession() {
-  // MDN: на телефоне в immersive-ar interactionMode === 'screen-space'
-  // (не 'screen'). targetRayMode === 'screen' — второй официальный признак.
+  const session = xb.core?.renderer?.xr?.getSession?.();
+  if (!session) return false;
+  // MDN: на телефоне в immersive-ar interactionMode === 'screen-space'.
+  // targetRayMode === 'screen' — второй официальный признак.
   if (session.interactionMode === 'screen-space') return true;
   try {
     for (const src of session.inputSources) {
@@ -188,7 +223,7 @@ export function spatialControls({ title, status = '…', controls, width = 0.72 
       text: status,
       style: {
         fontSize: 26, lineHeight: 1.3, color: '#8ea0c2',
-        textAlign: 'center', flexGrow: 1,
+        textAlign: 'center', flexGrow: 1, whiteSpace: 'pre-line',
       },
     });
     const buttons = new Map();

@@ -817,6 +817,10 @@ class WeatherRoom extends xb.Script {
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch { saved = null; }
     if (!saved || saved.source !== 'live' || !Number.isFinite(saved.code) || !Number.isFinite(saved.fetchedAt)) return null;
+    // Неполная запись из старой версии хранилища обязана падать в превью,
+    // а не ронять init исключением из describe/contextOf.
+    if (!Number.isFinite(saved.lat) || !Number.isFinite(saved.lon) || !Number.isFinite(saved.at) ||
+      !Number.isFinite(saved.tempC) || !Number.isFinite(saved.windMps)) return null;
     if (Date.now() - saved.fetchedAt > W.MAX_RESTORE_MS) return null;
     saved.info = W.wmoInfo(saved.code);
     this.live = saved;
@@ -1276,8 +1280,10 @@ const options = baseOptions({
   depth: false,
   bloom: false,
 });
-options.enableHands();
 options.controllers.visualizeRays = false;
+// Геопозиция запрашивается SDK на входе в XR (видимый промпт до сессии),
+// сама сводка — только за явной кнопкой «ПОГОДА РЯДОМ».
+options.permissions = { ...(options.permissions || {}), geolocation: true };
 
 document.addEventListener('DOMContentLoaded', async () => {
   try {

@@ -417,10 +417,11 @@ export function previewReading({ index = 0, baseMs = Date.now(), hour = null, la
 export function contextOf(reading, nowMs = Date.now()) {
   const lat = Number.isFinite(reading.lat) ? reading.lat : PREVIEW_LAT;
   const lon = Number.isFinite(reading.lon) ? reading.lon : PREVIEW_LON;
-  const sun = solarPosition(reading.at, lat, lon);
-  const moon = moonPosition(reading.at, lat, lon);
-  const season = seasonOf(reading.at, lat, reading.source === 'live' ? reading.tz : null);
-  const prev = solarPosition(reading.at - 10 * 60000, lat, lon);
+  const at = Number.isFinite(reading.at) ? reading.at : nowMs;
+  const sun = solarPosition(at, lat, lon);
+  const moon = moonPosition(at, lat, lon);
+  const season = seasonOf(at, lat, reading.source === 'live' ? reading.tz : null);
+  const prev = solarPosition(at - 10 * 60000, lat, lon);
   const rising = sun.altitudeDeg > prev.altitudeDeg;
   const sinAlt = Math.sin(rad(sun.altitudeDeg));
   const dayK = clamp((sinAlt + 0.10) / 0.35, 0, 1);
@@ -457,8 +458,8 @@ export function sceneParams(reading, ctx) {
   const pk = precipitationKind(info);
 
   let rain = 0, snow = 0, fog = 0;
-  if (pk === 'rain') rain = clamp(Math.max(0.28 + lvl * 0.24, precip / 1.2), 0.22, 1);
-  if (pk === 'snow') snow = clamp(Math.max(0.32 + lvl * 0.22, snowCm / 1.5), 0.25, 1);
+  if (pk === 'rain') rain = clamp(Math.max(0.28 + lvl * 0.24, precip / 4), 0.22, 1);
+  if (pk === 'snow') snow = clamp(Math.max(0.32 + lvl * 0.22, snowCm / 4), 0.25, 1);
   if (pk === 'fog') fog = clamp(0.7 + lvl * 0.12, 0, 1);
   else if (pk === 'rain') fog = clamp(0.08 + precip * 0.1, 0, 0.32);
 
@@ -535,7 +536,7 @@ export function describe(reading, ctx, { error = null, fetching = false } = {}) 
     sunrise: reading?.sunriseMs ? formatClock(reading.sunriseMs, tz) : null,
     sunset: reading?.sunsetMs ? formatClock(reading.sunsetMs, tz) : null,
     tz: reading?.source === 'live' ? (reading.tzLabel ?? reading.tz ?? null) : null,
-    place: reading?.source === 'live'
+    place: reading?.source === 'live' && Number.isFinite(reading?.lat) && Number.isFinite(reading?.lon)
       ? `${reading.lat.toFixed(2)}, ${reading.lon.toFixed(2)}` : null,
     note: reading?.note ?? null,
     ageText: reading?.source === 'live' && ctx.ageMs > 60000 ? formatAge(ctx.ageMs) : null,
@@ -564,10 +565,10 @@ export function errorTag(text) {
   if (text.includes('запрещена')) return 'ОТКАЗ ГЕО';
   if (text.includes('недоступна в этом')) return 'ГЕО НЕТ';
   if (text.includes('не отвечает')) return 'ГЕО МОЛЧИТ';
+  if (text.includes('таймаут запроса')) return 'ТАЙМАУТ';
   if (text.includes('таймаут')) return 'ГЕО ТАЙМАУТ';
   if (text.startsWith('HTTP')) return text.slice(0, 12);
   if (text.includes('сеть') || text.includes('network') || text.includes('fetch')) return 'НЕТ СЕТИ';
-  if (text.includes('таймаут запроса')) return 'ТАЙМАУТ';
   if (text.includes('данных') || text.includes('нет current')) return 'ОТВЕТ НЕ РАЗОБРАН';
   return 'ОШИБКА';
 }

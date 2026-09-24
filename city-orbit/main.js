@@ -18,7 +18,7 @@ import {
   COLORS, baseOptions, createHud, watchSession, spatialControls,
   anchorRoot, fpsMeter,
 } from '../common/shell.js';
-import { hologramMaterial, tickMaterials } from '../common/shaders.js';
+import { glowBlending, hologramMaterial, tickMaterials } from '../common/shaders.js';
 import { glowTexture, spritePool } from '../common/sprites.js';
 
 // Условные категории, а не реальные названия: набор демонстрационный.
@@ -77,10 +77,10 @@ function stemMesh(height, color) {
     cols.set([mix.r, mix.g, mix.b], i * 3);
   }
   g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-  const m = new THREE.MeshBasicMaterial({
+  const m = glowBlending(new THREE.MeshBasicMaterial({
     vertexColors: true, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending, depthWrite: false,
-  });
+    depthWrite: false,
+  }));
   const mesh = new THREE.Mesh(g, m);
   mesh.position.y = height / 2;
   return mesh;
@@ -93,7 +93,7 @@ function ellipseLine(rx, rz, color, opacity = 0.5) {
     p.push(new THREE.Vector3(Math.cos(a) * rx, 0, Math.sin(a) * rz));
   }
   const g = new THREE.BufferGeometry().setFromPoints(p);
-  const m = new THREE.LineBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false });
+  const m = glowBlending(new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false }));
   return new THREE.Line(g, m);
 }
 
@@ -154,7 +154,7 @@ class CityOrbit extends xb.Script {
     }
     const pg = new THREE.BufferGeometry(); pg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     pg.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const pm = new THREE.PointsMaterial({ size: 0.03, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true });
+    const pm = glowBlending(new THREE.PointsMaterial({ size: 0.03, vertexColors: true, transparent: true, depthWrite: false, sizeAttenuation: true }));
     this.cityPoints = new THREE.Points(pg, pm); this.plate.add(this.cityPoints);
     fade(this.plateFade, pm, 0.82);
 
@@ -184,7 +184,7 @@ class CityOrbit extends xb.Script {
       const r0 = PANO_RADIUS - (i % 9 === 0 ? 0.22 : 0.1);
       tickPos.push(Math.sin(a) * r0, 0, -Math.cos(a) * r0, Math.sin(a) * PANO_RADIUS, 0, -Math.cos(a) * PANO_RADIUS);
     }
-    const tickMat = new THREE.LineBasicMaterial({ color: COLORS.violet, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    const tickMat = glowBlending(new THREE.LineBasicMaterial({ color: COLORS.violet, transparent: true, depthWrite: false }));
     this.pano.add(new THREE.LineSegments(
       new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(tickPos, 3)), tickMat
     ));
@@ -201,7 +201,7 @@ class CityOrbit extends xb.Script {
       c.set(i % 5 === 0 ? COLORS.violet : COLORS.accent);
       cCols.set([c.r, c.g, c.b], i * 3);
     }
-    const cm = new THREE.PointsMaterial({ size: 0.022, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true });
+    const cm = glowBlending(new THREE.PointsMaterial({ size: 0.022, vertexColors: true, transparent: true, depthWrite: false, sizeAttenuation: true }));
     this.pano.add(new THREE.Points(
       new THREE.BufferGeometry()
         .setAttribute('position', new THREE.BufferAttribute(cPts, 3))
@@ -226,18 +226,20 @@ class CityOrbit extends xb.Script {
     this.mats = [];
     for (const [i, data] of SAMPLE_PLACES.entries()) {
       const group = new THREE.Group();
+      // Метка выбора — на группе: тап по пину, гало, наконечнику, шару
+      // или чипу резолвится в точку при подъёме по родителям.
+      group.userData.landmark = i;
       const stem = stemMesh(data.h, data.color);
       const mat = hologramMaterial({ color: data.color, rim: data.self ? COLORS.coral : COLORS.violet, opacity: 0.9 });
       const node = new THREE.Mesh(new THREE.IcosahedronGeometry(data.self ? 0.045 : 0.064, 2), mat);
       node.position.y = data.h;
-      node.userData.landmark = i;
-      const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture({ core: 0.1 }), color: data.color, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const halo = new THREE.Sprite(glowBlending(new THREE.SpriteMaterial({ map: glowTexture({ core: 0.1 }), color: data.color, transparent: true, opacity: 0.75, depthWrite: false })));
       halo.position.y = data.h; halo.scale.setScalar(data.self ? 0.16 : 0.22);
       // Яркий наконечник пина — то, что читается как «световая точка» издалека.
-      const tip = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture({ core: 0.38, gamma: 1.5 }), color: data.color, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const tip = new THREE.Sprite(glowBlending(new THREE.SpriteMaterial({ map: glowTexture({ core: 0.38, gamma: 1.5 }), color: data.color, transparent: true, opacity: 0.95, depthWrite: false })));
       tip.position.y = data.h; tip.scale.setScalar(data.self ? 0.045 : 0.055);
       const label = labelSprite(data.name, data.self ? '#ff8d80' : '#d9f7ff');
-      label.position.set(0, data.h + 0.09, 0); label.userData.landmark = i;
+      label.position.set(0, data.h + 0.09, 0);
       group.add(stem, halo, tip, node, label);
       this.rig.add(group);
       this.mats.push(mat);
@@ -289,9 +291,13 @@ class CityOrbit extends xb.Script {
     this.add(this.spatial.card);
 
     // spread — раскрыть/свернуть вид (никакого масштаба в метрах).
+    // gestureRecognition существует только при включённом hand-tracking:
+    // на телефоне его нет, и это норма (тап и ДАЛЬШЕ остаются).
     const g = xb.core.gestureRecognition;
-    this._gs = (e) => { if (e.detail.name === 'spread') toggleView(); };
-    g.addEventListener('gesturestart', this._gs);
+    if (g) {
+      this._gs = (e) => { if (e.detail.name === 'spread') toggleView(); };
+      g.addEventListener('gesturestart', this._gs);
+    }
 
     this.fpsTick = fpsMeter((fps) => { this.fps = fps; }); this.fps = 0;
     this.selectNode(1);
@@ -359,8 +365,11 @@ class CityOrbit extends xb.Script {
   }
 
   onSelectEnd(event) {
-    if (event?.target?.isUI) return;
-    let obj = event?.intersection?.object;
+    if (event?.completed === false || event?.target?.isUI) return;
+    // Метка — на группе точки (stem/halo/tip/node/label наследуют её при
+    // подъёме по родителям). Резолвим из зафиксированного surface пайплайна:
+    // intersection на отпускании может отсутствовать при дрожании луча.
+    let obj = event?.surface ?? event?.target ?? event?.intersection?.object;
     while (obj && obj.userData?.landmark == null) obj = obj.parent;
     if (obj?.userData?.landmark == null) {
       // Промах ничего не меняет — никакого «любой тап выбирает следующее».
@@ -393,9 +402,11 @@ class CityOrbit extends xb.Script {
     this.pano.visible = this.blend > 0.01;
 
     // Панорама центрируется на вас, схема остаётся над столом.
+    // Центр берём из живой позы камеры каждый кадр: после шага/поворота
+    // кольцо остаётся вокруг вас, а не вокруг точки старта сессии.
     if (this.mode360 || this.blend > 0.01) {
-      this.root.updateWorldMatrix(true, false);
-      this._v.set(0, xb.user.height * PANO_BASE, 0);
+      xb.core.camera.getWorldPosition(this._v);
+      this._v.y = xb.user.height * PANO_BASE;
       this.root.worldToLocal(this._v);
     } else this._v.set(0, 0, 0);
     this.sculpture.position.lerp(this._v, k);
@@ -407,7 +418,9 @@ class CityOrbit extends xb.Script {
     this.rigYaw += d * k;
     this.rig.rotation.y = this.rigYaw;
 
-    const nodeScale = 1 + this.blend * 0.9;
+    // Панорама ближе к глазам, чем стол, — поэтому рост умеренный: чип
+    // остаётся компактным (≤0.34 м), гало не заливает пол-экрана.
+    const nodeScale = 1 + this.blend * 0.3;
     for (let i = 0; i < this.nodes.length; i++) {
       const n = this.nodes[i];
       const tp = n.tablePos, pp = n.panoPos;
@@ -422,15 +435,15 @@ class CityOrbit extends xb.Script {
         n.group.scale.setScalar(Math.max(0.02, selfFade));
       }
       const on = i === this.selected;
-      const s = nodeScale * (on ? 1.45 : 1);
+      const s = nodeScale * (on ? 1.2 : 1);
       n.node.scale.setScalar(s);
       n.node.rotation.y += dt * (0.35 + i * 0.07);
-      n.halo.scale.setScalar((n.data.self ? 0.16 : 0.22) * nodeScale * (on ? 1.35 : 1));
+      n.halo.scale.setScalar(Math.min(0.3, (n.data.self ? 0.16 : 0.22) * nodeScale * (on ? 1.2 : 1)));
       n.halo.material.opacity = (0.42 + 0.28 * Math.sin(t * 1.4 + i)) * selfFade;
       const tipBase = n.data.self ? 0.045 : 0.055;
-      n.tip.scale.setScalar(tipBase * nodeScale * (on ? 1.35 : 1));
+      n.tip.scale.setScalar(tipBase * nodeScale * (on ? 1.2 : 1));
       n.tip.material.opacity = (0.72 + 0.22 * Math.sin(t * 2.1 + i * 1.7)) * selfFade;
-      const chip = (1 + this.blend * 0.5) * (on ? 1.2 : 1);
+      const chip = (1 + this.blend * 0.1) * (on ? 1.2 : 1);
       n.label.scale.set(CHIP.w * chip, CHIP.h * chip, 1);
       n.label.material.opacity = (on ? 1 : 0.78) * selfFade;
     }
@@ -443,7 +456,7 @@ class CityOrbit extends xb.Script {
   }
 
   dispose() {
-    xb.core.gestureRecognition.removeEventListener('gesturestart', this._gs);
+    xb.core.gestureRecognition?.removeEventListener('gesturestart', this._gs);
     this.anchor.dispose(); this.glints.dispose();
     this.sculpture.traverse((o) => { o.geometry?.dispose?.(); if (o.material && !o.isSprite) o.material.dispose?.(); o.userData?.dispose?.(); });
     for (const n of this.nodes) { n.halo.material.dispose(); n.tip.material.dispose(); }

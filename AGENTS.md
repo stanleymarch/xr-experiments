@@ -51,3 +51,43 @@
   кнопки overlay стоят на месте, тапы попадают, эффекты компактны.
 - После правок общего shell прогнать все пять опытов: city-orbit,
   sound-space, weather-room, echo-room, reality-field.
+
+## Скиллы и источники (читать перед правками)
+
+- Официальные скиллы SDK лежат в `.agents/skills/xb-*` (синк из
+  `node_modules/xrblocks/skills` соседнего проекта `../xrblocks`:
+  `cp -r ../xrblocks/node_modules/xrblocks/skills/* .agents/skills/`).
+  Перед задачей читать профильный: `xb-add-spatial-ui` (карточки/оверлеи),
+  `xb-add-interactions` (ввод/события), `xb-add-world-sensing` (depth/planes),
+  `xb-anchors`, `xb-debug-app`, `xb-build-app`.
+- Контракты SDK — `../xrblocks/XR-BLOCKS.md`; полное зеркало апстрима —
+  `../xrblocks-reference/` (templates/samples/demos/docs); символы сверять
+  с `../xrblocks/node_modules/xrblocks/src/`, мануал — Spatial UI
+  (`UICard` — мир/метры, `UIOverlay` — view-space/приватный viewport,
+  retained-обновления, `xb.ui.validate()`).
+- Ветки docs по interactionMode: SDK его не использует; признак телефона —
+  WebXR-спека (`interactionMode === 'screen-space'` + `targetRayMode`).
+
+## Канон рендера (premultiplied-alpha)
+
+- Рендерер XR Blocks — `alpha:true`, канвас premultiplied. Голый
+  `THREE.AdditiveBlending` копит альфу и гасит камеру в alpha-blend-сессии.
+  Каждый светящийся материал — через `glowBlending()` из `common/shaders.js`.
+
+## Отклонения от канона (осознанные)
+
+- `installXrGuards()` в `common/shell.js` (вызывает `baseOptions`): повтор
+  `requestSession` без `depth-sensing/hand-tracking/local-floor` при отказе.
+  SDK такого retry не делает — только `console.error`.
+- Руки (`enableHands/enableGestures`) не включаем нигде, кроме reality-field
+  на гарнитуре: ни один опыт не читает hand-данные, а флаг делает
+  `hand-tracking` required-фичей и роняет вход на телефоне.
+- `compose()` в reality-field — разовый камера-относительный док + пер-кадровый
+  lerp якоря из shell, а не `FollowHead`/`FaceCamera`: нужен «док один раз»,
+  placement-скрипты такого не дают.
+- Звук — плоская лента 16 полос перед пользователем, а не 32 оси вокруг головы
+  как в каноне: объёмная сцена — долг, тембровую классификацию не копируем
+  (противоречит «форма = выбор визуализации»).
+- `xb.ui.validate()` в проект не зовём: долг, проверять переполнение панелей.
+- Симулятор не эмулирует телефонный alpha-blend и пустые planes: телефон и
+  Quest — только реальное устройство (бюджета якорей это тоже касается).

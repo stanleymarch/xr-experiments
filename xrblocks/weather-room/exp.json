@@ -1,6 +1,6 @@
 {
   "title": "WEATHER//ROOM",
-  "description": "Live weather at your coordinates: wind drives the particle flow, rain lands on detected surfaces, temperature tints the air. A slider scrubs −24…+24 h. One Open-Meteo request, then everything runs locally.",
-  "description_ru": "Живая погода твоих координат: ветер задаёт направление потока частиц, дождь падает на найденные поверхности, температура красит воздух. Слайдер мотает время −24…+24 ч. Один запрос к Open-Meteo, дальше всё локально.",
+  "description": "Live weather at your coordinates: wind drives streaks and snow, rain lands on detected surfaces — and, with a depth sensor, on the real geometry itself; a volumetric cloud breathes overhead. A slider scrubs −24…+24 h; one Open-Meteo request, then everything runs locally.",
+  "description_ru": "Живая погода твоих координат: ветер гонит полосы дождя и снег, капли садятся на найденные поверхности — а с depth-сенсором на саму реальную геометрию; над головой дышит объёмное облако. Слайдер мотает время −24…+24 ч; один запрос к Open-Meteo, дальше всё локально.",
   "tags": ["open-meteo", "particles", "timeline"]
 }

@@ -94,6 +94,11 @@ export function installLaunchShell(options, hints = []) {
   if (typeof document === 'undefined' || isAutomation()) return null;
   const shell = document.createElement('section');
   shell.className = 'launch-shell';
+  // В шелле нет интерактивных детей (только текст), поэтому он не должен
+  // перехватывать указатель: иначе в десктоп-симуляторе клик-select по его
+  // области умирал бы в оверлее, не дойдя до канваса. Кнопка входа живёт в
+  // #XRButtonWrapper поверх шелла — входу сквозность не мешает.
+  shell.style.pointerEvents = 'none';
   const title = document.createElement('h2');
   title.textContent = options.xrButton.appTitle || document.title;
   const desc = document.createElement('p');

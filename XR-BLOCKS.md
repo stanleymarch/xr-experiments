@@ -10,7 +10,7 @@
 |---|---|
 | **Скиллы (установлены)** | `.agents/skills/xb-*` — 8 штук, подхватываются OMP-провайдером; sync: `npm run skills:sync` (= postinstall) |
 | Полный исходник SDK | `node_modules/xrblocks/src/` (npm-пакет несёт `build/ skills/ src/`) |
-| Мануалы онлайн | <https://xrblocks.github.io/docs/manual/>: Interaction, Placement, UI, World, Depth, Simulator и др. |
+| **Апстрим-зеркало** | `../xrblocks-reference/` — sparse clone google/xrblocks на теге **v0.21.1** (наша версия): `templates/` (15), `samples/`, `demos/`, `docs/docs/manual/`. Восстановлено; не коммитится (вне репо) |
 | Правила для агентов | `AGENTS.md` в корне (читается харнессом автоматически) |
 | Типы API | `node_modules/xrblocks/build/xrblocks.d.ts` |
 
@@ -149,15 +149,15 @@ SDK даёт готовые скрипты-дети, которые двигаю
 | Даунгрейд фич сессии | — | `installXrGuards()` в `boot.js`: повторный `requestSession` без `depth-sensing/hand-tracking/local-floor` | Телефонный Chrome отклоняет сессию с этими required-фичами; SDK помечает их required |
 | Passthrough-детект | — | `isPassthrough()` в `boot.js` (`environmentBlendMode === 'alpha-blend'` = телефон; Quest отдаёт `additive`) | Частицы/кольца аддитивные, VR-декорации (пол/палуба/дымка) в AR прячутся через `hideInPassthrough` |
 
-## Карта «опыт → API SDK»
+## Карта «опыт → API SDK» (v23)
 
 | Опыт | Включает | Особенности |
 |---|---|---|
-| REALITY//FIELD | `enableHands`, `enableGestures`, `enableDepth`, `enableReticles`, rays/hands visualization | depth-mesh как цель импульса + fallback-комната; жесты `pinch/open-palm/fist/spread` через `gestureRecognition` |
-| WEATHER//ROOM | `enableReticles`, `enablePlaneDetection`, `world.enableAnchors` | planes → splash-поверхности (пустые на телефоне → всплески выключены в passthrough); якорь HUD |
-| CITY//ORBIT | geolocation + Overpass, ручной/авто масштаб | unlit-голограмма (MeshBasicMaterial) — палитра тёмная, в AR читается как тёмная масса |
-| SOUND//SPACE | Web Audio FFT + mic | скульптуры freeze по тапу (`onSelectEnd` → `freeze()`) |
-| ECHO//ROOM | ring buffer следов | временные слои по клику на след |
+| REALITY//FIELD | `enableHands`, `enableGestures`, `enableDepth` (+`xrDepthMeshPhysicsOptions` при живом Rapier), `enableReticles`, rays/hands visualization, `options.physics.RAPIER` (`@dimforge/rapier3d-simd-compat` с CDN, динамический import) | depth-mesh как цель импульса + fallback-комната; жесты `pinch/open-palm/fist/spread`; пул ≤32 осколков-динамических тел (CCD, restitution 0.5) скачет по живому mesh; статус `PHYSICS RAPIER/RAYCAST` честный |
+| WEATHER//ROOM | `enableReticles`, `enablePlaneDetection`, `world.enableAnchors`, `enableDepth` (depth-дождь), аддоны `VolumetricCloud`, `SimpleDecalGeometry` | planes → декали-пятна + кольца; ливень — полосы-билборды (InstancedMesh, шейдерное растяжение по скорости+ветру); depth-осведомлённый дождь: окклюзия и точная посадка капли по depth-мешу (`getProjectedDepthViewPositionFromWorldPosition`, каждая 2-я капля через кадр); объёмное облако (только VR/десктоп — premultiplied-канвас телефона), звук дождя с CDN ассетов SDK по кнопке SOUND |
+| CITY//ORBIT | geolocation + Overpass, ручной/авто масштаб, поток размещения | follow→fix по depth/planes-хиту (превью-подложка, `getRayIntersection`), долгое удержание — перестановка; two-source pinch-spred через index-tip рук (`hands.getIndexTip`) и контроллеры; AR-подсветка силуэта (rim ×1.6, линии ×1.5) |
+| SOUND//SPACE | Web Audio FFT + mic, `enableHands`, манипуляция на объектах | галерея ≤5 снимков (`xb.manipulation` translate + rotate-кольцо-handle), hold ~0.7 с / squeeze — растворить, тап — заморозить; возраст в статусе, тепло-тинт старения |
+| ECHO//ROOM | ring buffer следов | глобальный скраб −60…0 с по HUD-слайдеру (поза-призраки с lerp, read-only прошлое), ✦-слои, heatmap-возраст, мини-UICard выбранного импульса |
 
 ## Как проверять, не гадая
 
@@ -170,8 +170,9 @@ SDK даёт готовые скрипты-дети, которые двигаю
    пустые planes в симуляторе не воспроизводятся. Чек-лист скиллов: для
    каждого действия — simulator-шаги, XR-ввод, ожидаемый фидбек, отмена,
    device-only проверки.
-4. **Quest**: якоря/depth/жесты — проверять бюджет якорей до демонстрации
-   (шестой может быть отклонён).
+4. **Quest**: якоря/depth/жесты/физика — проверять бюджет якорей до
+   демонстрации (шестой может быть отклонён); Rapier-осколки и depth-дождь
+   смотреть именно тут (симулятор даёт синтетический depth).
 
 ## Долги
 
@@ -180,6 +181,10 @@ SDK даёт готовые скрипты-дети, которые двигаю
 - ~~`projectOnDepthMesh` не включён~~ — включён в reality-field (прицел
   проецируется на реальную геометрию на Quest).
 - ~~premultiplied-alpha~~ — закрыто контрактом `glowBlending` (см. выше);
-  яркостный запас в AR: weather ×1.3/×1.5, reality-линии ×1.8.
-- `samples/xr_realism/reticle` и `templates/03_spatial_placement` — образцы
-  для splash-поверхностей weather и размещения city.
+  яркостный запас в AR: weather ×1.3/×1.5, reality-линии ×1.8, city rim ×1.6.
+- ~~splash-поверхности weather и размещение city по образцам~~ — сделано
+  (v23): декали `SimpleDecalGeometry` + follow→fix по образцу
+  `templates/03_spatial_placement`; референс-зеркало восстановлено в
+  `../xrblocks-reference` (тег v0.21.1).
+- Осталось на устройство: приёмка якорей/depth/жестов/физики на Quest 3,
+  тач-пути телефона, звук дождя в alpha-blend.

@@ -1,6 +1,6 @@
 {
   "title": "REALITY//FIELD",
-  "description": "Pinch fires an impulse into the room's real geometry; the wave ripples through the particle field. Palm repels, fist attracts, two pinches stretch the field; DEBUG shows the depth mesh, planes and rays.",
-  "description_ru": "Импульс из pinch попадает в реальную геометрию комнаты и гонит волну по частицам. Ладонь отталкивает, кулак притягивает, две руки в pinch растягивают поле; DEBUG показывает depth mesh, плоскости и лучи.",
+  "description": "Pinch fires an impulse into the room's real geometry; a charged pinch also throws physical shards that bounce off the live depth mesh. Palm repels, fist attracts, two pinches stretch the field; DEBUG shows the depth mesh, planes and rays.",
+  "description_ru": "Импульс из pinch попадает в реальную геометрию комнаты и гонит волну по частицам; заряженный pinch бросает и физические осколки, скачущие по живому depth-mesh. Ладонь отталкивает, кулак притягивает, две руки в pinch растягивают поле; DEBUG показывает depth mesh, плоскости и лучи.",
   "tags": ["depth-mesh", "gestures", "particles"]
 }

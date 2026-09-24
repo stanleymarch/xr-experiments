@@ -1,16 +1,26 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { makeHud } from '../common/hud.js?v=mobile-ux-22';
+import { makeHud } from '../common/hud.js?v=mobile-ux-24';
 import {
   enableAutomation, installLaunchShell, installXrGuards,
-  isAutomation, previewFromEyeHeight, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-20';
-import { PALETTES } from '../common/fx.js?v=mobile-ux-22';
+  isAutomation, isPassthrough, previewFromEyeHeight, watchXrButton,
+} from '../common/boot.js?v=mobile-ux-24';
+import { PALETTES, glowBlending } from '../common/fx.js?v=mobile-ux-24';
 
 // CITY//ORBIT — район из OpenStreetMap как голограмма.
 // Стол: макет 1.2 м перед тобой. 360°: город вокруг тебя. Указка/луч камеры +
 // select = карточка места. Разведение в pinch = 200 м → 1 км → 5 км.
+//
+// Размещение макета — поток из трёх состояний (см. templates/03_spatial_placement):
+//
+//   auto    — позу ведёт layout(): макет перед камерой / вокруг тебя;
+//   follow  — select или долгое удержание на подложке: макет-призрак идёт за
+//             попаданием луча по поверхности комнаты (depth-mesh или плоскость);
+//   fixed   — select ставит макет: поза фиксируется, макет садится с высоты.
+//
+// Поверхностей может не быть вовсе (телефонный Chrome не даёт depth/planes) —
+// тогда follow ведёт макет перед камерой, как раньше, и опыт не деградирует.
 //
 // Один внутренний контракт сцены обслуживает и живой Overpass, и офлайн-демо:
 //
@@ -636,6 +646,26 @@ const BUILDING_STYLE = [
 ];
 const AREA_STYLE = { water: 0x0d4570, green: 0x123c26 };
 
+// ── Размещение макета ─────────────────────────────────────────────────────
+//
+// Стол ставится на настоящую поверхность комнаты: попадание разрешает
+// interaction pipeline (тот же, что ведёт ретикл), макет идёт за ним
+// призраком, select фиксирует позу. Порядок взят из
+// templates/03_spatial_placement: свежего Raycaster внутри события нет.
+const PLACE_REACH = 3.5;    // м: дальше попадание поверхностью не считаем
+const PLACE_RADIUS = 0.62;  // м: подложка-призрак чуть шире диска макета
+const PLACE_HOVER = 0.02;   // м: призрак висит над поверхностью, без z-fighting
+const PLACE_DROP = 0.10;    // м: высота посадки — как у placeOnHorizontalSurface
+const GHOST = 0.42;         // прозрачность макета, пока он ищет место
+const LAND_TIME = 0.42;     // с: длительность посадки
+const PINCH_STEP = 0.12;    // м: разведение рук, после которого радиус меняется
+// Телефонный passthrough: канвас смешивается с камерой, и плотные тёмные
+// заливки читаются как тёмная масса. Заливки уходят, свечение получает запас
+// яркости (XR-BLOCKS.md «яркостный запас в AR»).
+const AR_FILL = 0.55;       // во сколько раз тоньше вода и зелень в AR
+const AR_LINE = 1.5;        // запас яркости аддитивных линий в AR
+const AR_RIM = 1.6;         // запас яркости rim-контура зданий в AR
+
 function buildingStyle(levels) {
   return BUILDING_STYLE.find((s) => levels <= s.max);
 }
@@ -732,12 +762,14 @@ function buildingGeometry(scene, project) {
 
 // Настоящий голографический материал: форма остаётся читаемой, но здания
 // полупрозрачны, светятся по краям и сканируются горизонтальной строкой.
+// uAr — запас яркости для телефонного passthrough, uGhost — состояние призрака
+// (1 — макет поставлен, <1 — ищет место).
 function buildingHologramMaterial() {
   return glowBlending(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
-    uniforms: { uTime: { value: 0 } },
+    uniforms: { uTime: { value: 0 }, uAr: { value: 0 }, uGhost: { value: 1 } },
     vertexShader: /* glsl */`
       attribute vec3 color;
       varying vec3 vColor;
@@ -754,17 +786,23 @@ function buildingHologramMaterial() {
       }`,
     fragmentShader: /* glsl */`
       uniform float uTime;
+      uniform float uAr;
+      uniform float uGhost;
       varying vec3 vColor;
       varying vec3 vNormal;
       varying vec3 vView;
       varying float vHeight;
       void main() {
-        float edge = pow(1.0 - abs(dot(normalize(vNormal), normalize(vView))), 1.7);
+        float rim = pow(1.0 - abs(dot(normalize(vNormal), normalize(vView))), 1.7);
+        // В passthrough контур — единственное, что надёжно читается поверх
+        // светлой камеры: rim получает запас яркости, а плотный низ силуэта
+        // подсвечивается, чтобы голограмма не превращалась в тёмную массу.
+        float edge = rim * mix(1.0, ${AR_RIM}, uAr);
         float scan = pow(max(0.0, sin(vHeight * 0.72 - uTime * 2.2)), 18.0);
         float pulse = 0.82 + 0.18 * sin(uTime * 0.8);
-        vec3 glow = vColor * (0.72 + edge * 1.8 + scan * 1.35) * pulse;
-        float alpha = 0.16 + edge * 0.3 + scan * 0.42;
-        gl_FragColor = vec4(glow, alpha);
+        vec3 glow = vColor * (mix(0.72, 0.95, uAr) + edge * 1.8 + scan * 1.35) * pulse;
+        float alpha = mix(0.16, 0.21, uAr) + edge * mix(0.3, 0.44, uAr) + scan * 0.42;
+        gl_FragColor = vec4(glow, alpha * uGhost);
       }`,
   }));
 }
@@ -828,7 +866,10 @@ class CityOrbit extends xb.Script {
       new THREE.MeshBasicMaterial({ color: 0x0e2c44, transparent: true, opacity: 0.75 })
     );
     this.base.rotation.x = -Math.PI / 2;
-    this.base.xb = { pointerEvents: 'none' };
+    // Подложка макета — цель перестановки, а не декорация: select или долгое
+    // удержание на ней (и никогда на знаке места) снова отправляют макет
+    // искать место. Поэтому у неё единственного pointerEvents: auto.
+    this.base.xb = { pointerEvents: 'auto' };
     this.group.add(this.base);
     this.ring = new THREE.Mesh(
       new THREE.RingGeometry(0.585, 0.6, 64),
@@ -895,6 +936,29 @@ class CityOrbit extends xb.Script {
     this._prevPinchDist = 0;
     this.pinchHands = new Set();
 
+    // Размещение макета: auto — позу ведёт layout(), follow — призрак идёт за
+    // попаданием луча, fixed — поза зафиксирована select'ом.
+    this.place = 'auto';
+    this.ghostK = 1;           // прозрачность слоёв: <1 — макет-призрак
+    this.ar = false;           // телефонный passthrough
+    this.land = 0;             // 1 → 0: анимация посадки
+    this.padFade = 0;          // 1 → 0: подложка гаснет после посадки
+    this.layerMats = [];       // {mat, base, ar} — слои с прозрачностью
+    this._dataStat = '';       // последнее описание района для HUD
+    this._lastTime = 0;
+    this._placeV = new THREE.Vector3();
+    this._hover = new THREE.Vector3();
+    this._camV = new THREE.Vector3();
+    this._surfaceSeen = false;
+    // Источники луча для размещения: два XR-контроллера и мышь симулятора.
+    // В USER-режиме контроллеры отключены, и единственный луч приходит от мыши,
+    // поэтому спрашивать один контроллер 0 недостаточно. Мышь живёт на
+    // xb.user.input.mouseController весь жизненный цикл Input — id читаем в
+    // surfaceHit(), а не в init() (там рендерера может ещё не быть).
+    this.rayIds = [0, 1];
+    this.pad = this.makePad();
+    this.add(this.pad);
+
     this._gestureStart = (e) => {
       if (e.detail.name === 'pinch') this.pinchHands.add(e.detail.hand);
     };
@@ -904,16 +968,30 @@ class CityOrbit extends xb.Script {
     xb.core.gestureRecognition.addEventListener('gesturestart', this._gestureStart);
     xb.core.gestureRecognition.addEventListener('gestureend', this._gestureEnd);
 
+    // Passthrough включается и выключается вместе с сессией — как в
+    // weather-room: до сессии blend mode неизвестен.
+    this._syncAr = () => this.applyAr();
+    const xr = xb.core?.renderer?.xr;
+    xr?.addEventListener('sessionstart', this._syncAr);
+    xr?.addEventListener('sessionend', this._syncAr);
+
     this.hud = makeHud({
       title: 'CITY//ORBIT',
       stat: 'LOCATING…',
+      width: 0.62,
       buttons: [
         {id: 'geo', label: 'LOCATE', onTap: () => this.locate()},
         {
-          id: 'mode', label: 'TABLE / 360',
-          onTap: () => { this.mode = this.mode === 'table' ? 'orbit' : 'table'; this.applyScale(); this.layout(); },
+          id: 'mode', label: 'TABLE/360',
+          onTap: () => {
+            this.mode = this.mode === 'table' ? 'orbit' : 'table';
+            this.cancelPlacement();
+            this.applyScale();
+            this.layout();
+          },
         },
         {id: 'radius', label: 'RADIUS', onTap: () => this.setRadius((this.radiusIdx + 1) % RADII.length)},
+        {id: 'place', label: 'PLACE', onTap: () => this.togglePlacement()},
       ],
     });
     this.add(this.hud.card);
@@ -922,7 +1000,11 @@ class CityOrbit extends xb.Script {
     this.locate();
   }
 
-  stat(s) { this.hud.setStat(s); }
+  stat(s) { this._dataStat = s; this.hud.setStat(s); }
+
+  // Подсказки размещения живут в строке статуса отдельно от описания района:
+  // после посадки макета описание возвращается.
+  hint(s) { this.hud.setStat(s); }
 
   get tier() { return TIERS[this.radiusIdx]; }
 
@@ -943,9 +1025,12 @@ class CityOrbit extends xb.Script {
   }
 
   setRadius(index, reload = true) {
+    const changed = index !== this.radiusIdx;
     this.radiusIdx = index;
     this.hud.setLabel('radius', `R ${RADII[index] >= 1000 ? `${RADII[index] / 1000} km` : `${RADII[index]} m`}`);
-    if (reload && this.center) this.load(this.lat, this.lon);
+    // Две руки могут дёрнуть один и тот же ярус несколько раз подряд: без
+    // этой проверки каждый лишний кадр пересобирал бы район заново.
+    if (changed && reload && this.center) this.load(this.lat, this.lon);
   }
 
   describe(scene, prefix) {
@@ -1039,6 +1124,7 @@ class CityOrbit extends xb.Script {
     this.glyphMeshes = [];
     this.glyphIndex = new Map();
     this.poiList = [];
+    this.layerMats = [];
     this.buildingMaterial = null;
   }
 
@@ -1051,9 +1137,11 @@ class CityOrbit extends xb.Script {
 
     const roadGeo = roadGeometry(scene, project);
     if (roadGeo.getAttribute('position').count) {
-      const roads = new THREE.LineSegments(roadGeo, glowBlending(new THREE.LineBasicMaterial({
+      const roadMat = glowBlending(new THREE.LineBasicMaterial({
         vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false,
-      })));
+      }));
+      this.registerLayer(roadMat, 0.95, AR_LINE);
+      const roads = new THREE.LineSegments(roadGeo, roadMat);
       roads.renderOrder = 1;
       roads.xb = { pointerEvents: 'none' };
       this.map.add(roads);
@@ -1064,10 +1152,14 @@ class CityOrbit extends xb.Script {
     for (const kind of ['water', 'green']) {
       const geo = areaGeometry(scene, project, kind);
       if (!geo) continue;
-      const areas = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      const mat = new THREE.MeshBasicMaterial({
         color: AREA_STYLE[kind], transparent: true, opacity: kind === 'water' ? 0.85 : 0.7,
         side: THREE.DoubleSide, depthWrite: false,
-      }));
+      });
+      // В телефонном AR заливки уходят: тёмная вода и зелень поверх камеры
+      // читаются как тёмная масса, свет несут линии и контуры.
+      this.registerLayer(mat, kind === 'water' ? 0.85 : 0.7, AR_FILL);
+      const areas = new THREE.Mesh(geo, mat);
       areas.renderOrder = 0;
       areas.xb = { pointerEvents: 'none' };
       this.map.add(areas);
@@ -1094,11 +1186,11 @@ class CityOrbit extends xb.Script {
         poi.mx = at.x;
         poi.mz = at.z;
       }
-      const mesh = new THREE.InstancedMesh(
-        glyphGeometry(cat),
-        new THREE.MeshBasicMaterial({ color: meta.color }),
-        pois.length
-      );
+      // transparent — ради призрака: пока макет ищет место, знаки тоже
+      // полупрозрачны, а depthWrite у них остаётся и порядок не меняется.
+      const glyphMat = this.registerLayer(
+        new THREE.MeshBasicMaterial({ color: meta.color, transparent: true }), 1, 1);
+      const mesh = new THREE.InstancedMesh(glyphGeometry(cat), glyphMat, pois.length);
       mesh.frustumCulled = false;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.userData.category = cat;
@@ -1108,8 +1200,42 @@ class CityOrbit extends xb.Script {
       this.poiGroup.add(mesh);
     }
 
+    this.applyBrightness();
     this.applyScale();
     this.layout();
+  }
+
+  // Слои с прозрачностью: k призрака и запас яркости AR применяет одна
+  // функция, поэтому состояние размещения и режим сессии не рассинхронятся.
+  registerLayer(mat, base, ar = 1) {
+    this.layerMats.push({ mat, base, ar });
+    return mat;
+  }
+
+  applyBrightness() {
+    const k = this.ghostK;
+    const ar = this.ar;
+    // Плотная тёмная заливка подложки в AR почти исчезает: канвас смешивается
+    // с камерой, и диск читался как тёмная масса вместо схемы района.
+    this.base.material.opacity = (ar ? 0.3 : 0.75) * k;
+    for (const layer of this.layerMats) {
+      layer.mat.opacity = layer.base * k * (ar ? layer.ar : 1);
+    }
+    if (this.buildingMaterial) {
+      this.buildingMaterial.uniforms.uGhost.value = k;
+      this.buildingMaterial.uniforms.uAr.value = ar ? 1 : 0;
+    }
+  }
+
+  applyAr() {
+    this.ar = isPassthrough();
+    this.applyBrightness();
+  }
+
+  // Призрак будущей позы: макет виден, но не спорит с настоящей комнатой.
+  setGhost(k) {
+    this.ghostK = k;
+    this.applyBrightness();
   }
 
   // Масштаб карты и позиции знаков. Смена режима стол/360° и радиуса — это
@@ -1157,6 +1283,9 @@ class CityOrbit extends xb.Script {
     const table = this.mode === 'table';
     const cam = xb.core.camera.position;
     if (table) {
+      // Пока макет ищет место или уже поставлен, позу ведёт поток размещения:
+      // layout() не должен перебивать посадку на поверхность.
+      if (this.place !== 'auto') { this.you.position.set(0, 0.035, 0); return; }
       const fwd = new THREE.Vector3();
       xb.core.camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();
       this.group.position.copy(cam).addScaledVector(fwd, 1.0);
@@ -1169,9 +1298,236 @@ class CityOrbit extends xb.Script {
     this.you.position.set(0, 0.035, 0);
   }
 
+  // ── Размещение макета ───────────────────────────────────────────────────
+  //
+  // Подложка-призрак: презентация попадания, не владелец данных. Позу макета
+  // хранит он сам, диск лишь показывает, куда сейчас указывает луч.
+
+  makePad() {
+    const pad = new THREE.Group();
+    pad.name = 'city-orbit-pad';
+    pad.visible = false;
+    pad.xb = { pointerEvents: 'none' };
+    const add = (mesh, y) => {
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.y = y;
+      pad.add(mesh);
+      return mesh;
+    };
+    const mat = (color, opacity) => glowBlending(new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    add(new THREE.Mesh(new THREE.CircleGeometry(PLACE_RADIUS, 48), mat(PALETTES.city[1], 0.06)), 0);
+    this.padRing = add(new THREE.Mesh(
+      new THREE.RingGeometry(PLACE_RADIUS - 0.012, PLACE_RADIUS, 64), mat(PALETTES.city[1], 0.5)), 0.001);
+    for (let i = 0; i < 4; i++) {
+      const tick = new THREE.Mesh(new THREE.PlaneGeometry(0.055, 0.008), mat(PALETTES.city[2], 0.7));
+      tick.rotation.z = -(i * Math.PI) / 2;
+      tick.position.x = Math.cos((i * Math.PI) / 2) * PLACE_RADIUS;
+      tick.position.z = Math.sin((i * Math.PI) / 2) * PLACE_RADIUS;
+      add(tick, 0.001);
+    }
+    return pad;
+  }
+
+  // Настоящую поверхность комнаты разрешает тот же pipeline, что ведёт ретикл:
+  // depth-mesh (Quest) или обнаруженная плоскость. Свои объекты целью
+  // размещения не считаются, иначе призрак цеплялся бы сам за себя.
+  surfaceHit() {
+    const depthMesh = xb.depth?.depthMesh;
+    const planes = xb.world?.planes?.get?.() ?? [];
+    const ids = this.rayIds.slice();
+    const mouseId = xb.user?.input?.mouseController?.userData?.id;
+    if (Number.isInteger(mouseId) && !ids.includes(mouseId)) ids.push(mouseId);
+    for (const id of ids) {
+      let hit = null;
+      try {
+        hit = xb.user.getRayIntersection(id);
+      } catch {
+        hit = null;   // источника нет: телефон без контроллера, десктоп без XR
+      }
+      if (!hit || !(hit.distance <= PLACE_REACH)) continue;
+      if (this.isRoomSurface(hit.object, depthMesh, planes)) return hit;
+    }
+    return null;
+  }
+
+  isRoomSurface(object, depthMesh, planes) {
+    for (let node = object; node; node = node.parent) {
+      if (node === depthMesh) return true;
+      if (planes.includes(node)) return true;
+    }
+    return false;
+  }
+
+  // Куда макет встанет прямо сейчас. Поверхность под лучом — приоритет; без
+  // неё (телефон без planes/depth, десктоп без симуляторного стола, луч ушёл
+  // в сторону) остаётся прежнее размещение перед камерой. true — попали в
+  // настоящую поверхность.
+  placementPoint(target) {
+    const hit = this.surfaceHit();
+    if (hit) {
+      target.copy(hit.point);
+      target.y += PLACE_HOVER;
+      return true;
+    }
+    const cam = xb.core.camera;
+    cam.getWorldPosition(this._camV);
+    cam.getWorldDirection(target);
+    target.y = 0;
+    if (target.lengthSq() < 1e-6) target.set(0, 0, -1);
+    target.normalize();
+    target.multiplyScalar(1.0).add(this._camV);
+    target.y = Math.max(0.7, this._camV.y - 0.55);
+    return false;
+  }
+
+  beginPlacement() {
+    this._surfaceSeen = false;
+    const onSurface = this.placementPoint(this._hover);
+    this._surfaceSeen = onSurface;
+    this.place = 'follow';
+    this.land = 0;
+    this.padFade = 1;
+    this.pad.visible = true;
+    this.pad.scale.setScalar(1);
+    this.pad.position.copy(this._hover);
+    this.pad.position.y -= PLACE_HOVER;
+    // Пока макет ищет место, подложка луч не ловит: иначе он упирался бы в сам
+    // макет и не доходил до поверхности, по которой его и ведут.
+    this.setSubstrate(false);
+    this.setGhost(GHOST);
+    this.hud.setLabel('place', 'FIX');
+    this.hint(onSurface
+      ? 'PLACE · SELECT ставит макет на поверхность'
+      : 'PLACE · поверхностей нет — макет перед тобой, SELECT ставит');
+  }
+
+  fixPlacement() {
+    this.place = 'fixed';
+    this.land = 1;
+    this.padFade = 0;
+    this.setSubstrate(true);
+    this.hud.setLabel('place', 'PLACE');
+    this.setGhost(1);
+    this.hint(this._dataStat || 'READY');
+  }
+
+  cancelPlacement() {
+    this.place = 'auto';
+    this.land = 0;
+    this.padFade = 0;
+    this.pad.visible = false;
+    this.setSubstrate(true);
+    this.hud.setLabel('place', 'PLACE');
+    this.setGhost(1);
+  }
+
+  // Подложка ловит select только когда макет стоит: во время поиска места луч
+  // должен проходить сквозь него к настоящей поверхности.
+  setSubstrate(active) {
+    this.base.xb.pointerEvents = active ? 'auto' : 'none';
+  }
+
+  togglePlacement() {
+    if (this.mode !== 'table') {
+      // Перестановка есть только у макета на столе: в 360° город стоит вокруг.
+      this.mode = 'table';
+      this.cancelPlacement();
+      this.applyScale();
+      this.layout();
+    }
+    if (this.place === 'follow') this.fixPlacement();
+    else this.beginPlacement();
+  }
+
+  updatePlacement(dt) {
+    if (this.place === 'follow') {
+      const onSurface = this.placementPoint(this._placeV);
+      if (onSurface) this._surfaceSeen = true;
+      // С поверхности комнаты луч легко уходит в сторону (шум depth, поворот
+      // головы): один раз увидев поверхность, макет держит последнюю точку, а
+      // не прыгает вперёд к камере.
+      else if (this._surfaceSeen) this._placeV.copy(this._hover);
+      // Подложка показывает сырое попадание, макет идёт за ним мягко: шум
+      // depth-меша не должен дёргать целый район.
+      this.pad.position.copy(this._placeV);
+      this.pad.position.y -= PLACE_HOVER;
+      this.pad.rotation.y += dt * 0.35;
+      this._hover.lerp(this._placeV, 1 - Math.exp(-dt * 9));
+      this.group.position.copy(this._hover);
+    } else if (this.place === 'fixed' && this.land > 0) {
+      // Посадка: макет падает на поверхность с высоты ~10 см, как
+      // placeOnHorizontalSurface ставит объект, только видно сам бросок.
+      this.land = Math.max(0, this.land - dt / LAND_TIME);
+      this.group.position.y = this._hover.y + PLACE_DROP * this.land * this.land;
+    }
+    if (this.pad.visible) {
+      const fade = this.place === 'follow' ? 1 : Math.max(0, this.padFade - dt / 0.3);
+      this.padFade = fade;
+      this.padRing.material.opacity = 0.5 * fade;
+      this.pad.scale.setScalar(1 + (1 - fade) * 0.12);
+      if (fade <= 0) this.pad.visible = false;
+    }
+  }
+
+  // Точка источника pinch: рука, когда она трекается, иначе контроллер той же
+  // руки. Жесты приходят от рук, поэтому одних контроллеров мало: при
+  // hand-tracking они не подключены, и расстояние между ними было нулевым.
+  pinchPoint(hand, target) {
+    const side = hand === 'left' ? xb.Handedness.LEFT : xb.Handedness.RIGHT;
+    const hands = xb.user?.hands;
+    if (hands?.isValid?.(side)) {
+      const tip = hands.getIndexTip?.(side);
+      if (tip) return tip.getWorldPosition(target);
+    }
+    for (const controller of xb.user?.input?.controllers ?? []) {
+      if (controller?.inputSource?.handedness === hand) {
+        return controller.getWorldPosition(target);
+      }
+    }
+    return null;
+  }
+
+  // Масштаб двумя руками. Состояние живёт здесь, на владельце, по одной записи
+  // на источник: пока обе руки не в pinch, случайное движение контроллеров
+  // район не перезагружает.
+  updatePinch(dt) {
+    if (!(this.pinchHands.has('left') && this.pinchHands.has('right'))) {
+      this._prevPinchDist = 0;
+      return;
+    }
+    const a = this.pinchPoint('left', this._handA);
+    const b = this.pinchPoint('right', this._handB);
+    if (!a || !b) {
+      this._prevPinchDist = 0;
+      return;
+    }
+    const d = a.distanceTo(b);
+    if (this._prevPinchDist > 0.05 && Math.abs(d - this._prevPinchDist) > PINCH_STEP) {
+      const next = Math.min(RADII.length - 1, Math.max(0, this.radiusIdx + (d > this._prevPinchDist ? 1 : -1)));
+      this._prevPinchDist = d;
+      if (next !== this.radiusIdx) {
+        this.setRadius(next);
+        this.hint(`scale · R ${RADII[this.radiusIdx] >= 1000 ? `${RADII[this.radiusIdx] / 1000} km` : `${RADII[this.radiusIdx]} m`}`);
+      }
+      return;
+    }
+    this._prevPinchDist = d;
+  }
+
+  // Подложка для проверок: карточка места — не сцена, тап по ней не должен
+  // закрывать её саму или переставлять макет.
+  ownsCard(target) {
+    for (let node = target; node; node = node.parent) {
+      if (node === this.card) return true;
+    }
+    return false;
+  }
+
   // Выбор места. Сначала то, что уже разрешил XR Blocks (луч контроллера,
   // взгляд, тап по экрану телефона, мышь в симуляторе): у события есть и
-  // объект, и точка попадания. Если попадания нет — свой луч: контроллер,
+  // объект, и точка попадания. Если попадания нет — луч источника из события,
   // затем центр камеры (прицел), и ближайший знак вдоль луча. Без этого на
   // телефоне без контроллера карточка не открывалась вовсе.
   resolvePick(event) {
@@ -1188,30 +1544,33 @@ class CityOrbit extends xb.Script {
     }
     if (owner) return null;   // луч попал в служебный объект/панель — молчим
 
+    // Луч берём у источника события: это тот же кадр, что видит ретикл.
+    // Свой Raycaster здесь показывал бы другой кадр и другую поверхность.
     const ray = this._ray;
-    try {
-      xb.user.getRay(0, ray);
-      if (ray.direction.lengthSq() > 0.5) {
-        const poi = this.pickAlong(ray.origin, ray.direction);
-        if (poi) return poi;
-      }
-    } catch { /* на телефоне контроллера нет */ }
+    const id = event?.source?.controller?.userData?.id;
+    if (Number.isInteger(id)) {
+      try {
+        xb.user.getRay(id, ray);
+        if (ray.direction.lengthSq() > 0.5) {
+          const poi = this.pickAlong(ray.origin, ray.direction, id);
+          if (poi) return poi;
+        }
+      } catch { /* источник отключился между кадром и событием */ }
+    }
     const cam = xb.core.camera;
     cam.getWorldPosition(this._o);
     cam.getWorldDirection(ray.direction);
     return this.pickAlong(this._o, ray.direction);
   }
 
-  pickAlong(origin, direction) {
-    const ray = this._ray.set(origin, direction);
-    this.raycaster = this.raycaster || new THREE.Raycaster();
-    this.raycaster.set(ray.origin, ray.direction);
-    this.raycaster.far = 20;
-    const hits = this.raycaster.intersectObjects(this.glyphMeshes.map((e) => e.mesh), false);
-    if (hits.length) {
-      const entry = this.glyphIndex.get(hits[0].object);
-      const poi = entry?.pois[hits[0].instanceId];
-      if (poi) return poi;
+  pickAlong(origin, direction, id = -1) {
+    // Разрешённые попадания pipeline (их же видит ретикл) — по одному на слой.
+    if (id >= 0) {
+      for (const entry of this.glyphMeshes) {
+        const hit = xb.user.getIntersectionAt(entry.mesh, id);
+        const poi = entry.pois[hit?.instanceId];
+        if (poi) return poi;
+      }
     }
     // Знаки мелкие: если точного попадания нет, берём ближайший к лучу.
     let best = null;
@@ -1240,9 +1599,21 @@ class CityOrbit extends xb.Script {
   }
 
   onSelectEnd(event) {
-    if (this.hud.owns(event?.target)) return;
+    if (this.hud.owns(event?.target) || this.ownsCard(event?.target)) return;
     const poi = this.resolvePick(event);
     if (!poi) {
+      // Пока макет ищет место, любой select по не-знаку ставит его.
+      if (this.place === 'follow') {
+        this.togglePlacement();
+        return;
+      }
+      // Подложка (диск макета или поверхность комнаты) — команда перестановки,
+      // но открытая карточка закрывается первым тапом: на Quest луч почти
+      // всегда упирается в поверхность, и убрать карточку было бы нечем.
+      if (this.mode === 'table' && event?.target && !this.card.visible) {
+        this.togglePlacement();
+        return;
+      }
       this.card.visible = false;
       this.selected = null;
       this.pulse = 1;
@@ -1260,33 +1631,34 @@ class CityOrbit extends xb.Script {
     this.placeGlyphs();
   }
 
-  update() {
+  // Долгое удержание на подложке — та же перестановка, что и короткий select:
+  // в мелкий диск удобнее попасть удержанием, а по знаку места и в 360°
+  // удержание молчит.
+  onObjectLongSelect(event) {
+    if (this.hud.owns(event?.target) || this.ownsCard(event?.target)) return;
+    if (this.mode !== 'table') return;
+    // Цель события решает всё: знак места — не подложка, даже если его
+    // instanceId в событии не разрешился.
+    if (this.glyphIndex.has(event?.target)) return;
+    this.togglePlacement();
+  }
+
+  update(time = performance.now()) {
+    const dt = Math.min(0.05, Math.max(0, (time - this._lastTime) / 1000));
+    this._lastTime = time;
     this.hud.update();
-    this.ring.material.opacity = 0.6 + 0.3 * Math.sin(performance.now() * 0.003);
-    this.youRing.scale.setScalar(1 + 0.12 * Math.sin(performance.now() * 0.004));
+    // Кольца пульсируют от состояния призрака и от запаса яркости AR:
+    // в passthrough свечение поверх камеры нуждается в запасе.
+    const arGain = this.ar ? AR_LINE : 1;
+    this.ring.material.opacity = Math.min(1, (0.6 + 0.3 * Math.sin(time * 0.003)) * this.ghostK * arGain);
+    this.youRing.scale.setScalar(1 + 0.12 * Math.sin(time * 0.004));
     if (this.buildingMaterial) {
-      this.buildingMaterial.uniforms.uTime.value = performance.now() * 0.001;
+      this.buildingMaterial.uniforms.uTime.value = time * 0.001;
     }
-    // Масштабирование — только когда обе руки в pinch: обычное движение
-    // контроллеров не должно непредсказуемо перезагружать город.
-    if (this.pinchHands.has('left') && this.pinchHands.has('right')) {
-      try {
-        xb.user.getControllerPosition(0, this._handA);
-        xb.user.getControllerPosition(1, this._handB);
-        const d = this._handA.distanceTo(this._handB);
-        if (this._prevPinchDist > 0.05 && Math.abs(d - this._prevPinchDist) > 0.12) {
-          this.setRadius(Math.min(2, Math.max(0, this.radiusIdx + (d > this._prevPinchDist ? 1 : -1))));
-          this._prevPinchDist = d;
-          this.stat(`scale -> ${RADII[this.radiusIdx]} m`);
-          return;
-        }
-        this._prevPinchDist = d;
-      } catch { /* одна рука / десктоп */ }
-    } else {
-      this._prevPinchDist = 0;
-    }
+    this.updatePlacement(dt);
+    this.updatePinch(dt);
     if (this.selected) {
-      this.pulse = 1.35 + Math.sin(performance.now() * 0.008) * 0.18;
+      this.pulse = 1.35 + Math.sin(time * 0.008) * 0.18;
       this.placeSelected();
     }
   }
@@ -1294,6 +1666,13 @@ class CityOrbit extends xb.Script {
   dispose() {
     this.card.dispose?.();
     this.clearLayers();
+    for (const child of [...this.pad.children]) {
+      child.geometry?.dispose?.();
+      child.material?.dispose?.();
+    }
+    const xr = xb.core?.renderer?.xr;
+    xr?.removeEventListener('sessionstart', this._syncAr);
+    xr?.removeEventListener('sessionend', this._syncAr);
     xb.core.gestureRecognition.removeEventListener('gesturestart', this._gestureStart);
     xb.core.gestureRecognition.removeEventListener('gestureend', this._gestureEnd);
   }
@@ -1307,6 +1686,16 @@ options.gestures.setGestureEnabled('pinch', true);
 // масштаб города работают и на десктопе; позы рук — по Left Shift.
 options.simulator.modeToggle.enabled = true;
 options.enableReticles();
+// Depth даёт настоящую поверхность для размещения: ретикл проецируется на
+// неё, и тот же луч ставит макет. На телефоне Chrome depth-sensing не даёт —
+// installXrGuards снимает фичу, depth-меш остаётся пустым, и макет встаёт
+// перед камерой, как раньше. В симуляторе depth синтетический, поэтому поток
+// размещения проверяется и на десктопе.
+options.enableDepth();
+options.reticles.projectOnDepthMesh = true;
+// Плоскости — вторая семья поверхностей (стол/пол на Quest). Список может
+// быть пуст всегда: код просто ждёт следующего кадра.
+options.enablePlaneDetection();
 options.world?.enableAnchors?.();
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('CITY//ORBIT');
@@ -1317,7 +1706,8 @@ installXrGuards();
 
 installLaunchShell(options, [
   'Вход — кнопка внизу: район встанет голограммой на столе',
-  'Тап — карточка места, два pinch — масштаб радиуса',
+  'PLACE / тап по подложке — поставить макет на поверхность комнаты',
+  'Тап по знаку — карточка места, два pinch — масштаб радиуса',
   'Меню — панель внизу экрана',
 ]);
 previewFromEyeHeight();

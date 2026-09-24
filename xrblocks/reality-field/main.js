@@ -3,9 +3,11 @@ import * as xb from 'xrblocks';
 import {
   enableAutomation, hideInPassthrough, installLaunchShell, installXrGuards,
   isAutomation, isPassthrough, previewFromEyeHeight, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-20';
-import { glowBlending, makePoints, shockRingMaterial, dome } from '../common/fx.js?v=mobile-ux-22';
-import { makeHud } from '../common/hud.js?v=mobile-ux-22';
+} from '../common/boot.js?v=mobile-ux-24';
+import {
+  glowBlending, glowSprite, makePoints, shockRingMaterial, dome,
+} from '../common/fx.js?v=mobile-ux-24';
+import { makeHud } from '../common/hud.js?v=mobile-ux-24';
 
 // REALITY//FIELD — комната как физическое поле.
 // Импульс летит из руки/взгляда, бьётся о depth-mesh (Quest) или
@@ -13,12 +15,28 @@ import { makeHud } from '../common/hud.js?v=mobile-ux-22';
 // Жесты: pinch = заряд, open-palm = отталкивание, fist = притяжение,
 // spread = растянуть поле. Клик/тап = импульс.
 //
+// Физика: импульс выпускает осколки — настоящие тела Rapier в blendedWorld.
+// На Quest они бьются о trimesh-коллайдер depth-mesh, в симуляторе и в
+// телефоне — о коллайдеры оболочки комнаты. Каждое попадание рождает
+// ударное кольцо, волну по частицам и отдачу поля. Rapier приходит
+// динамическим import: без него опыт остаётся на рейкастах (PHYSICS RAYCAST).
+//
 // Рендер: процедурные glow-спрайты (шейдер, затухание с глубиной),
 // шейдерные shock-кольца, градиентный купол вместо пустоты.
 
 const COUNT = 2200;
 const ROOM_R = 3.4;
 const ROOM_C = new THREE.Vector3(0, 1.6, 0);
+
+// --- пул осколков импульса (Rapier) ---
+const MAX_SHARDS = 32; // жёсткий предел живых тел; пул спрайтов ровно такой же
+const SHARD_R_MIN = 0.018; // 1.8 см
+const SHARD_R_SPAN = 0.022; // …до 4 см
+const SHARD_RESTITUTION = 0.5;
+const SHARD_LIFE_MS = 8000; // 8–12 с жизни, потом тело возвращается в пул
+const SHARD_LIFE_SPAN_MS = 4000;
+const IMPACT_MIN_SPEED = 0.8; // м/с: тише — это уже покой, а не удар
+const IMPACT_COOLDOWN_MS = 300; // один удар на осколок в это окно
 
 
 class RealityField extends xb.Script {
@@ -125,7 +143,27 @@ class RealityField extends xb.Script {
       const m = new THREE.Mesh(rgeo, mat);
       m.visible = false;
       this.add(m);
-      this.rings.push({ mesh: m, t: 1e9, dur: 1.1 });
+      this.rings.push({ mesh: m, t: 1e9, dur: 1.1, gain: 1 });
+    }
+
+    // --- осколки импульса: тела Rapier + glow-спрайты того же пула ---
+    // Пул спрайтов ровно на MAX_SHARDS: в бою не аллоцируется ни спрайт,
+    // ни материал. Тела создаются на выстрел и снимаются с мира на recycle.
+    this.physics = null;
+    this.RAPIER = null;
+    this.shards = [];
+    this.shardPool = [];
+    this.shellBodies = []; // fixed-тела оболочки комнаты (пол/стены/потолок)
+    this.shardMats = [
+      glowBlending(new THREE.SpriteMaterial({
+        map: glowSprite(), color: 0x54d6ff, transparent: true, depthWrite: false,
+      })),
+      glowBlending(new THREE.SpriteMaterial({
+        map: glowSprite(), color: 0xe8fbff, transparent: true, depthWrite: false,
+      })),
+    ];
+    for (let i = 0; i < MAX_SHARDS; i++) {
+      this.shardPool.push(new THREE.Sprite(this.shardMats[i % 2]));
     }
 
     this.waves = []; // {x,y,z, r, speed, dx?,dy?,dz?} — с направлением = бегущая отражённая волна
@@ -147,6 +185,13 @@ class RealityField extends xb.Script {
     this._h = new THREE.Vector3();
     this._n = new THREE.Vector3();
     this._color = new THREE.Color();
+    this._ringTmp = new THREE.Vector3();
+    this._shardDir = new THREE.Vector3();
+    this._shardPos = new THREE.Vector3();
+    this._impactN = new THREE.Vector3();
+    this._impactP = new THREE.Vector3();
+    this._impactDir = new THREE.Vector3();
+    this._impactEnd = new THREE.Vector3();
 
     const rayPos = new Float32Array(6);
     this.debugRayGeo = new THREE.BufferGeometry();
@@ -196,11 +241,14 @@ class RealityField extends xb.Script {
     this.floor.visible = this.roomMesh.visible = enabled;
     this.debugRay.visible = enabled;
     if (!enabled) this.normalArrow.visible = false;
+    // depth-меш не переключаем: его объект обязан оставаться visible. HitResolver
+    // SDK отбрасывает попадания по невидимой поверхности (isExcluded), а прицел
+    // у нас настроен на живую геометрию комнаты — прятать её значит гасить
+    // projectOnDepthMesh. Рисовать меш всё равно нечего: визуализационный пресет
+    // гасит его материал, физический оставляет только приёмник теней, а теней
+    // в этой сцене никто не отбрасывает.
     try {
-      if (xb.depth?.depthMesh) xb.depth.depthMesh.visible = enabled;
-    } catch { /* depth может ещё прогреваться */ }
-    try {
-      // план комнаты, найденные XR Blocks: тот же слой отладки, что и mesh
+      // план комнаты, найденные XR Blocks: тот же слой отладки
       const planes = xb.world?.planes ?? xb.core?.world?.planes;
       planes?.showDebugVisualizations?.(enabled);
     } catch { /* plane detection недоступна */ }
@@ -214,6 +262,8 @@ class RealityField extends xb.Script {
   }
 
   onGesture(detail, start) {
+    const name = detail?.name; // канонические имена SDK: pinch, open-palm, fist, …
+    if (!name) return;
     this._handsSeen = true; // жестовые события реально приходят — UI может заявить HANDS
     const hand = detail.hand === 'left' ? 'left' : 'right';
     const active = this.handGestures[hand];
@@ -307,25 +357,184 @@ class RealityField extends xb.Script {
       else this._n.copy(d).negate();
       this.spawnRing(this._h, this._n);
       // Первичная волна расходится по поверхности из точки удара.
-      this.waves.push({ x: this._h.x, y: this._h.y, z: this._h.z, r: 0.05, speed: 1.6 });
+      this.pushWave(this._h.x, this._h.y, this._h.z, 1.6);
       // Отражённый импульс: r = d − 2(d·n)n. Поверхность реально «отвечает»:
       // вторая волна бежит от точки вдоль r, частицы выбиваются туда же.
       const dn = d.dot(this._n);
       const refl = d.clone().addScaledVector(this._n, -2 * dn).normalize();
       if (refl.lengthSq() > 0.1 && Math.abs(dn) < 0.985) {
-        this.waves.push({
-          x: this._h.x, y: this._h.y, z: this._h.z, r: 0.04, speed: 2.1,
-          dx: refl.x, dy: refl.y, dz: refl.z,
-        });
+        this.pushWave(this._h.x, this._h.y, this._h.z, 2.1, refl.x, refl.y, refl.z);
         this.kick(this._h.clone(), refl, power * 0.55, this._h.clone().addScaledVector(refl, 2.6));
       }
-      if (this.waves.length > 6) this.waves.splice(0, this.waves.length - 6);
       this.kick(kickOrigin, d, power, this._h);
     } else {
       // Мимо всякой геометрии: честно пинаем по лучу без «поверхности».
       this.kick(kickOrigin, d, power, null);
     }
+    // Осколки — вторая, уже физическая половина импульса: они живут в
+    // blendedWorld и отвечают за столкновения с настоящей комнатой.
+    this.launchShards(o, d, power);
     this._mode = mode;
+  }
+
+  // Общий сток волн поля: и удар импульса, и удар осколка идут сюда, чтобы
+  // серия попаданий не заливала частицы волнами (и не роняла кадры).
+  pushWave(x, y, z, speed, dx, dy, dz) {
+    this.waves.push({ x, y, z, r: 0.05, speed, dx, dy, dz });
+    if (this.waves.length > 8) this.waves.splice(0, this.waves.length - 8);
+  }
+
+  // --- физический слой: осколки и оболочка комнаты ---------------------
+
+  // Вызывается движком после xb.init, когда options.physics.RAPIER задан.
+  // Пол/стены/потолок — fixed-тела, как в templates/10_environment_physics.
+  initPhysics(physics) {
+    this.physics = physics;
+    this.RAPIER = physics.RAPIER;
+    this.buildShell(physics.blendedWorld, physics.RAPIER);
+    if (this.hud) this.stat('PHYSICS RAPIER — CLICK / PINCH = IMPULSE');
+  }
+
+  // Оболочка fallback-комнаты: те же границы, что у поля частиц (пол и сфера
+  // ROOM_R вокруг ROOM_C, в DEBUG они нарисованы), но настоящими
+  // коллайдерами. Держит осколки там, где depth-mesh геометрию не отдаёт:
+  // десктоп-симулятор и телефон. На Quest она совпадает с полом и оболочкой
+  // поля, а реальные стены приходят от depth-mesh.
+  buildShell(blendedWorld, RAPIER) {
+    const room = (hx, hy, hz, x, y, z) => {
+      const body = blendedWorld.createRigidBody(
+        RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z)
+      );
+      blendedWorld.createCollider(
+        RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+          .setRestitution(0.35)
+          .setFriction(0.6),
+        body
+      );
+      this.shellBodies.push(body);
+    };
+    room(4, 0.03, 4, 0, -0.03, 0); // пол: верхняя грань на y = 0
+    room(0.03, 2.6, ROOM_R, ROOM_R, ROOM_C.y, 0);
+    room(0.03, 2.6, ROOM_R, -ROOM_R, ROOM_C.y, 0);
+    room(ROOM_R, 2.6, 0.03, 0, ROOM_C.y, ROOM_R);
+    room(ROOM_R, 2.6, 0.03, 0, ROOM_C.y, -ROOM_R);
+    room(4, 0.03, 4, 0, ROOM_C.y + ROOM_R, 0); // потолок сферы поля
+  }
+
+  // Сильный pinch-заряд выпускает больше осколков: power приходит из fire().
+  launchShards(origin, dir, power) {
+    if (!this.physics || !this.RAPIER) return 0;
+    const count = Math.min(MAX_SHARDS, Math.round(3 + power * 5));
+    let spawned = 0;
+    for (let i = 0; i < count; i++) {
+      if (this.spawnShard(origin, dir, power)) spawned++;
+    }
+    return spawned;
+  }
+
+  spawnShard(origin, dir, power) {
+    const mesh = this.takeSprite();
+    if (!mesh) return false;
+    const radius = SHARD_R_MIN + Math.random() * SHARD_R_SPAN;
+    const speed = 2.4 + power * 1.6 + Math.random() * 0.8;
+    // Конус: направление импульса плюс разброс — летит сноп, а не один шар.
+    const d = this._shardDir.copy(dir);
+    d.x += (Math.random() - 0.5) * 0.24;
+    d.y += (Math.random() - 0.5) * 0.24;
+    d.z += (Math.random() - 0.5) * 0.24;
+    d.normalize();
+    const p = this._shardPos.copy(origin).addScaledVector(d, 0.22);
+    const body = this.physics.blendedWorld.createRigidBody(
+      this.RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(p.x, p.y, p.z)
+        .setLinvel(d.x * speed, d.y * speed, d.z * speed)
+        // 2–4 см на 6 м/с: без CCD осколок проходит сквозь тонкий mesh.
+        .setCcdEnabled(true)
+        .setLinearDamping(0.08)
+    );
+    const collider = this.physics.blendedWorld.createCollider(
+      this.RAPIER.ColliderDesc.ball(radius)
+        .setRestitution(SHARD_RESTITUTION)
+        .setFriction(0.4),
+      body
+    );
+    mesh.material = power > 1.6 ? this.shardMats[1] : this.shardMats[0];
+    mesh.position.copy(p);
+    mesh.scale.setScalar(radius * 6);
+    this.add(mesh);
+    const now = performance.now();
+    this.shards.push({
+      mesh, body, collider,
+      bornAt: now,
+      life: SHARD_LIFE_MS + Math.random() * SHARD_LIFE_SPAN_MS,
+      prevSpeed: speed,
+      pvx: d.x * speed, pvy: d.y * speed, pvz: d.z * speed,
+      impactAt: -1e9,
+    });
+    return true;
+  }
+
+  takeSprite() {
+    // Пул спрайтов и живые осколки вместе дают ровно MAX_SHARDS: если
+    // свободных нет, освобождаем самый старый — предел тел жёсткий.
+    if (!this.shardPool.length && this.shards.length) this.recycleShard(this.shards[0]);
+    return this.shardPool.pop() ?? null;
+  }
+
+  recycleShard(shard) {
+    const index = this.shards.indexOf(shard);
+    if (index < 0) return;
+    this.shards.splice(index, 1);
+    try {
+      // Снимаем коллайдер и тело явно, как в референсе: висящих коллайдеров
+      // в мире не остаётся даже если тело уносит их само.
+      this.physics?.blendedWorld.removeCollider(shard.collider, false);
+      this.physics?.blendedWorld.removeRigidBody(shard.body);
+    } catch { /* мир уже освобождён */ }
+    this.remove(shard.mesh);
+    this.shardPool.push(shard.mesh);
+  }
+
+  // Синхронизация мешей с телами и ловля удара. Контакт определяем по потере
+  // скорости за шаг: это одинаково работает и для чужого trimesh-коллайдера
+  // depth-mesh, и для fixed-коллайдеров оболочки — без ActiveEvents на них.
+  physicsStep() {
+    if (!this.physics) return;
+    const now = performance.now();
+    for (const shard of [...this.shards]) {
+      const t = shard.body.translation();
+      const v = shard.body.linvel();
+      const speed = Math.hypot(v.x, v.y, v.z);
+      shard.mesh.position.set(t.x, t.y, t.z);
+      if (
+        shard.prevSpeed > IMPACT_MIN_SPEED &&
+        speed < shard.prevSpeed * 0.62 &&
+        now - shard.impactAt > IMPACT_COOLDOWN_MS
+      ) {
+        this.shardImpact(shard, v.x, v.y, v.z, speed);
+      }
+      shard.pvx = v.x; shard.pvy = v.y; shard.pvz = v.z;
+      shard.prevSpeed = speed;
+      if (now - shard.bornAt > shard.life || t.y < -1.5) this.recycleShard(shard);
+    }
+  }
+
+  shardImpact(shard, vx, vy, vz, speed) {
+    shard.impactAt = performance.now();
+    // Нормаль поверхности: после отскока скорость уходит от неё (v_after ≈ n),
+    // при полной остановке смотрим на приходящее движение (n ≈ −v_before).
+    const n = this._impactN;
+    if (speed > shard.prevSpeed * 0.3) n.set(vx, vy, vz).normalize();
+    else n.set(-shard.pvx, -shard.pvy, -shard.pvz).normalize();
+    if (n.lengthSq() < 0.5) n.set(0, 1, 0);
+    const point = this._impactP.copy(shard.mesh.position);
+    const gain = Math.min(1.05, 0.5 + shard.prevSpeed * 0.1);
+    this.spawnRing(point, n, gain);
+    this.pushWave(point.x, point.y, point.z, 1.4 + gain * 0.6);
+    // Комната отвечает: частицы у точки удара выбрасывает по нормали.
+    this._impactDir.copy(n).negate();
+    this._impactEnd.copy(point).addScaledVector(this._impactDir, 1.8);
+    this.kick(point, this._impactDir, 0.4 * gain, this._impactEnd);
   }
 
   kick(origin, dir, power, stopAt) {
@@ -344,12 +553,15 @@ class RealityField extends xb.Script {
     }
   }
 
-  spawnRing(point, normal) {
+  // gain — сила удара: у слабого касания кольцо меньше, у быстрого — шире,
+  // но предел 1.05 держит вспышку в пределах ~45 см даже в телефонном AR.
+  spawnRing(point, normal, gain = 1) {
     const ring = this.rings.find((r) => r.t >= r.dur) || this.rings[0];
     ring.t = 0;
+    ring.gain = gain;
     ring.mesh.visible = true;
     ring.mesh.position.copy(point);
-    ring.mesh.lookAt(this._h.clone().add(normal));
+    ring.mesh.lookAt(this._ringTmp.copy(point).add(normal));
     if (this.debug) {
       this.normalArrow.position.copy(point);
       this.normalArrow.setDirection(normal);
@@ -377,9 +589,6 @@ class RealityField extends xb.Script {
         this._o.z + this._d.z * 4,
       ], 3);
       this.debugRayGeo.attributes.position.needsUpdate = true;
-      try {
-        if (xb.depth?.depthMesh) xb.depth.depthMesh.visible = true;
-      } catch { /* depth может ещё прогреваться */ }
     }
 
     const p = this.pgeo.attributes.position.array;
@@ -480,7 +689,7 @@ class RealityField extends xb.Script {
       // Геометрия кольца — 0.5 м радиуса; финальный масштаб ≤0.9 держит
       // удар в пределах ~45 см. Раньше скейлилось до 3.4: в телефонном AR
       // каждый тап рисовал 1.7-метровые диски поверх реального пола.
-      r.mesh.scale.setScalar(0.15 + k * 0.75);
+      r.mesh.scale.setScalar((0.15 + k * 0.75) * r.gain);
       r.mesh.material.uniforms.uT.value = k;
     }
     if (this.normalArrow.visible && (this._normalAge += dt) > 1.4) {
@@ -501,7 +710,9 @@ class RealityField extends xb.Script {
       }
       const ctl = this._handsSeen ? 'HANDS' : 'TAP';
       const fx = this.charge > 0 ? `CHARGE ${this.charge.toFixed(1)}` : [...this.fx].join('+') || 'pulse';
-      this.stat(`FPS ${this._fps} · ${src} · ${ctl} · ${fx} · волн ${this.waves.length}`);
+      // PHYSICS честный: RAPIER с числом живых осколков или RAYCAST без них.
+      const phys = this.physics ? `RAPIER · оск ${this.shards.length}` : 'RAYCAST';
+      this.stat(`FPS ${this._fps} · ${src} · PHYSICS ${phys} · ${ctl} · ${fx} · волн ${this.waves.length}`);
     }
   }
 
@@ -509,6 +720,17 @@ class RealityField extends xb.Script {
     const g = xb.core.gestureRecognition;
     g.removeEventListener('gesturestart', this._gs);
     g.removeEventListener('gestureend', this._ge);
+    // Физический слой: снять живые тела, оболочку и материалы пула.
+    // Идемпотентно: повторный вызов видит пустые списки.
+    for (const shard of [...this.shards]) this.recycleShard(shard);
+    for (const body of this.shellBodies) {
+      try {
+        this.physics?.blendedWorld.removeRigidBody(body);
+      } catch { /* мир уже освобождён */ }
+    }
+    this.shellBodies = [];
+    this.shardPool = [];
+    for (const material of this.shardMats) material.dispose();
     this.pgeo.dispose(); this.pmat.dispose();
     for (const line of this.fieldLines.children) {
       line.geometry.dispose();
@@ -556,7 +778,29 @@ installLaunchShell(options, [
 ]);
 previewFromEyeHeight();
 
-document.addEventListener('DOMContentLoaded', () => {
+// Rapier тянется динамическим import ДО xb.init. Недоступный CDN, офлайн или
+// старая сборка не должны ронять опыт: без RAPIER он остаётся на рейкастах и
+// волнах по частицам, а HUD честно пишет PHYSICS RAYCAST.
+async function loadRapier() {
+  try {
+    const module = await import('@dimforge/rapier3d-simd-compat');
+    return module.default ?? module;
+  } catch (error) {
+    console.warn('[REALITY//FIELD] Rapier не загрузился — PHYSICS RAYCAST', error);
+    return null;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const RAPIER = await loadRapier();
+  if (RAPIER) {
+    options.physics.RAPIER = RAPIER;
+    // Пресет физики: trimesh-коллайдер строится по downsample-геометрии
+    // depth-mesh (colliderUpdateFps 5), как в templates/10_environment_physics.
+    // Своих значений не добавляем: остальное — визуализация, а её в этом
+    // опыте несёт поле частиц, не depth-меш.
+    options.depth = new xb.DepthOptions(xb.xrDepthMeshPhysicsOptions);
+  }
   xb.add(new RealityField());
   xb.init(options);
   watchXrButton();

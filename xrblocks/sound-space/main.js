@@ -2,12 +2,12 @@ import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import {
   glowBlending, ribbonMaterial, shockRingMaterial, lineMaterial, makePoints, PALETTES,
-} from '../common/fx.js?v=mobile-ux-22';
-import { makeHud } from '../common/hud.js?v=mobile-ux-22';
+} from '../common/fx.js?v=mobile-ux-24';
+import { makeHud } from '../common/hud.js?v=mobile-ux-24';
 import {
   enableAutomation, installLaunchShell, installXrGuards,
   isAutomation, previewFromEyeHeight, watchXrButton,
-} from '../common/boot.js?v=mobile-ux-20';
+} from '../common/boot.js?v=mobile-ux-24';
 
 // SOUND//SPACE — звук строит объём вокруг слушателя, а не плоскую ленту.
 //
@@ -21,10 +21,12 @@ import {
 // Тембр (RMS / спектральный centroid / flux-шумность) переключает материал:
 // SPEECH — нервная рябь и шипы, MUSIC — ровные волны, QUIET — спокойный пол.
 //
-// FREEZE ставит рядом, в комнату, стоячую скульптуру-снимок текущего
-// состояния: живое поле вокруг продолжает жить, прошлое стоит и не мерцает —
-// их видно рядом и можно сравнить. Второй FREEZE заменяет скульптуру,
-// CLEAR стирает. Без сервера, без AI, 0 ₽.
+// FREEZE копит галерею: каждый снимок — самостоятельная скульптура в комнате,
+// новый встаёт рядом с предыдущим, старейшая вытесняется и гаснет. Живое
+// поле вокруг продолжает жить, прошлое стоит и не мерцает: минута разговора
+// остаётся рядом как пространственная история. Снимок можно перенести
+// (тянуть тело), повернуть (тянуть кольцо) и растворить (держать или
+// squeeze). CLEAR стирает всё. Без сервера, без AI, 0 ₽.
 
 const FFT_SIZE = 1024;
 const BANDS = 32;          // частотных осей по кругу
@@ -42,7 +44,14 @@ const TILT_LO = 0.7, TILT_HI = 2.1;   // компенсация спада сп�
 const FLUX_LAG = 6;        // flux меряем к спектру 0.1 с назад, а не к соседнему кадру
 const DUST = 160;          // точек поля давления
 const SCULPT_SCALE = 0.5;  // скульптура-снимок: тот же объект вдвое меньше
-const SCULPT_DIST = 1.95;  // и стоит в комнате, а не на голове
+const SCULPT_DIST = 1.95;  // первый снимок — в комнате перед слушателем
+const SCULPT_GAP = 0.62;   // шаг ряда: каждый следующий встаёт рядом с предыдущим
+const GALLERY = 5;         // сколько снимков держит история, старейшая вытесняется
+const HOLD_DELETE = 0.72;  // сколько держать снимок, чтобы его растворить
+const HOLD_SLOP = 0.06;    // дальше этого — уже drag, а не hold
+const VANISH = 0.55;       // сколько гаснет вытеснённый или стёртый снимок
+const WARM_FRESH = 0.16;   // тинт свежего снимка: ещё почти спектральный
+const WARM_OLD = 0.78;     // тинт минутного: весь в тёплом «прошлом»
 
 const bandF = (b) => b / (BANDS - 1);
 const bandRadius = (b) => R_MIN + (R_MAX - R_MIN) * bandF(b);
@@ -56,6 +65,9 @@ const HUE_LO = new THREE.Color(0x6b34ff);
 const HUE_MID = new THREE.Color(PALETTES.sound[1]);
 const HUE_HI = new THREE.Color(0xcdf3ff);
 const MEM_WARM = new THREE.Color(0xffb478);   // сдвиг снимка в «тёплое прошлое»
+const WHITE_HOT = new THREE.Color(0xffffff);  // раскаление плинта при hold
+const BAND_IDLE = new THREE.Color(0x8fa8c8);  // кольцо-ручка: покой
+const BAND_HOT = new THREE.Color(0xeaf6ff);   // кольцо-ручка: наведение/drag
 
 // Тинт состояния поверх частотного градиента.
 const TINTS = {
@@ -281,8 +293,13 @@ class SoundSpace extends xb.Script {
     this.anchored = false;
     this.audio = null;
     this.perm = false;
-    this.sculpture = null;
-    this.frozenState = null;
+    // Галерея снимков: живые записи (старейшая первой) и угасающие.
+    this.gallery = [];
+    this.dying = [];
+    this.selected = null;
+    this._fwd = new THREE.Vector3();
+    this._right = new THREE.Vector3();
+    this._autoT = isAutomation() ? 0 : null;
     this.impacts = [];
     this.ringGeo = new THREE.RingGeometry(0.94, 1.0, 48);
 
@@ -319,7 +336,7 @@ class SoundSpace extends xb.Script {
 
     this.hud = makeHud({
       title: 'SOUND//SPACE',
-      stat: 'MIC — bass at your feet, highs around. FREEZE — drop a snapshot into the room',
+      stat: 'tap — FREEZE · drag a snapshot · hold to dissolve · MIC for live input',
       // Центрированный дефолт: боковой оффсет не попадает в портретный фрустум.
       buttons: [
         {id: 'mic', label: 'MIC', icon: 'mic', onTap: () => this.enableMic()},
@@ -332,11 +349,64 @@ class SoundSpace extends xb.Script {
   }
 
   stat(s) { this.hud.setStat(s); }
+
+  // Снимок, владеющий этим объектом (или его предок): userData на группе.
+  sculptureOf(target) {
+    for (let o = target; o; o = o.parent) {
+      if (o.userData && o.userData.snapshot) return o.userData.snapshot;
+    }
+    return null;
+  }
+
+  // Сцена-команда: освобождённый tap/click/pinch по пустому месту — NEW снимок.
+  // Для «пустого» тапа capture имеет kind 'none' и completed=false, поэтому
+  // валидность проверяем по reason, а не по completed (контракт SelectEnd).
   onSelectEnd(event) {
+    if (event.reason !== 'released') return;
     if (this.hud.owns(event?.target)) return;
+    if (this.sculptureOf(event?.target)) return;   // целевые события — ниже
     this.freeze();
   }
-  onSqueezeEnd() { this.clear(); }
+
+  // Squeeze (grip) растворяет выбранный снимок; выбор — tap по скульптуре.
+  onSqueezeEnd() {
+    if (this.selected && !this.selected.doomed) {
+      this.retire(this.selected);
+      this.stat(`SQUEEZE · snapshot dissolved · ${this.gallery.length} left`);
+    }
+  }
+
+  // Целевая ветка: здесь и hold-таймер, и выбор. Hold живёт на самом снимке
+  // (состояние — у владельца объекта, не в глобальном слоте), а не в
+  // onObjectLongSelect: manipulation-захват поглощает long-select SDK
+  // (Interaction.ts:updateLongSelect), а нам нужен один механизм на все
+  // источники — луч, pinch и прямое касание.
+  onObjectSelectStart(event) {
+    const e = this.sculptureOf(event.target);
+    if (e && !e.doomed) e.hold = {t: 0, origin: e.group.position.clone()};
+  }
+
+  onObjectSelectEnd(event) {
+    const e = this.sculptureOf(event.target);
+    if (e) e.hold = null;
+    if (e && !e.doomed) this.selected = e;
+  }
+
+  onObjectManipulate(event) {
+    const e = this.sculptureOf(event.owner ?? event.target);
+    if (!e) return;
+    e.dragging = event.phase === 'start' || event.phase === 'update';
+  }
+
+  onHoverEnter(event) {
+    const e = this.sculptureOf(event.target);
+    if (e) e.hover = true;
+  }
+
+  onHoverExit(event) {
+    const e = this.sculptureOf(event.target);
+    if (e) e.hover = false;
+  }
 
   async enableMic() {
     try {
@@ -512,26 +582,68 @@ class SoundSpace extends xb.Script {
   }
 
   // Скульптура-снимок: тот же частотный объект, только застывший и стоящий
-  // в комнате. Живёт рядом с живым полем, а не поверх него.
+  // в комнате. Живёт рядом с живым полем, а не поверх него. Каждая — свой
+  // объект со своей геометрией: история копится, а не перезаписывается.
   freeze() {
     if (!this.frames) return;
-    this.dropSculpture(this.disp);
-    this.frozenState = this.state;
-    this.stat(`FREEZE ${this.state} · snapshot stands in the room`);
+    const entry = this.makeSculpture(this.disp, this.state);
+    this.gallery.push(entry);
+    while (this.gallery.length > GALLERY) this.retire(this.gallery.shift());
+    this.stat(`FREEZE ${this.state} · ${this.gallery.length}/${GALLERY} snapshots in the room`);
   }
 
-  dropSculpture(disp) {
-    this.clearSculpture();
+  // Ряд истории: первый снимок встаёт перед слушателем, каждый следующий —
+  // на шаг правее направления взгляда от предыдущего. Ряд «гнётся» вслед за
+  // тем, куда смотрел человек, — это и есть пространственная запись минут.
+  placeInRow(g) {
+    const prev = this.gallery[this.gallery.length - 1];
     const cam = xb.core.camera;
-    if (!cam) return;
-    const dir = new THREE.Vector3();
-    cam.getWorldDirection(dir);
-    dir.y = 0;
-    if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1); else dir.normalize();
+    if (!prev) {
+      const dir = this._fwd.set(0, 0, -1);
+      if (cam) {
+        cam.getWorldDirection(dir);
+        dir.y = 0;
+        if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1); else dir.normalize();
+      }
+      g.position.set(
+        (cam ? cam.position.x : 0) + dir.x * SCULPT_DIST, 0,
+        (cam ? cam.position.z : 0) + dir.z * SCULPT_DIST
+      );
+      return;
+    }
+    const right = this._right.set(1, 0, 0);
+    if (cam) {
+      cam.getWorldDirection(this._fwd);
+      this._fwd.y = 0;
+      if (this._fwd.lengthSq() > 1e-6) {
+        this._fwd.normalize();
+        right.set(-this._fwd.z, 0, this._fwd.x);
+      }
+    }
+    g.position.copy(prev.group.position).addScaledVector(right, SCULPT_GAP);
+  }
 
+  makeSculpture(disp, state) {
     const g = new THREE.Group();
-    g.position.set(cam.position.x + dir.x * SCULPT_DIST, 0, cam.position.z + dir.z * SCULPT_DIST);
+    this.placeInRow(g);
     g.scale.setScalar(SCULPT_SCALE);
+    // Управление снимком — manipulation на самом объекте (Interaction
+    // manual): тянуть тело — переносить, тянуть кольцо — поворачивать.
+    // Явный surface-action обязателен: когда включены два primary-действия,
+    // без handle SDK не выбирает ни одно (ManipulationManager.resolve).
+    g.xb = {
+      manipulation: {
+        actions: {translate: true, rotate: {axis: 'y', space: 'world'}},
+        handle: {action: 'translate'},
+      },
+    };
+
+    const entry = {
+      group: g, blades: [], plinth: null, band: null,
+      born: this.time, state, doomed: false, fade: 1,
+      hover: false, dragging: false, holdP: 0, hold: null,
+    };
+    g.userData.snapshot = entry;
 
     let v = 0;
     for (let b = 0; b < BANDS; b++) {
@@ -544,32 +656,102 @@ class SoundSpace extends xb.Script {
         for (let c = 0; c < COLS; c++) pa.setZ(r * COLS + c, disp[v++]);
       }
       pa.needsUpdate = true;
-      // ribbonMaterial красит по position.z — ровно тот случай, для которого он есть.
+      // ribbonMaterial красит по position.z — ровно тот случай, для которого
+      // он есть. Базовый цвет помним отдельно: тинт возраста едет каждый кадр.
       const mesh = new THREE.Mesh(geo, ribbonMaterial({
-        color: freqColor(f, 0.45), opacity: 0.55, live: false,
+        color: freqColor(f, WARM_FRESH), opacity: 0.62, live: false,
       }));
+      mesh.userData.base = freqColor(f, WARM_FRESH);
       const phi = f * TAU - Math.PI / 2;
       mesh.position.set(Math.cos(phi) * R, 0, Math.sin(phi) * R);
       mesh.rotation.y = Math.PI / 2 - phi;
       g.add(mesh);
+      entry.blades.push(mesh);
     }
-    const plinth = new THREE.LineLoop(circleGeometry(R_MIN), lineMaterial(MEM_WARM.getHex(), 0.5));
+    const plinth = new THREE.LineLoop(circleGeometry(R_MIN), lineMaterial(MEM_WARM.getHex(), 0.42));
     plinth.scale.setScalar(1.08);
     plinth.position.y = 0.02;
+    // Плинт — индикатор, а не мишень: у Line-геометрии порог попадания
+    // ~1 м (Raycaster.params.Line), она бы перехватывала лучи мимо скульптуры.
+    plinth.xb = {pointerEvents: 'none'};
     g.add(plinth);
+    entry.plinth = plinth;
+
+    // Кольцо-ручка: отдельная поверхность, выбирающая rotate у владельца
+    // (interaction manual: «use a handle when one surface must select an
+    // action»). Высоко над осями не вешаем — по нему должны попасть лучом.
+    const band = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.56, 1.56, 0.085, 40, 1, true),
+      glowBlending(new THREE.MeshBasicMaterial({
+        color: BAND_IDLE.getHex(), transparent: true, opacity: 0.22,
+        side: THREE.DoubleSide, depthWrite: false,
+      }))
+    );
+    band.position.y = 0.15;
+    band.xb = {manipulationHandle: {action: 'rotate'}};
+    g.add(band);
+    entry.band = band;
+
     this.add(g);
-    this.sculpture = g;
+    return entry;
   }
 
-  clearSculpture() {
-    if (!this.sculpture) return;
-    this.remove(this.sculpture);
-    this.sculpture.traverse((o) => {
+  // Снимок покидает историю: из пула — сразу, из сцены — после угасания.
+  // manipulation снимается в момент приговора: SDK сам закроет сессию
+  // (валидация владельца в ManipulationManager), без перетаскивания призрака.
+  retire(entry) {
+    if (entry.doomed) return;
+    entry.doomed = true;
+    const i = this.gallery.indexOf(entry);
+    if (i >= 0) this.gallery.splice(i, 1);
+    if (this.selected === entry) this.selected = null;
+    entry.hold = null;
+    entry.group.xb = {manipulation: false, pointerEvents: 'none'};
+    this.dying.push(entry);
+  }
+
+  disposeSculpture(entry) {
+    this.remove(entry.group);
+    entry.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
       if (o.material) o.material.dispose();
     });
-    this.sculpture = null;
-    this.frozenState = null;
+    entry.group.userData.snapshot = null;
+  }
+
+  // Возраст записи: тепло тинта растёт со временем, поэтому ряд читается
+  // как история и без подписей — свежий спектральный, минутный тёплый.
+  paintEntry(e) {
+    const age = Math.max(0, this.time - e.born);
+    const warm = e.doomed ? 1 : WARM_FRESH + (WARM_OLD - WARM_FRESH) * Math.min(1, age / 60);
+    for (let i = 0; i < e.blades.length; i++) {
+      const m = e.blades[i];
+      const u = m.material.uniforms;
+      u.uColor.value.copy(m.userData.base).lerp(MEM_WARM, warm);
+      u.uOpacity.value = 0.62 * e.fade;
+    }
+    // Плинт — индикатор состояния записи: пульс выбранной, яркая при
+    // наведении и перетаскивании, раскаляется по мере hold-удаления.
+    const pm = e.plinth.material;
+    let po = 0.40;
+    if (e === this.selected) po = 0.55 + 0.28 * (0.5 + 0.5 * Math.sin(this.time * 5.2));
+    if (e.hover) po = Math.max(po, 0.72);
+    if (e.dragging) po = Math.max(po, 0.85);
+    pm.color.copy(MEM_WARM);
+    if (e.holdP > 0) {
+      pm.color.lerp(WHITE_HOT, e.holdP);
+      po = Math.max(po, 0.45 + 0.55 * e.holdP);
+    }
+    pm.opacity = po * e.fade;
+    const bm = e.band.material;
+    const hot = e.holdP > 0 ? 1 : (e.hover || e.dragging || e === this.selected) ? 0.6 : 0;
+    bm.color.lerpColors(BAND_IDLE, BAND_HOT, hot);
+    bm.opacity = (0.22 + 0.33 * hot) * e.fade;
+  }
+
+  ageText(e) {
+    const s = Math.max(0, this.time - e.born);
+    return s < 60 ? `${s | 0}s ago` : `${(s / 60) | 0}m ago`;
   }
 
   // Ударная волна: плоское кольцо расходится от слушателя по полу,
@@ -584,7 +766,7 @@ class SoundSpace extends xb.Script {
   }
 
   clear() {
-    this.clearSculpture();
+    for (const e of this.gallery.splice(0)) this.retire(e);
     this.hist.fill(0);
     this.fhistArr.fill(0);
     this.disp.fill(0);
@@ -619,7 +801,7 @@ class SoundSpace extends xb.Script {
     this.pushHistory();
     this.sculpt();
     this.paint(dt);
-    this.dustStep(dt);
+    this.stepGallery(dt);
 
     for (const im of [...this.impacts]) {
       im.t += dt;
@@ -634,7 +816,41 @@ class SoundSpace extends xb.Script {
       }
     }
 
+    // Автопресет ?test=1: галерея обязана жить и без рук — снимок сам
+    // встаёт в ряд каждые 6 секунд, история наполняется на глазах.
+    if (this._autoT !== null && (this._autoT += dt) >= 6) {
+      this._autoT = 0;
+      this.freeze();
+    }
+
     this.statLine();
+  }
+
+  // Галерея: hold-таймер удалений, угасание и перекраска возраста.
+  stepGallery(dt) {
+    // Hold идёт по каждой записи отдельно (обратный ход — retire режет массив).
+    for (let i = this.gallery.length - 1; i >= 0; i--) {
+      const e = this.gallery[i];
+      if (!e.hold) { e.holdP = 0; continue; }
+      e.hold.t += dt;
+      e.holdP = Math.min(1, e.hold.t / HOLD_DELETE);
+      if (e.group.position.distanceToSquared(e.hold.origin) > HOLD_SLOP * HOLD_SLOP) {
+        e.holdP = 0;                      // сдвинули — это drag, а не hold
+        e.hold = null;
+      } else if (e.hold.t >= HOLD_DELETE) {
+        this.retire(e);
+        this.stat(`HOLD · snapshot dissolved · ${this.gallery.length} left`);
+      }
+    }
+    for (const e of [...this.dying]) {
+      e.fade = Math.max(0, e.fade - dt / VANISH);
+      if (e.fade <= 0) {
+        this.dying.splice(this.dying.indexOf(e), 1);
+        this.disposeSculpture(e);
+      }
+    }
+    for (const e of this.gallery) this.paintEntry(e);
+    for (const e of this.dying) this.paintEntry(e);
   }
 
   paint(dt) {
@@ -691,14 +907,17 @@ class SoundSpace extends xb.Script {
     this.statT = this.time;
     const m = this.metrics;
     const hit = this.time - this.lastHit < 0.5 ? ' HIT' : '';
-    const frozen = this.frozenState ? ` · FROZEN ${this.frozenState}` : '';
+    const mem = this.gallery.length ? ` · ${this.gallery.length}/${GALLERY} SNAPS` : '';
+    const sel = this.selected && !this.selected.doomed
+      ? ` · SELECTED ${this.ageText(this.selected)} ${this.selected.state}` : '';
     this.stat(`${this.state}${hit} · ${this.perm ? 'MIC' : 'DEMO'}`
       + ` · centroid ${(m.centroid * 100) | 0} rms ${(m.rms * 100) | 0}`
-      + ` flux ${(m.noise * 100) | 0}${frozen}`);
+      + ` flux ${(m.noise * 100) | 0}${mem}${sel}`);
   }
 
   dispose() {
-    this.clearSculpture();
+    for (const e of this.gallery.splice(0)) this.disposeSculpture(e);
+    for (const e of this.dying.splice(0)) this.disposeSculpture(e);
     for (const im of this.impacts) im.mesh.material.dispose();
     this.impacts = [];
     this.group.traverse((o) => {
@@ -722,16 +941,22 @@ const options = new xb.Options();
 // пользователя, а ранняя декларация задерживает старт опыта. Доступ
 // запрашивается по кнопке MIC — тогда же создаётся AudioContext.
 options.enableReticles();
+// Руки — для прямого контакта со скульптурами: коснуться и держать (hold),
+// схватить pinch'ем и перенести (Interaction manual: touch → select → grab →
+// manipulation). Телефонному AR эту фичу снимает guard в common/boot.js.
+options.enableHands();
+options.hands.visualization = true;
 options.world?.enableAnchors?.();
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('SOUND//SPACE');
-options.setAppDescription('Частоты встают вокруг тебя. FREEZE — поставить снимок в комнату.');
+options.setAppDescription('Частоты встают вокруг тебя. FREEZE копит галерею снимков.');
 
 enableAutomation(options);
 installXrGuards();
 installLaunchShell(options, [
   'Вход — кнопка внизу: спектр встанет вокруг тебя',
-  'MIC — лента из микрофона, FREEZE — скульптура момента',
+  'MIC — живое поле, FREEZE — снимок в ряд истории',
+  'Снимок: тянуть — перенос, кольцо — поворот, держать — растворить',
   'Меню — панель внизу экрана',
 ]);
 previewFromEyeHeight();

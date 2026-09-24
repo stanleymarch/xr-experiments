@@ -16,9 +16,8 @@ XR Blocks — SDK от Google, исходники и доки см. ниже. Ч
    (карточки/оверлеи/контролы), `xb-add-world-sensing` (планы/depth/детекция),
    `xb-anchors`, `xb-debug-app`, `xb-add-ai`, `xb-build-app`.
 3. Источник правды по символам: `node_modules/xrblocks/src/`, типы —
-   `node_modules/xrblocks/build/xrblocks.d.ts`. Живые шаблоны/сэмплы/доки —
-   зеркало апстрима в `../xrblocks-reference/` (sparse clone google/xrblocks:
-   `templates/`, `samples/`, `demos/`, `docs/`).
+   `node_modules/xrblocks/build/xrblocks.d.ts`, мануалы —
+   <https://xrblocks.github.io/docs/manual/>.
 4. Порядок из скиллов: сверить каждый планируемый символ с исходником →
    посмотреть шаблон/сэмпл → только потом писать код.
 

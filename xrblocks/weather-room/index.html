@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 <title>WEATHER//ROOM — xrblocks</title>
-<link rel="stylesheet" href="../common/style.css?v=mobile-ux-17" />
+<link rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
 <script>window.litDisableBundleWarning = true;</script>
 <script type="importmap">
 {
@@ -17,7 +17,6 @@
     "@pmndrs/msdfonts": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.64/dist/index.min.js",
     "@preact/signals-core": "https://cdn.jsdelivr.net/npm/@preact/signals-core@1.14.0/dist/signals-core.mjs",
     "yoga-layout/load": "https://cdn.jsdelivr.net/npm/yoga-layout@3.2.1/dist/src/load.js",
-    "three-pathfinding": "https://cdn.jsdelivr.net/npm/three-pathfinding@1.3.0/dist/three-pathfinding.module.js",
     "lit": "https://esm.sh/lit@3.3.1",
     "lit/": "https://esm.sh/lit@3.3.1/",
     "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/xrblocks.js",
@@ -25,9 +24,1195 @@
   }
 }
 </script>
+<style>
+  /* Поверх официального xr.css: только телефонная эргономика и режимы.
+     Официальный слой уже рисует полноэкранный entry-экран с заголовком,
+     описанием и кнопкой входа по центру. */
+  #back { position:fixed; top:10px; left:10px; z-index:40; color:#54d6ff;
+    font:600 13px/1 system-ui,sans-serif; text-decoration:none;
+    background:rgba(7,10,18,.72); border:1px solid #1c2942; border-radius:10px;
+    padding:6px 12px; }
+  /* Подсказки управления внутри официального entry-экрана. */
+  #XRButtonWrapper .app-hints { margin:0; padding:0 20px; list-style:none;
+    display:grid; gap:6px; max-width:480px; }
+  #XRButtonWrapper .app-hints li { font:400 13px/1.45 system-ui,sans-serif;
+    color:#9fb2d2; }
+  /* На телефоне вторая кнопка (симулятор — десктоп-режим) не нужна. */
+  @media (pointer:coarse) {
+    #XRButtonWrapper .XRButton ~ .XRButton { display:none; }
+  }
+  /* В сессии: кнопка END XR компактной пилюлей у верхнего края. */
+  #XRButtonWrapper.in-session { top:calc(10px + env(safe-area-inset-top));
+    left:auto; right:12px; width:auto; height:auto; justify-items:end;
+    align-items:end; }
+  #XRButtonWrapper.in-session > *:not(.XRButton) { display:none; }
+  #XRButtonWrapper.in-session .XRButton { min-height:0; padding:9px 16px;
+    font-size:12px; border-radius:999px; }
+  body:has(#XRButtonWrapper.in-session) #back { display:none; }
+  body.automation #back, body.automation #XRButtonWrapper { display:none !important; }
+</style>
 </head>
 <body>
 <a id="back" href="../../">← все опыты</a>
-<script type="module" src="main.js?v=mobile-ux-24"></script>
+<script type="module">
+// WEATHER//ROOM — свежая реализация по официальному пути XR Blocks.
+//
+// ИДЕЯ: живая погода твоей точки (Open-Meteo, без ключа) становится телом
+// комнаты. Дождь и снег падают вокруг и всплескиваются на реальных
+// поверхностях, потолок комнаты затягивает облачная плита, воздух густеет
+// мглой по видимости, ночью проступают звёзды, ветер сносит капли и снег.
+// Слайдер мотает время −24…+24 ч. Каждое поле ответа имеет видимую причину:
+//   rain+showers → число капель, скорость и крупность дождя
+//   snowfall     → снежинки
+//   cloud_cover  → плотность плиты и объёмного облака над головой
+//   visibility, weather_code 45/48 → мгла
+//   wind (speed+direction)  → снос капель, снега и дрейф плиты
+//   pressure_msl → высота облачного потолка
+//   is_day → палитра, звёзды, уровень света
+//
+// ВОПЛОЩЕНИЕ — официальные образцы, не выдумка:
+//   дождь: механика samples/advanced/rain — инстансы квадов с азимутальным
+//     билбордом; кадр 0 спрайт-листа — летящая капля, кадры 1–15 — всплеск,
+//     который проигрывается на том же кваде (weight 1→30); окклюзия и
+//     посадка — по depth-сенсору (getDepth), 10% капель рождается прямо на
+//     реальной геометрии лучом из камеры;
+//   облако: аддон VolumetricCloud, как в том же сэмпле;
+//   скелет: золотой промпт Gemini Canvas — один файл, import-map CDN,
+//     xb.Script, встроенный spatial UI (UIOverlay), дефолтный симулятор.
+//
+// Инлайненные device-контракты (причины — в XR-BLOCKS.md корня):
+//   glowBlending — premultiplied-alpha телефонного AR (аддитив копит альфу
+//     канваса — композитор гасит камеру под «свечением»);
+//   installXrGuards — телефонный Chrome отклоняет сессию с required
+//     depth-sensing/hand-tracking/local-floor; повторный запрос без них;
+//   isPassthrough/hideInPassthrough — 'alpha-blend' = телефон; VR-декорации
+//     комнаты в AR прячутся, объёмное облако в alpha-blend не ставится
+//     (чужой premultiplied RawShaderMaterial переключать вслепую нельзя).
+
+import * as THREE from 'three';
+import * as xb from 'xrblocks';
+import { VolumetricCloud } from 'xrblocks/addons/volumes/VolumetricCloud.js';
+
+const AUTOMATION = new URLSearchParams(window.location.search).has('xrAutomation');
+const DEBUG = new URLSearchParams(window.location.search).has('debug');
+
+// --- контракты --------------------------------------------------------------
+
+function glowBlending(material) {
+  material.blending = THREE.CustomBlending;
+  material.blendSrc = THREE.SrcAlphaFactor;
+  material.blendDst = THREE.OneFactor;
+  material.blendSrcAlpha = THREE.ZeroFactor;
+  material.blendDstAlpha = THREE.OneFactor;
+  return material;
+}
+
+// Процедурный мягкий спрайт для точечных слоёв (звёзды): без файлов.
+function glowSprite() {
+  const S = 64;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const g = cv.getContext('2d');
+  const img = g.createImageData(S, S);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const dx = (x - S / 2) / (S / 2), dy = (y - S / 2) / (S / 2);
+      const r = Math.hypot(dx, dy);
+      const v = r > 1 ? 0 : Math.pow(1 - r, 2.2);
+      const i = (y * S + x) * 4;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+      img.data[i + 3] = Math.round(v * 255);
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return new THREE.CanvasTexture(cv);
+}
+
+// Телефонный AR-passthrough: Quest отдаёт 'additive', телефоны 'alpha-blend'.
+function isPassthrough() {
+  const session = xb.core?.renderer?.xr?.getSession?.();
+  return Boolean(session) && session.environmentBlendMode === 'alpha-blend';
+}
+
+function hideInPassthrough(objects) {
+  const xr = xb.core?.renderer?.xr;
+  if (!xr) return;
+  const sync = () => {
+    const ar = isPassthrough();
+    for (const object of objects) if (object) object.visible = !ar;
+  };
+  xr.addEventListener('sessionstart', sync);
+  xr.addEventListener('sessionend', sync);
+}
+
+function installXrGuards() {
+  const xr = navigator.xr;
+  if (!xr || xr.__downgradeGuard) return;
+  xr.__downgradeGuard = true;
+  const orig = xr.requestSession.bind(xr);
+  xr.requestSession = (mode, init) =>
+    orig(mode, init).catch((err) => {
+      const required = (init && init.requiredFeatures) || [];
+      const heavy = required.filter(
+        (f) => f === 'depth-sensing' || f === 'hand-tracking' || f === 'local-floor'
+      );
+      if (!heavy.length) throw err;
+      init.requiredFeatures = required.filter((f) => !heavy.includes(f));
+      return orig(mode, init);
+    });
+}
+
+// Класс .in-session на #XRButtonWrapper (кнопка стала END XR) + подсказки
+// внутрь официального entry-экрана. Wrapper появляется внутри xb.init().
+function watchXrButton(hints = []) {
+  const sync = (w) => {
+    const btn = w.querySelector('button');
+    if (btn) w.classList.toggle('in-session', /end/i.test(btn.textContent));
+  };
+  const attach = () => {
+    const w = document.getElementById('XRButtonWrapper');
+    if (!w) return false;
+    if (hints.length && !w.querySelector('.app-hints')) {
+      const list = document.createElement('ul');
+      list.className = 'app-hints';
+      for (const hint of hints) {
+        const item = document.createElement('li');
+        item.textContent = hint;
+        list.append(item);
+      }
+      w.append(list);
+    }
+    sync(w);
+    new MutationObserver(() => sync(w)).observe(w, {
+      childList: true, characterData: true, subtree: true,
+    });
+    return true;
+  };
+  if (attach()) return;
+  const io = new MutationObserver(() => { if (attach()) io.disconnect(); });
+  io.observe(document.body, { childList: true, subtree: false });
+}
+
+// --- погода: данные -----------------------------------------------------------
+
+// Коды WMO: [от, до, имя].
+const WMO = [
+  [0, 0, 'CLEAR'], [1, 1, 'MOSTLY CLEAR'], [2, 2, 'PARTLY CLOUDY'], [3, 3, 'OVERCAST'],
+  [45, 48, 'FOG'], [51, 55, 'DRIZZLE'], [56, 57, 'FREEZING DRIZZLE'],
+  [61, 61, 'LIGHT RAIN'], [63, 63, 'RAIN'], [65, 65, 'HEAVY RAIN'],
+  [66, 67, 'FREEZING RAIN'], [71, 71, 'LIGHT SNOW'], [73, 73, 'SNOW'],
+  [75, 75, 'HEAVY SNOW'], [77, 77, 'SNOW GRAINS'], [80, 80, 'SHOWERS'],
+  [81, 81, 'HEAVY SHOWERS'], [82, 82, 'VIOLENT SHOWERS'], [85, 86, 'SNOW SHOWERS'],
+  [95, 95, 'THUNDERSTORM'], [96, 99, 'THUNDERSTORM + HAIL'],
+];
+const ROSE = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const num = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+const dirName = (deg) => ROSE[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
+
+function conditionName(code) {
+  for (const [a, b, label] of WMO) if (code >= a && code <= b) return label;
+  return 'НЕИЗВЕСТНО';
+}
+
+// Синтетика на случай отсутствия сети: согласованный суточный ход, фронт
+// раз в ~56 ч, мороз превращает дождь в снег, провал видимости — туман.
+function demoData() {
+  const now = Date.now();
+  const base = now - (now % 3600e3);
+  const time = [];
+  for (let i = -24; i <= 48; i++) time.push(new Date(base + i * 3600e3).toISOString());
+  const n = time.length;
+  const h = {
+    time, temperature_2m: [], relative_humidity_2m: [], precipitation: [],
+    rain: [], showers: [], snowfall: [], weather_code: [], cloud_cover: [],
+    visibility: [], wind_speed_10m: [], wind_gusts_10m: [], wind_direction_10m: [],
+    pressure_msl: [], is_day: [],
+  };
+  for (let i = 0; i < n; i++) {
+    const hour = new Date(time[i]).getHours();
+    const diurnal = Math.sin(((hour - 9) / 24) * Math.PI * 2);
+    const storm = Math.sin((i + 5) / 9);
+    const temp = 2 + 9 * diurnal + 4 * Math.sin(i / 13);
+    const foggy = storm < -0.7;
+    let rain = 0, showers = 0, snow = 0, code = 1;
+    if (foggy) code = 45;
+    else if (storm > 0.5) {
+      showers = 0.6 + 2.4 * (storm - 0.5);
+      code = showers > 1.8 ? 82 : showers > 1.0 ? 81 : 80;
+    } else if (storm > 0.1) {
+      rain = 0.15 + 0.75 * storm;
+      code = rain > 0.6 ? 63 : 61;
+    } else code = storm > -0.3 ? 2 : 0;
+    if (temp < 1.2 && rain + showers > 0) {
+      snow = (rain + showers) * 0.8;
+      rain = showers = 0;
+      code = snow > 0.8 ? 75 : snow > 0.3 ? 73 : 71;
+    }
+    const wet = rain + showers + snow;
+    let cloud = foggy ? 95 : clamp(14 + 62 * Math.max(0, storm) + 34 * Math.min(1, wet), 4, 98);
+    if (wet > 0.02) cloud = Math.max(cloud, 62 + 33 * Math.min(1, wet));
+    cloud = Math.round(cloud);
+    h.temperature_2m.push(Math.round(temp * 10) / 10);
+    h.relative_humidity_2m.push(Math.round(clamp(52 + 0.35 * cloud + 14 * Math.min(1, wet) - 10 * diurnal, 28, 99)));
+    h.precipitation.push(Math.round((rain + showers + snow * 0.7) * 100) / 100);
+    h.rain.push(Math.round(rain * 100) / 100);
+    h.showers.push(Math.round(showers * 100) / 100);
+    h.snowfall.push(Math.round(snow * 100) / 100);
+    h.weather_code.push(code);
+    h.cloud_cover.push(cloud);
+    h.visibility.push(Math.round(clamp(26000 - 170 * cloud - 4200 * wet - (foggy ? 24500 : 0), 250, 32000)));
+    h.wind_speed_10m.push(Math.round((1.8 + 5.2 * Math.abs(storm)) * 10) / 10);
+    h.wind_gusts_10m.push(Math.round((1.8 + 5.2 * Math.abs(storm)) * (1.6 + 0.5 * Math.abs(storm)) * 10) / 10);
+    h.wind_direction_10m.push(Math.round(235 + 45 * Math.sin(i / 13)));
+    h.pressure_msl.push(Math.round((1014 + 9 * Math.sin(i / 17) - 10 * Math.max(0, storm)) * 10) / 10);
+    h.is_day.push(hour >= 7 && hour < 21 ? 1 : 0);
+  }
+  return { hourly: h };
+}
+
+async function fetchWeather(lat, lon) {
+  const q = new URL('https://api.open-meteo.com/v1/forecast');
+  q.search = new URLSearchParams({
+    latitude: String(lat), longitude: String(lon),
+    hourly: [
+      'temperature_2m', 'relative_humidity_2m', 'precipitation', 'rain', 'showers',
+      'snowfall', 'weather_code', 'cloud_cover', 'visibility', 'wind_speed_10m',
+      'wind_gusts_10m', 'wind_direction_10m', 'pressure_msl', 'is_day',
+    ].join(','),
+    past_days: '1', forecast_days: '2', timezone: 'auto',
+  }).toString();
+  const r = await fetch(q);
+  if (!r.ok) throw new Error(`meteo ${r.status}`);
+  return r.json();
+}
+
+// --- атмосфера комнаты: шейдеры ----------------------------------------------
+
+// Облачная плита потолка: тайлящийся value-noise, едет по ветру без швов.
+const DECK_VERT = /* glsl */`
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }`;
+const DECK_FRAG = /* glsl */`
+  uniform vec3 uColor;
+  uniform vec2 uDrift;
+  uniform float uCover, uLum;
+  varying vec2 vUv;
+
+  float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+  float vnoise(vec2 p, float period) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    vec2 a = mod(i, period), b = mod(i + 1.0, period);
+    return mix(
+      mix(hash(vec2(a.x, a.y)), hash(vec2(b.x, a.y)), f.x),
+      mix(hash(vec2(a.x, b.y)), hash(vec2(b.x, b.y)), f.x),
+      f.y);
+  }
+
+  void main() {
+    vec2 p = vUv * 7.0 + uDrift;
+    float n = vnoise(p, 7.0) * 0.62 + vnoise(p * 2.3, 16.0) * 0.26 + vnoise(p * 4.7, 33.0) * 0.12;
+    float t = clamp((n - (1.06 - uCover * 1.05)) / 0.22, 0.0, 1.0);
+    float edge = smoothstep(1.0, 0.3, length(vUv - 0.5) * 2.0);
+    gl_FragColor = vec4(uColor * uLum * (0.5 + 0.6 * t), uCover * t * edge * 0.92);
+  }`;
+
+// Мгла — сфера вокруг комнаты: хуже видимость — гуще пелена у пола.
+const HAZE_VERT = /* glsl */`
+  varying float vY;
+  void main() {
+    vY = clamp(normalize(position).y * 0.5 + 0.5, 0.0, 1.0);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }`;
+const HAZE_FRAG = /* glsl */`
+  uniform vec3 uColor;
+  uniform float uFog, uLum;
+  varying float vY;
+  void main() {
+    gl_FragColor = vec4(uColor * uLum, uFog * mix(0.5, 0.05, vY));
+  }`;
+
+// --- конфигурация ------------------------------------------------------------
+
+const CFG = {
+  atm: { x: 3, z: 3, top: 3.4 },      // объём «комнаты» вокруг пользователя
+  drops: 220,                          // пул капель (= квады с анимацией всплеска)
+  snow: 260,                           // снежинки-точки
+  stars: 140,
+  splashFrames: 15, splashSpeed: 2.0,  // спрайт-лист 4×4, weight 0…30
+  deckW: 7,
+  soundUrl: 'https://cdn.jsdelivr.net/gh/xrblocks/assets@main/demos/rain/rain.opus',
+};
+
+const C = {
+  star: new THREE.Color(0xdfeaff),
+  deckDay: new THREE.Color(0x18243a), deckNight: new THREE.Color(0x080e1c),
+  hazeDay: new THREE.Color(0x334861), hazeNight: new THREE.Color(0x11182b),
+  cloudDay: new THREE.Color(0x9fb4cf), cloudNight: new THREE.Color(0x2c3550),
+};
+
+// --- опыт --------------------------------------------------------------------
+
+class WeatherRoom extends xb.Script {
+  init() {
+    this.state = {
+      temp: 8, rh: 65, cloud: 50, wind: 4, gust: 6, wdir: 225, press: 1010,
+      vis: 15000, rain: 0, showers: 0, snow: 0, code: 2, isDay: 1, precip: 0,
+    };
+    this.offset = 0;
+    this.rainK = 0; this.showerK = 0; this.snowK = 0;
+    this.data = null;
+    this.lat = 59.934; this.lon = 30.335;
+    this._fp = 0;
+
+    // Пол-подложка: в VR даёт каплям землю, в AR прячется.
+    this.floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(CFG.atm.x * 3, CFG.atm.z * 3),
+      new THREE.MeshBasicMaterial({ color: 0x1c3a52, transparent: true, opacity: 0.35 })
+    );
+    this.floor.rotation.x = -Math.PI / 2;
+    this.add(this.floor);
+
+    this.buildDeck();
+    this.buildHaze();
+    this.buildStars();
+    this.snow = this.buildSnow();        // меш появится после загрузки текстуры
+    this.drops = null;                   // система дождя — после спрайт-листа
+    this.loadTextures();
+    this.buildCloudVolume();
+
+    this.buildHud();
+    hideInPassthrough([this.hazeMesh, this.deckMesh, this.floor]);
+    this._arGain = 1;
+    const xr = xb.core?.renderer?.xr;
+    const syncArGain = () => { this._arGain = isPassthrough() ? 1.3 : 1; };
+    xr?.addEventListener('sessionstart', syncArGain);
+    xr?.addEventListener('sessionend', syncArGain);
+
+    this.listener = null;
+    this.rainSound = null;
+    this.soundOn = false;
+    this.soundReady = false;
+    this.soundFailed = false;
+
+    this.deckY = 2.3;
+    this.cloud = 0.5;
+    this.fogK = 0;
+    this.dayK = 1;
+    this.lumK = 0.8;
+    this.starK = 0;
+    this.flash = 0;
+    this.flashT = 4;
+    this.drift = new THREE.Vector2();
+    this.deckColorT = C.deckDay.clone();
+    this.hazeColorT = C.hazeDay.clone();
+    this.cloudTint = C.cloudDay.clone();
+    this._cloudTint = new THREE.Color();
+    this._dummy = new THREE.Object3D();
+    this._ndc = new THREE.Vector3();
+    this._camPos = new THREE.Vector3();
+    this._ray = new THREE.Raycaster();
+    this._depthOn = false;
+
+    if (AUTOMATION) {
+      // Headless-прогон (?xrAutomation=1): детерминированная гроза без сети.
+      this.state = {
+        temp: 7, rh: 92, cloud: 94, wind: 8.5, gust: 14, wdir: 225,
+        press: 994, vis: 5000, rain: 1.2, showers: 3.8, snow: 0,
+        code: 95, isDay: 1, precip: 5,
+      };
+      this.derive();
+      this.applyLook();
+      this.ui.sliderLabel.text = 'NOW · DEMO STORM';
+    } else {
+      this.locate();
+    }
+  }
+
+  // HUD — нативный UIOverlay (view-space): канон телефонного AR, работает и
+  // на плоском десктопе до входа в сессию.
+  buildHud() {
+    this.ui = {
+      stat: new xb.UIText({
+        text: 'запрос геопозиции…',
+        style: { fontSize: 14, opacity: 0.8, textAlign: 'center', lineHeight: 1.4 },
+      }),
+      sliderLabel: new xb.UIText({
+        text: 'NOW',
+        style: { fontSize: 15, fontWeight: 'bold', textAlign: 'center' },
+      }),
+    };
+    this.ui.slider = new xb.UISlider({
+      ariaLabel: 'время ±24ч',
+      min: -24, max: 24, step: 1, value: 0,
+      style: { width: '100%', height: 40 },
+      onInput: (v) => { this.offset = v; this.applyHour(); },
+    });
+    this.ui.now = new xb.UIButton({
+      label: 'NOW', icon: 'schedule', style: { flexGrow: 1 },
+      onClick: () => {
+        this.ui.slider.value = 0;
+        this.offset = 0;
+        this.applyHour();
+      },
+    });
+    this.ui.geo = new xb.UIButton({
+      label: 'LOCATE', icon: 'my_location', style: { flexGrow: 1 },
+      onClick: () => this.locate(),
+    });
+    this.ui.sound = new xb.UIButton({
+      label: 'SOUND OFF', icon: 'graphic_eq', style: { flexGrow: 1 },
+      onClick: () => this.toggleSound(),
+    });
+    this.ui.overlay = new xb.UIOverlay({
+      style: {
+        width: 620,
+        position: 'absolute',
+        left: '50%',
+        bottom: 24,
+        transform: { translateX: '-50%' },
+      },
+      children: [
+        new xb.UIText({
+          text: 'WEATHER//ROOM',
+          style: { fontSize: 28, fontWeight: 'bold', textAlign: 'center' },
+        }),
+        this.ui.stat,
+        this.ui.sliderLabel,
+        this.ui.slider,
+        new xb.UIPanel({
+          style: { width: '100%', flexDirection: 'row', gap: 12 },
+          children: [this.ui.now, this.ui.geo, this.ui.sound],
+        }),
+      ],
+    });
+    this.add(this.ui.overlay);
+  }
+
+  stat(s) { this.ui.stat.text = s; }
+
+  // Текстуры официального сэмпла rain — локальные ассеты опыта.
+  loadTextures() {
+    const loader = new THREE.TextureLoader();
+    loader.load('textures/rain_sprite_sheet.png', (t) => {
+      t.colorSpace = THREE.SRGBColorSpace;
+      this.buildDrops(t);
+    });
+    loader.load('textures/snowflake1.png', (t) => {
+      t.colorSpace = THREE.SRGBColorSpace;
+      if (this.snow.mat.uniforms.map) this.snow.mat.uniforms.map.value = t;
+    });
+  }
+
+  // Система дождя: механика samples/advanced/rain. Инстансы квадов;
+  // aWeight 0 = полёт (кадр 0 листа — капля), 1…30 = всплеск на месте
+  // посадки (квад кладётся горизонтально, кадры идут по листу 4×4);
+  // aVisibility гасит каплю за реальной геометрией.
+  buildDrops(texture) {
+    const count = CFG.drops;
+    const geo = new THREE.PlaneGeometry(1, 1);
+    const weights = new Float32Array(count);
+    const visibility = new Float32Array(count).fill(1);
+    geo.setAttribute('aWeight', new THREE.InstancedBufferAttribute(weights, 1)
+      .setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aVisibility', new THREE.InstancedBufferAttribute(visibility, 1)
+      .setUsage(THREE.DynamicDrawUsage));
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      uniforms: {
+        uTexture: { value: texture },
+        uCameraPosition: { value: new THREE.Vector3() },
+        uOpacity: { value: 0.8 },
+        uLit: { value: 1 },
+      },
+      vertexShader: /* glsl */`
+        attribute float aWeight;
+        attribute float aVisibility;
+        varying float vWeight;
+        varying float vVisibility;
+        varying vec2 vUv;
+        uniform vec3 uCameraPosition;
+        void main() {
+          vUv = uv;
+          vWeight = aWeight;
+          vVisibility = aVisibility;
+          vec4 worldPosition = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+          vec3 rotatedPosition;
+          if (vWeight < 1.5) {
+            // Билборд по азимуту: поворот вокруг Y к камере (как в сэмпле).
+            vec3 toCamera = uCameraPosition - worldPosition.xyz;
+            toCamera.y = 0.0;
+            toCamera = normalize(toCamera);
+            float angle = atan(toCamera.x, toCamera.z);
+            mat3 rotationMatrix = mat3(
+              cos(angle), 0.0, -sin(angle),
+              0.0,        1.0,  0.0,
+              sin(angle), 0.0,  cos(angle)
+            );
+            rotatedPosition = rotationMatrix * position;
+          } else {
+            // Всплеск: квад кладётся горизонтально (поворот X на 90°).
+            float angle = 1.5707963;
+            mat3 rotationMatrix = mat3(
+              1.0, 0.0,        0.0,
+              0.0, cos(angle), -sin(angle),
+              0.0, sin(angle),  cos(angle)
+            );
+            rotatedPosition = rotationMatrix * position;
+          }
+          vec4 finalPosition = instanceMatrix * vec4(rotatedPosition, 1.0);
+          gl_Position = projectionMatrix * viewMatrix * finalPosition;
+        }`,
+      fragmentShader: /* glsl */`
+        uniform sampler2D uTexture;
+        uniform float uOpacity;
+        uniform float uLit;
+        varying float vWeight;
+        varying float vVisibility;
+        varying vec2 vUv;
+        void main() {
+          vec2 uv = vUv * 0.25;  // сетка 4×4
+          float frame = floor(vWeight / ${CFG.splashSpeed.toFixed(1)});
+          float xIndex = mod(frame, 4.0);
+          float yIndex = floor(frame / 4.0);
+          uv += vec2(xIndex, 3.0 - yIndex) * 0.25;
+          vec4 c = texture2D(uTexture, uv);
+          float a = c.a * vVisibility * uOpacity;
+          if (a < 0.02) discard;
+          gl_FragColor = vec4(pow(c.rgb, vec3(0.5)) * uLit, a);
+        }`,
+    });
+    const mesh = new THREE.InstancedMesh(geo, mat, count);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    mesh.count = 0;
+    this.add(mesh);
+    const dropMul = new Float32Array(count);
+    const dropSize = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      dropMul[i] = 0.8 + Math.random() * 0.4;
+      dropSize[i] = 0.7 + Math.random() * 0.6;
+    }
+    this.drops = {
+      mesh, mat, count, weights, visibility,
+      weightAttr: geo.attributes.aWeight,
+      visAttr: geo.attributes.aVisibility,
+      active: 0,
+      dropMul, dropSize,
+      pos: new Float32Array(count * 3).fill(-60),
+      fall: 4,
+    };
+    this.applyDropCount();
+  }
+
+  buildSnow() {
+    const count = CFG.snow;
+    const pos = new Float32Array(count * 3).fill(-60);
+    const geo = new THREE.BufferGeometry();
+    const pa = new THREE.BufferAttribute(pos, 3);
+    pa.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', pa);
+    const mat = glowBlending(new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      uniforms: {
+        map: { value: glowSprite() },
+        uSize: { value: 0.05 },
+        uColor: { value: new THREE.Color(0xeef6ff) },
+        uOpacity: { value: 0 },
+      },
+      vertexShader: /* glsl */`
+        varying float vFog;
+        uniform float uSize;
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          float dist = max(0.1, -mv.z);
+          gl_PointSize = uSize * 900.0 / dist;
+          vFog = exp(-dist * 0.12);
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: /* glsl */`
+        varying float vFog;
+        uniform sampler2D map;
+        uniform vec3 uColor;
+        uniform float uOpacity;
+        void main() {
+          float a = texture2D(map, gl_PointCoord).a;
+          gl_FragColor = vec4(uColor * vFog, a * uOpacity);
+        }`,
+    }));
+    const points = new THREE.Points(geo, mat);
+    points.frustumCulled = false;
+    this.add(points);
+    return {
+      count, pos, geo, mat, points, active: 0, posAttr: pa,
+      phase: new Float32Array(count).map(() => Math.random() * Math.PI * 2),
+    };
+  }
+
+  buildStars() {
+    const count = CFG.stars;
+    const pos = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const u = Math.random() * 0.9 + 0.1;
+      const phi = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.max(0, 1 - u * u)) * 5;
+      const ix = i * 3;
+      pos[ix] = Math.cos(phi) * r;
+      pos[ix + 1] = 1.2 + u * 3.8;
+      pos[ix + 2] = Math.sin(phi) * r;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = glowBlending(new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      uniforms: {
+        map: { value: glowSprite() },
+        uSize: { value: 0.03 },
+        uColor: { value: C.star.clone() },
+        uOpacity: { value: 0 },
+      },
+      vertexShader: /* glsl */`
+        varying float vFog;
+        uniform float uSize;
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          float dist = max(0.1, -mv.z);
+          gl_PointSize = uSize * 900.0 / dist;
+          vFog = exp(-dist * 0.06);
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: /* glsl */`
+        varying float vFog;
+        uniform sampler2D map;
+        uniform vec3 uColor;
+        uniform float uOpacity;
+        void main() {
+          float a = texture2D(map, gl_PointCoord).a;
+          gl_FragColor = vec4(uColor * vFog, a * uOpacity);
+        }`,
+    }));
+    const points = new THREE.Points(geo, mat);
+    points.frustumCulled = false;
+    this.add(points);
+    this.stars = { count, pos, geo, mat, points };
+  }
+
+  buildDeck() {
+    this.deckMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      blending: THREE.NormalBlending,
+      uniforms: {
+        uColor: { value: C.deckDay.clone() },
+        uDrift: { value: new THREE.Vector2() },
+        uCover: { value: 0.5 },
+        uLum: { value: 1 },
+      },
+      vertexShader: DECK_VERT, fragmentShader: DECK_FRAG,
+    });
+    this.deckMesh = new THREE.Mesh(new THREE.PlaneGeometry(CFG.deckW, CFG.deckW), this.deckMat);
+    this.deckMesh.rotation.x = Math.PI / 2;
+    this.deckMesh.position.y = 2.3;
+    this.add(this.deckMesh);
+  }
+
+  buildHaze() {
+    this.hazeMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, side: THREE.BackSide,
+      blending: THREE.NormalBlending,
+      uniforms: { uColor: { value: C.hazeDay.clone() }, uFog: { value: 0 }, uLum: { value: 1 } },
+      vertexShader: HAZE_VERT, fragmentShader: HAZE_FRAG,
+    });
+    this.hazeMesh = new THREE.Mesh(new THREE.SphereGeometry(5.2, 24, 16), this.hazeMat);
+    this.hazeMesh.position.y = 1;
+    this.hazeMesh.renderOrder = -5;
+    this.add(this.hazeMesh);
+  }
+
+  // Объёмное облако — официальный аддон, как в сэмпле rain. В alpha-blend
+  // passthrough не показывается (premultiplied-контракт), плита остаётся.
+  buildCloudVolume() {
+    const cloud = new VolumetricCloud();
+    cloud.mesh.scale.set(4.6, 0.85, 4.6);
+    cloud.mesh.renderOrder = -2;
+    cloud.mesh.material.depthWrite = false;
+    cloud.mesh.material.uniforms.steps.value = 28;
+    cloud.visible = false;
+    this.add(cloud);
+    this.cloudVolume = cloud;
+  }
+
+  // --- звук: жест SOUND → буфер официального ассета, громкость от осадков ---
+
+  toggleSound() {
+    if (this.soundOn) {
+      this.soundOn = false;
+      this.ui.sound.label = 'SOUND OFF';
+      return;
+    }
+    this.soundOn = true;
+    this.ui.sound.label = this.soundReady ? 'SOUND ON' : 'SOUND …';
+    this.ensureAudio();
+    this.playRain();
+  }
+
+  ensureAudio() {
+    if (this.listener) return;
+    const camera = xb.core?.camera;
+    if (!camera) {
+      this.soundOn = false;
+      this.soundFailed = true;
+      this.ui.sound.label = 'SOUND OFF';
+      return;
+    }
+    this.listener = new THREE.AudioListener();
+    camera.add(this.listener);
+    this.rainSound = new THREE.Audio(this.listener);
+    new THREE.AudioLoader().load(
+      CFG.soundUrl,
+      (buffer) => {
+        this.soundReady = true;
+        this.rainSound.setBuffer(buffer);
+        this.rainSound.setLoop(true);
+        this.rainSound.setVolume(0);
+        if (this.soundOn) {
+          this.playRain();
+          this.ui.sound.label = 'SOUND ON';
+        }
+      },
+      undefined,
+      () => {
+        this.soundFailed = true;
+        this.soundOn = false;
+        this.ui.sound.label = 'SOUND OFF';
+      }
+    );
+  }
+
+  playRain() {
+    if (!this.soundOn || !this.soundReady || !this.rainSound) return;
+    const context = this.listener.context;
+    if (context.state === 'suspended') void context.resume();
+    if (!this.rainSound.isPlaying) this.rainSound.play();
+  }
+
+  // --- данные и погодная моторика ---------------------------------------------
+
+  locate() {
+    if (!navigator.geolocation) return this.load(this.lat, this.lon);
+    this.stat('LOCATING…');
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        this.lat = +p.coords.latitude.toFixed(3);
+        this.lon = +p.coords.longitude.toFixed(3);
+        this.load(this.lat, this.lon);
+      },
+      () => this.load(this.lat, this.lon),
+      { timeout: 6000 }
+    );
+  }
+
+  async load(lat, lon) {
+    this.stat(`METEO ${lat.toFixed(2)}, ${lon.toFixed(2)} …`);
+    try {
+      this.data = await fetchWeather(lat, lon);
+      this.stat(`LIVE · OPEN-METEO · ${lat.toFixed(2)}, ${lon.toFixed(2)}`);
+    } catch (e) {
+      this.data = demoData();
+      this.stat(`OFFLINE DEMO (no network): ${e.message}`);
+    }
+    this.applyHour();
+  }
+
+  nowIndex() {
+    const t = this.data.hourly.time;
+    const now = Date.now();
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < t.length; i++) {
+      const d = Math.abs(Date.parse(t[i]) - now);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  applyHour() {
+    if (!this.data?.hourly) return;
+    const h = this.data.hourly;
+    const i = Math.min(h.time.length - 1, Math.max(0, this.nowIndex() + this.offset));
+    const g = (key, d = 0) => num(h[key] && h[key][i], d);
+    const rain = g('rain');
+    const showers = g('showers');
+    this.state = {
+      temp: g('temperature_2m', 8),
+      rh: g('relative_humidity_2m', 65),
+      cloud: g('cloud_cover', 50),
+      wind: g('wind_speed_10m', 4),
+      gust: g('wind_gusts_10m', num(h.wind_speed_10m && h.wind_speed_10m[i], 4) * 1.6),
+      wdir: g('wind_direction_10m', 225),
+      press: g('pressure_msl', 1010),
+      vis: g('visibility', 15000),
+      rain, showers, snow: g('snowfall'),
+      code: Math.round(g('weather_code', 2)),
+      isDay: g('is_day', 1) > 0.5 ? 1 : 0,
+      precip: g('precipitation', rain + showers),
+    };
+    this.derive();
+    this.applyLook();
+    const when = new Date(Date.parse(h.time[i]));
+    this.ui.sliderLabel.text =
+      `${this.offset === 0 ? 'NOW · ' : ''}${when.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} ` +
+      `· ${this.offset >= 0 ? '+' : ''}${this.offset}h`;
+  }
+
+  // Поля ответа → параметры сцены.
+  derive() {
+    const s = this.state;
+    this.deckY = clamp(1.75 + ((s.press - 990) / 40) * 1.5, 1.5, 3.3);
+    let fog = Math.pow(1 - Math.min(s.vis, 12000) / 12000, 2.2);
+    if (s.code === 45 || s.code === 48) fog = Math.max(fog, 0.72);
+    this.fogK = clamp(fog, 0, 1);
+    this.dayK = s.isDay ? 1 : 0.34;
+    const cloud01 = clamp(s.cloud / 100, 0, 1);
+    this.lumK = clamp(this.dayK * (1 - cloud01 * 0.5) * (1 - this.fogK * 0.45), 0.22, 1);
+    this.rainK = clamp(s.rain / 0.6, 0, 1);
+    this.showerK = clamp(s.showers / 3, 0, 1);
+    this.snowK = clamp(s.snow / 1.2, 0, 1);
+    this.starK = (1 - s.isDay) * Math.pow(1 - cloud01, 1.5) * (1 - this.fogK);
+  }
+
+  applyLook() {
+    this.cloudT = clamp(this.state.cloud / 100, 0, 1);
+    this.deckColorT.copy(this.state.isDay ? C.deckDay : C.deckNight);
+    this.hazeColorT.copy(this.state.isDay ? C.hazeDay : C.hazeNight);
+    this.cloudTint.copy(this.state.isDay ? C.cloudDay : C.cloudNight);
+    this.applyDropCount();
+    // Снег: активные точки пересчитываются прямо в буфере.
+    if (this.snow) {
+      const n = Math.round(this.snowK * this.snow.count);
+      const p = this.snow.pos;
+      for (let i = this.snow.active; i < n; i++) {
+        const ix = i * 3;
+        p[ix] = (Math.random() * 2 - 1) * CFG.atm.x;
+        p[ix + 1] = Math.random() * CFG.atm.top;
+        p[ix + 2] = (Math.random() * 2 - 1) * CFG.atm.z;
+      }
+      for (let i = n; i < this.snow.active; i++) p[i * 3 + 1] = -60;
+      this.snow.active = n;
+      this.snow.posAttr.needsUpdate = true;
+    }
+  }
+
+  applyDropCount() {
+    if (!this.drops) return;
+    const wet = clamp(this.rainK * 0.6 + this.showerK * 0.75, 0, 1);
+    const n = Math.round(wet * this.drops.count);
+    for (let i = this.drops.active; i < n; i++) this.respawnDrop(i, false);
+    for (let i = n; i < this.drops.active; i++) {
+      this.drops.pos[i * 3 + 1] = -60;
+      this.drops.weights[i] = 0;
+      this.drops.visibility[i] = 0;
+    }
+    this.drops.active = n;
+    this.drops.mesh.count = n;
+    this.drops.weightAttr.needsUpdate = true;
+    this.drops.visAttr.needsUpdate = true;
+  }
+
+  // --- дождь: шаг системы (механика сэмпла + погодная моторика) ---------------
+
+  depthLive() {
+    const depth = xb.core?.depth;
+    const mesh = depth?.depthMesh;
+    if (!depth || !mesh || depth.depthArray?.[0] === undefined) return false;
+    const min = mesh.minDepth;
+    return typeof min === 'number' && min > 0.1 && min < 8;
+  }
+
+  respawnDrop(i, randomY = true) {
+    const D = this.drops;
+    const ix = i * 3;
+    D.weights[i] = 0;
+    D.visibility[i] = 1;
+    // 10% капель рождается прямо на реальной геометрии лучом из камеры —
+    // дождь идёт сквозь настоящий объём комнаты (как в сэмпле).
+    if (this.depthLive() && Math.random() < 0.1) {
+      this._ndc.set(Math.random() * 1.6 - 0.8, Math.random() * 1.6 - 0.8, 0.5).unproject(xb.core.camera);
+      this._ray.set(xb.core.camera.position, this._ndc.sub(xb.core.camera.position).normalize());
+      const hits = this._ray.intersectObject(xb.core.depth.depthMesh);
+      if (hits.length) {
+        D.pos[ix] = hits[0].point.x;
+        D.pos[ix + 1] = clamp(hits[0].point.y + 0.02, 0.02, CFG.atm.top);
+        D.pos[ix + 2] = hits[0].point.z;
+        return;
+      }
+    }
+    D.pos[ix] = (Math.random() * 2 - 1) * CFG.atm.x;
+    D.pos[ix + 1] = randomY
+      ? 0.2 + Math.random() * (this.deckY - 0.2)
+      : this.deckY;
+    D.pos[ix + 2] = (Math.random() * 2 - 1) * CFG.atm.z;
+  }
+
+  stepDrops(dt, camera) {
+    const D = this.drops;
+    if (!D || !D.active) return;
+    const s = this.state;
+    const depth = this.depthLive() ? xb.core.depth : null;
+    const depthMesh = depth?.depthMesh;
+    const fallBase = 2.6 + 1.8 * this.rainK + 2.2 * this.showerK;
+    D.fall += (fallBase - D.fall) * Math.min(1, dt * 2);
+    const a = ((s.wdir + 180) % 360) * Math.PI / 180;
+    const wx = Math.sin(a) * s.wind * 0.06;
+    const wz = -Math.cos(a) * s.wind * 0.06;
+    const dropScale = 0.075 * (1 + 0.3 * this.showerK);
+    const camWorld = camera.matrixWorldInverse;
+    const dummy = this._dummy;
+    for (let i = 0; i < D.active; i++) {
+      const ix = i * 3;
+      let x = D.pos[ix], y = D.pos[ix + 1], z = D.pos[ix + 2];
+      if (D.weights[i] < 0.5) {
+        x += wx * dt;
+        z += wz * dt;
+        y -= D.fall * D.dropMul[i] * dt;
+      }
+      // Depth-окклюзия (как в сэмпле): капля за реальной геометрией гаснет,
+      // встретив её на своём луче — начинает всплеск в точке встречи.
+      let visibility = 1;
+      if (depth) {
+        this._ndc.set(x, y, z).project(camera);
+        const inFov = this._ndc.z > 0 && this._ndc.z < 1 &&
+          Math.abs(this._ndc.x) < 0.9 && Math.abs(this._ndc.y) < 0.9;
+        if (inFov) {
+          const d = depth.getDepth((this._ndc.x + 1) / 2, (this._ndc.y + 1) / 2);
+          this._camPos.set(x, y, z).applyMatrix4(camWorld);
+          const dist = -this._camPos.z;
+          const occluded = d === 0 || d < dist;
+          if (occluded) {
+            visibility = clamp(0.6 - Math.abs(dist - d), 0, 0.6);
+            if (D.weights[i] === 0 && y <= 2.0) D.weights[i] = 1;
+          }
+        } else {
+          visibility = 0;
+        }
+      }
+      // Пол: посадка и всплеск.
+      if (y <= 0) {
+        y = 0;
+        if (D.weights[i] < 0.5) D.weights[i] = 1;
+      }
+      if (D.weights[i] > 0) D.weights[i] += dt * 60;
+      if (D.weights[i] > CFG.splashFrames * CFG.splashSpeed) {
+        this.respawnDrop(i, false);
+        x = D.pos[ix]; y = D.pos[ix + 1]; z = D.pos[ix + 2];
+        visibility = 1;
+      }
+      D.pos[ix] = x; D.pos[ix + 1] = y; D.pos[ix + 2] = z;
+      D.visibility[i] = visibility;
+      dummy.position.set(x, y, z);
+      const w = D.weights[i];
+      const size = dropScale * D.dropSize[i] * (w > 0 ? 1.6 : 1);
+      dummy.scale.set(size, size, 1);
+      dummy.updateMatrix();
+      D.mesh.setMatrixAt(i, dummy.matrix);
+    }
+    D.mesh.instanceMatrix.needsUpdate = true;
+    D.weightAttr.needsUpdate = true;
+    D.visAttr.needsUpdate = true;
+    D.mat.uniforms.uCameraPosition.value.copy(camera.position);
+  }
+
+  stepSnow(dt) {
+    const S = this.snow;
+    if (!S || !S.active) return;
+    const st = this.state;
+    const a = ((st.wdir + 180) % 360) * Math.PI / 180;
+    const wx = Math.sin(a) * st.wind * 0.4;
+    const wz = -Math.cos(a) * st.wind * 0.4;
+    const t = performance.now() * 0.001;
+    const fall = 0.35 + 0.25 * this.snowK;
+    const p = S.pos, ph = S.phase;
+    for (let i = 0; i < S.active; i++) {
+      const ix = i * 3, an = ph[i];
+      let x = p[ix] + (wx + Math.sin(t * 1.3 + an) * 0.22) * dt;
+      let z = p[ix + 2] + (wz + Math.cos(t * 1.1 + an * 1.7) * 0.22) * dt;
+      let y = p[ix + 1] - (fall + Math.sin(t * 2.1 + an * 2.3) * 0.06) * dt;
+      if (y <= 0) {
+        x = (Math.random() * 2 - 1) * CFG.atm.x;
+        y = CFG.atm.top;
+        z = (Math.random() * 2 - 1) * CFG.atm.z;
+      }
+      if (x > CFG.atm.x) x -= CFG.atm.x * 2; else if (x < -CFG.atm.x) x += CFG.atm.x * 2;
+      if (z > CFG.atm.z) z -= CFG.atm.z * 2; else if (z < -CFG.atm.z) z += CFG.atm.z * 2;
+      p[ix] = x; p[ix + 1] = y; p[ix + 2] = z;
+    }
+    S.posAttr.needsUpdate = true;
+  }
+
+  condition() {
+    const s = this.state;
+    if (s.snow > 0.05 && s.code < 70) return 'SNOW';
+    if (s.rain + s.showers > 0.05 && s.code < 50) return 'RAIN';
+    return conditionName(s.code);
+  }
+
+  update() {
+    const dt = Math.min(xb.getDeltaTime(), 0.05);
+    const s = this.state;
+    const camera = xb.getXrCameraLeft?.() || xb.core.camera;
+
+    // Гроза: редкие вспышки поверх всего.
+    if (s.code >= 95) {
+      this.flashT -= dt;
+      if (this.flashT <= 0) { this.flash = 1; this.flashT = 3.5 + Math.random() * 6; }
+    }
+    this.flash = Math.max(0, this.flash - dt * 3.2);
+
+    this.stepDrops(dt, camera);
+    this.stepSnow(dt);
+    this._depthOn = this.depthLive();
+
+    const k = Math.min(1, dt * 2.2);
+    const lit = this.lumK * (1 + this.flash * 0.9) * this._arGain;
+
+    // Слои: плавная подстройка к целям текущего часа.
+    if (this.drops) {
+      const u = this.drops.mat.uniforms;
+      u.uLit.value += ((0.55 + 0.75 * lit) - u.uLit.value) * k;
+      u.uOpacity.value += ((0.55 + 0.4 * (this.rainK * 0.6 + this.showerK)) - u.uOpacity.value) * k;
+    }
+    if (this.snow) {
+      this.snow.mat.uniforms.uOpacity.value +=
+        ((this.snowK > 0.02 ? 0.6 + 0.3 * this.snowK : 0) * (0.5 + 0.6 * lit)
+          - this.snow.mat.uniforms.uOpacity.value) * k;
+    }
+    this.stars.mat.uniforms.uOpacity.value += (this.starK - this.stars.mat.uniforms.uOpacity.value) * k;
+
+    // Облачная плита: плотность, высота, дрейф по ветру.
+    this.cloud += (this.cloudT - this.cloud) * k;
+    this.deckMat.uniforms.uCover.value = this.cloud;
+    this.deckMat.uniforms.uColor.value.lerp(this.deckColorT, k);
+    this.deckMat.uniforms.uLum.value = lit * (1 - 0.7 * this.fogK);
+    this.deckMesh.position.y = this.deckY;
+    const a = ((s.wdir + 180) % 360) * Math.PI / 180;
+    this.drift.x = (this.drift.x + Math.sin(a) * s.wind * dt * 0.012) % 6;
+    this.drift.y = (this.drift.y - Math.cos(a) * s.wind * dt * 0.012) % 6;
+    this.deckMat.uniforms.uDrift.value.copy(this.drift);
+
+    // Мгла.
+    this.hazeMat.uniforms.uFog.value += (this.fogK - this.hazeMat.uniforms.uFog.value) * k;
+    this.hazeMat.uniforms.uColor.value.lerp(this.hazeColorT, k);
+    this.hazeMat.uniforms.uLum.value = 0.35 + 0.65 * this.dayK + this.flash * 0.3;
+
+    // Объёмное облако: официальный аддон; в passthrough не ставится.
+    if (this.cloudVolume) {
+      const v = this.cloudVolume;
+      v.visible = !isPassthrough() && this.cloud > 0.15;
+      if (v.visible) {
+        v.position.y = this.deckY;
+        v.update(camera, xb.core.depth);
+        const u = v.mesh.material.uniforms;
+        this._cloudTint.copy(this.cloudTint).multiplyScalar(0.45 + 0.75 * this.lumK);
+        u.base.value.lerp(this._cloudTint, k);
+        u.threshold.value = 0.27 - 0.15 * this.cloud;
+        u.opacity.value = (0.12 + 0.38 * this.cloud) * (1 - 0.45 * this.fogK) * (1 + this.flash * 0.4);
+      }
+    }
+
+    // Громкость дождя — от интенсивности осадков текущего часа.
+    if (this.soundOn && this.rainSound && this.soundReady) {
+      const wet = clamp(this.rainK * 0.6 + this.showerK * 0.75 + this.snowK * 0.35, 0, 1);
+      this.rainSound.setVolume(wet < 0.02 ? 0 : 0.12 + 0.5 * wet);
+    }
+
+    // Телеметрия дважды в секунду.
+    this._fp += dt;
+    if (this._fp > 0.5) {
+      this._fp = 0;
+      const vis = s.vis >= 1000 ? `${(s.vis / 1000).toFixed(1)} km` : `${Math.round(s.vis)} m`;
+      const sound = this.soundOn ? (this.soundReady ? 'on' : 'loading') : this.soundFailed ? 'unavailable' : 'off';
+      this.stat(
+        `${this.condition()} · ${s.temp.toFixed(1)}°C · wind ${s.wind.toFixed(1)} m/s ${dirName(s.wdir)}, gust ${s.gust.toFixed(1)} · ` +
+        `cloud ${Math.round(s.cloud)}% · rh ${Math.round(s.rh)}% · vis ${vis} · ${Math.round(s.press)} hPa · ` +
+        `rain ${s.rain.toFixed(2)} · showers ${s.showers.toFixed(2)} · snow ${s.snow.toFixed(2)} cm/h · ` +
+        `drops ${this.drops?.active ?? 0} · snowflakes ${this.snow?.active ?? 0} · ` +
+        `depth ${this._depthOn ? 'live' : 'off'} · sound ${sound}`
+      );
+    }
+  }
+
+  dispose() {
+    if (this.drops) {
+      this.drops.geo.dispose();
+      this.drops.mat.dispose();
+      this.remove(this.drops.mesh);
+      this.drops = null;
+    }
+    for (const S of [this.snow, this.stars]) {
+      if (!S) continue;
+      S.geo.dispose();
+      S.mat.dispose();
+      this.remove(S.points);
+    }
+    this.deckMesh.geometry.dispose();
+    this.deckMat.dispose();
+    this.hazeMesh.geometry.dispose();
+    this.hazeMat.dispose();
+    this.floor.geometry.dispose();
+    this.floor.material.dispose();
+    if (this.cloudVolume) {
+      const { material, geometry } = this.cloudVolume.mesh;
+      material.uniforms.map.value?.dispose();
+      material.dispose();
+      geometry.dispose();
+      this.remove(this.cloudVolume);
+      this.cloudVolume = null;
+    }
+    if (this.rainSound) {
+      if (this.rainSound.isPlaying) this.rainSound.stop();
+      this.rainSound.disconnect();
+      this.rainSound = null;
+    }
+    if (this.listener) {
+      xb.core?.camera?.remove(this.listener);
+      this.listener = null;
+    }
+  }
+}
+
+const options = new xb.Options();
+options.enableReticles();
+options.enablePlaneDetection();
+// Depth — источник реальных поверхностей: капли гаснут за геометрией и
+// всплескиваются на ней. Где сенсора нет (телефон), installXrGuards повторяет
+// requestSession без depth-sensing — дождь остаётся на полу y=0.
+options.enableDepth();
+options.world?.enableAnchors?.();
+options.world.planes.showDebugVisualizations = DEBUG;
+options.xrButton.showEnterSimulatorButton = true;
+options.setAppTitle('WEATHER//ROOM');
+options.setAppDescription('Погода снаружи — тело комнаты. Каждое поле метео видно глазом.');
+
+installXrGuards();
+if (AUTOMATION) document.body.classList.add('automation');
+
+document.addEventListener('DOMContentLoaded', () => {
+  xb.add(new WeatherRoom());
+  xb.init(options);
+  watchXrButton([
+    'Вход — кнопка по центру: погода встанет вокруг тебя',
+    'Слайдер — время −24…+24 ч, LOCATE — погода в твоей точке',
+    'SOUND — звук дождя по интенсивности часа, включается жестом',
+    'Капли всплескиваются на реальных поверхностях (depth) и на полу',
+  ]);
+});
+</script>
 </body>
 </html>

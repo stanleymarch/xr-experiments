@@ -1,6 +1,0 @@
-{
-  "title": "CITY//ORBIT",
-  "description": "Your OpenStreetMap neighbourhood as a hologram: major and minor streets, building footprints with real storey heights, water and green surfaces, and six curated landmark categories (heritage, monument, religious, museum, sight, nature). Cafes, shops, hotels and city infrastructure are never queried. Tap a landmark to raise a card with its category, name, distance and OSM id; spread two pinches to scale the radius 200 m — 1 km — 5 km.",
-  "description_ru": "Твой район из OpenStreetMap как голограмма: главные и второстепенные улицы, контуры домов с настоящей этажностью, вода и зелень, шесть осмысленных категорий мест (наследие, памятник, религия, музей, достопримечательность, природа). Кафе, лавки, отели и городская инфраструктура не запрашиваются вовсе. Тап по знаку поднимает карточку с категорией, названием, дистанцией и id OSM; разведение рук в pinch меняет радиус 200 м — 1 км — 5 км.",
-  "tags": ["overpass", "geolocation", "hologram", "openstreetmap", "landmarks"]
-}

@@ -1,6 +1,0 @@
-{
-  "title": "SOUND//SPACE",
-  "description": "The microphone builds a glowing frequency architecture around you; speech, music and claps read differently in the relief. FREEZE collects a gallery of up to five snapshots: drag to move, drag the ring to rotate, hold or squeeze to dissolve. Without a mic a demo generator runs.",
-  "description_ru": "Микрофон строит светящуюся частотную архитектуру вокруг тебя: речь, музыка и хлопок читаются по рельефу. FREEZE копит галерею до пяти снимков: перенос телом, поворот кольцом, удержание или squeeze — растворить. Без микрофона работает демо-генератор.",
-  "tags": ["web-audio", "fft", "mic"]
-}

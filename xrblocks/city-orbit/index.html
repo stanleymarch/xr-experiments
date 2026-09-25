@@ -57,11 +57,14 @@
 <script type="module">
 // CITY//ORBIT — свежая реализация по официальному пути XR Blocks.
 //
-// ИДЕЯ: город вокруг тебя. Геопозиция → один запрос Overpass API (OSM, без
-// ключа) берёт здания в радиусе 400 м → каждый полигон сжимается в
+// ИДЕЯ: город вокруг тебя — голограммой. Геопозиция → один запрос Overpass API
+// (OSM, без ключа) берёт здания в радиусе 400 м → каждый полигон сжимается в
 // ориентированный прямоугольник → весь район становится ОДНИМ объектом:
-// один InstancedMesh, который можно перенести, повернуть за кольцо и
-// увеличить вторым источником — от макета на столе до улиц вокруг тебя.
+// один InstancedMesh (unlit, аддитив), который можно перенести, повернуть за
+// кольцо и увеличить вторым источником — от макета на столе до улиц вокруг
+// тебя. Света в сцене нет: голограмма самосветится градиентом по высоте,
+// кромками граней и fresnel'ом, а сетка-земля, глифы на крышах и скан-полоса
+// во время манипуляции держат образ «данных», а не «застройки».
 // Нет сети, нет разрешений, нет данных — детерминированный синтетический
 // квартал (DEMO), так что опыт остаётся полным в любом окружении.
 //
@@ -165,8 +168,6 @@ function watchXrButton(hints = []) {
 }
 
 // --- числа и детерминизм ----------------------------------------------------
-
-const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 // Детерминированный ПСЧ: синтетический квартал обязан быть одинаковым в каждом
 // прогоне (в т.ч. в автоматизации) — иначе прогон нечем сравнивать.
@@ -351,6 +352,90 @@ function demoQuarter(seed = 20260925) {
   return out;
 }
 
+// --- POI: второй, лёгкий запрос ---------------------------------------------
+
+// POI-слой отвечает на «что вокруг меня»: те же 400 м, но только именованные
+// точки — кафе, аптеки, метро, магазины, достопримечательности.
+const POI_KEYS = ['amenity', 'shop', 'tourism', 'leisure', 'railway'];
+const POI_LIMIT = 30;                 // ближайших: больше на макете не различить
+const POI_TIMEOUT = 9000;             // мс: слой необязательный, город ждать не должен
+const POI_LABELS = 9;                 // столько подписей держим одновременно
+const POI_CARD_OFFSET = new THREE.Vector3(0.24, 0.12, 0);
+const ROSE = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+// Тип POI → человеческое имя и цвет маркера: обстановка на радаре, а не каталог.
+const POI_KINDS = {
+  cafe: ['кафе', 0xffc46b], restaurant: ['еда', 0xffc46b], fast_food: ['еда', 0xffc46b],
+  bar: ['бар', 0xff9e6b], pub: ['бар', 0xff9e6b],
+  pharmacy: ['аптека', 0x7ef0b0], hospital: ['больница', 0x7ef0b0], clinic: ['клиника', 0x7ef0b0],
+  subway: ['метро', 0x8f7bff], station: ['вокзал', 0x8f7bff], tram_stop: ['трамвай', 0x8f7bff],
+  supermarket: ['магазин', 0x6fe3ff], convenience: ['магазин', 0x6fe3ff], bakery: ['пекарня', 0x6fe3ff],
+  museum: ['музей', 0xff8fd1], attraction: ['место', 0xff8fd1], hotel: ['отель', 0xff8fd1],
+  park: ['парк', 0x9fe8a0], garden: ['сад', 0x9fe8a0],
+};
+const poiKind = (kind) => POI_KINDS[kind] || [String(kind || 'точка'), 0xc9f4ff];
+
+function overpassPoiQuery(lat, lon) {
+  const parts = POI_KEYS.map((k) => `  node["${k}"](around:${RADIUS},${lat},${lon});`).join('\n');
+  return `[out:json][timeout:20];\n(\n${parts}\n);\nout body 240;`;
+}
+
+async function fetchPois(lat, lon, signal) {
+  const r = await fetch(OVERPASS_URL, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'},
+    body: 'data=' + encodeURIComponent(overpassPoiQuery(lat, lon)),
+    signal,
+  });
+  if (!r.ok) throw new Error(`overpass ${r.status}`);
+  return r.json();
+}
+
+// Узлы → ближайшие именованные точки. Безымянная точка ничего не говорит,
+// поэтому она отбрасывается: подпись — половина смысла слоя.
+function parsePois(json, site) {
+  const out = [];
+  for (const el of json?.elements || []) {
+    const tags = el.tags;
+    if (el.type !== 'node' || !tags || !tags.name) continue;
+    const kind = POI_KEYS.map((key) => tags[key]).find(Boolean);
+    const p = project(el.lat, el.lon, site);
+    const d = Math.hypot(p.x, p.z);
+    if (d > RADIUS * 1.05) continue;
+    out.push({name: tags.name, kind, cx: p.x, cz: p.z, d});
+  }
+  out.sort((a, b) => a.d - b.d);
+  return out.slice(0, POI_LIMIT);
+}
+
+// Синтетические POI для демо и автоматизации: берём вершины того же
+// детерминированного квартала, поэтому офлайн-опыт остаётся полным, а прогон —
+// сравнимым между запусками.
+const DEMO_POIS = [
+  ['кафе «Орбита»', 'cafe'], ['аптека', 'pharmacy'], ['метро «Центральная»', 'subway'],
+  ['магазин у дома', 'convenience'], ['музей города', 'museum'], ['парк у реки', 'park'],
+  ['пекарня', 'bakery'], ['отель «Север»', 'hotel'], ['бар «Штиль»', 'bar'],
+  ['клиника', 'clinic'], ['трамвай', 'tram_stop'], ['ресторан', 'restaurant'],
+  ['сквер', 'garden'], ['вокзал', 'station'],
+];
+function demoPois(records) {
+  const out = [];
+  const step = Math.max(1, Math.floor(records.length / DEMO_POIS.length));
+  for (let i = 0, n = 0; i < records.length && n < DEMO_POIS.length; i += step, n++) {
+    const b = records[i];
+    const [name, kind] = DEMO_POIS[n % DEMO_POIS.length];
+    out.push({name, kind, cx: b.cx, cz: b.cz, d: Math.hypot(b.cx, b.cz)});
+  }
+  out.sort((a, b) => a.d - b.d);
+  return out;
+}
+
+// Азимут от центра города (центр = геопозиция пользователя) в румбах.
+function poiAzimuth(p) {
+  const deg = (Math.atan2(p.cx, -p.cz) * 180) / Math.PI;
+  return {deg: (deg + 360) % 360, rose: ROSE[Math.round(((deg + 360) % 360) / 45) % 8]};
+}
+
 // --- геометрия опыта --------------------------------------------------------
 
 const BASE_SCALE = 0.0018;        // 400 м радиуса → 72 см: город-макет на столе
@@ -358,11 +443,141 @@ const SCALE_MIN = 0.0006;         // ×0.33 — модель в кулаке
 const SCALE_MAX = 0.25;           // ×139 — 100 м радиуса: кварталы вокруг тебя
 const ORBIT_R = 430;              // кольцо вращения, м города
 const PAD_IN = 470, PAD_OUT = 620;// полоса переноса, м города
+// Голограмма города: unlit и аддитив — glowBlending держит premultiplied-
+// контракт телефона (см. шапку файла). Цвет — градиент по высоте от бирюзы к
+// светлому голубому; объём дают кромка грани и fresnel, а не свет; скан-полоса
+// бежит по высоте, пока город держат в руках.
+function makeCityMaterial() {
+  return glowBlending(new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    uniforms: {
+      uLow: {value: new THREE.Color(0x54d6ff)},
+      uHigh: {value: new THREE.Color(0x9fe8ff)},
+      uOpacity: {value: 0.62},
+      uMaxHeight: {value: 80},
+      uScan: {value: 0},
+      uScanOn: {value: 0},
+    },
+    vertexShader: /* glsl */`
+      uniform float uMaxHeight;
+      varying float vHeight;
+      varying vec3 vNormalW;
+      varying vec3 vWorld;
+      varying vec2 vUvF;
+      void main() {
+        vUvF = uv;
+        vec4 local = vec4(position, 1.0);
+        vec3 nrm = normal;
+        #ifdef USE_INSTANCING
+          local = instanceMatrix * local;
+          nrm = mat3(instanceMatrix) * nrm;
+        #endif
+        vHeight = local.y;                       // высота над землёй города, м
+        vNormalW = normalize(mat3(modelMatrix) * nrm);
+        vec4 world = modelMatrix * local;
+        vWorld = world.xyz;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform vec3 uLow;
+      uniform vec3 uHigh;
+      uniform float uOpacity;
+      uniform float uMaxHeight;
+      uniform float uScan;
+      uniform float uScanOn;
+      varying float vHeight;
+      varying vec3 vNormalW;
+      varying vec3 vWorld;
+      varying vec2 vUvF;
+      void main() {
+        float k = clamp(vHeight / uMaxHeight, 0.0, 1.0);
+        vec3 tint = mix(uLow, uHigh, pow(k, 0.8));
+        // Этажная линия каждые 14 м: дом читается домом, а не кубом.
+        float f = fract(vHeight / 14.0);
+        float floorLine = 1.0 - smoothstep(0.0, 0.05, min(f, 1.0 - f));
+        // Кромка грани (по UV) и fresnel: светлый контур вместо освещения.
+        vec2 e = min(vUvF, 1.0 - vUvF);
+        float rim = 1.0 - smoothstep(0.0, 0.05, min(e.x, e.y));
+        vec3 view = normalize(cameraPosition - vWorld);
+        float fres = pow(1.0 - abs(dot(normalize(vNormalW), view)), 2.5);
+        // Скан во время манипуляции: лента, бегущая по высоте города.
+        float band = 0.0;
+        if (uScanOn > 0.001) {
+          band = exp(-pow((vHeight - uScan * uMaxHeight) / 20.0, 2.0)) * uScanOn;
+        }
+        vec3 col = tint * (0.7 + 0.5 * floorLine + 0.45 * rim) + vec3(0.85, 0.95, 1.0) * band;
+        float alpha = uOpacity * (0.4 + 0.6 * k) + 0.28 * rim + 0.22 * fres +
+                      0.3 * floorLine + 0.75 * band;
+        gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
+      }`,
+  }));
+}
 
+// Земля-сетка под городом: тонкая шейдерная сетка на диске, мягкая кромка и
+// отметка границы района. Аддитив, поэтому в AR она честно читается как
+// голограмма, а не как нарисованный пол (в alpha-blend её всё равно прячем).
+function makeGridMaterial(radius) {
+  return glowBlending(new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    uniforms: {
+      uColor: {value: new THREE.Color(0x54d6ff)},
+      uRadius: {value: radius},
+      uGlow: {value: 1},
+    },
+    vertexShader: /* glsl */`
+      varying vec2 vXZ;
+      void main() {
+        vXZ = position.xz;                       // геометрия уже уложена в XZ
+        gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */`
+      uniform vec3 uColor;
+      uniform float uRadius;
+      uniform float uGlow;
+      varying vec2 vXZ;
+      float gridLine(vec2 p, float cell, float width) {
+        vec2 g = abs(fract(p / cell) - 0.5);
+        return 1.0 - smoothstep(0.0, width, min(g.x, g.y) * cell);
+      }
+      void main() {
+        float r = length(vXZ);
+        // Крупная квартальная сетка по всей подложке, мелкая — только у центра:
+        // дальше она всё равно не разрешается и даёт рябь.
+        float g = gridLine(vXZ, 100.0, 1.6) +
+                  gridLine(vXZ, 25.0, 1.0) * 0.35 * (1.0 - smoothstep(70.0, 260.0, r));
+        float fade = 1.0 - smoothstep(uRadius * 0.45, uRadius, r);
+        float ring = exp(-pow((r - ${RADIUS}.0) / 8.0, 2.0));
+        float alpha = (0.08 + 0.8 * g + 0.6 * ring) * fade * uGlow;
+        gl_FragColor = vec4(uColor * (0.6 + 0.7 * g + 0.5 * ring), clamp(alpha, 0.0, 1.0));
+      }`,
+  }));
+}
+
+// Мягкая точка для глифов на крышах: без файлов, как и всё остальное здесь.
+function glowSprite() {
+  const S = 64;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const g = cv.getContext('2d');
+  const grad = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.35, 'rgba(190,240,255,0.7)');
+  grad.addColorStop(1, 'rgba(120,200,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, S, S);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// Оттенки кварталов: цвет здания = градиент по высоте (шейдер) × этот множитель,
+// поэтому соседние клетки читаются разными районами, а не одной заливкой.
 const C = {
-  low: new THREE.Color(0x1c3a5e),
-  high: new THREE.Color(0xc9f4ff),
-  plate: new THREE.Color(0x0a1522),
+  low: new THREE.Color(0x9dc0da),
+  high: new THREE.Color(0xffffff),
   orbit: new THREE.Color(0x6fe3ff),
   pad: new THREE.Color(0x8f7bff),
   marker: new THREE.Color(0xffc46b),
@@ -370,9 +585,9 @@ const C = {
 
 const HINT = {
   loading: 'запрос зданий в радиусе 400 м…',
-  ready: 'тянуть — перенос · кольцо — вращение · удержание на полосе — поставить заново',
+  ready: 'тянуть — перенос · кольцо — вращение · удержание на полосе — поставить на поверхность',
   grounding: 'ставлю на поверхность под ретикулом…',
-  noSurface: 'ретикул не на поверхности — город перед тобой, наведи на стол и повтори',
+  noSurface: 'поверхностей нет — город на виртуальном полу, наведи ретикул на стол и повтори',
 };
 
 class CityOrbit extends xb.Script {
@@ -399,15 +614,16 @@ class CityOrbit extends xb.Script {
     this._d = new THREE.Vector3();
     this._pos = new THREE.Vector3();
     this._quat = new THREE.Quaternion();
+    this.scanT = 0;                  // фаза скан-полосы
+    this.scanOn = false;             // идёт ли манипуляция
+    this.scanK = 0;                  // плавное включение скана
+    this.pois = [];                  // слой POI (может быть пустым)
+    this.poiIndex = -1;              // выбранный маркер
+    this.labels = [];                // плавающие подписи ближайших POI
+    this.poiMarkers = null;
+    this.yawTarget = null;           // плавный доворот «центровать»
 
-    // Свет: холодный купол города + солнце сбоку, чтобы объём читался в VR.
-    this.add(new THREE.HemisphereLight(0xdcebff, 0x16233a, 2.7));
-    const sun = new THREE.DirectionalLight(0xfff1d6, 1.8);
-    sun.position.set(0.5, 0.95, 0.6);
-    this.add(sun);
-    const fill = new THREE.DirectionalLight(0x76a4ff, 0.75);
-    fill.position.set(-0.7, 0.3, -0.8);
-    this.add(fill);
+    // Голограмма самосветится: свет в сцене не нужен, все её слои аддитивны.
 
     // Город — ОДИН объект со всей манипуляцией. Оба основных действия
     // (перенос и вращение) без handle неразрешимы: ManipulationManager требует
@@ -430,7 +646,15 @@ class CityOrbit extends xb.Script {
     this.orbitRing = this.buildOrbitRing();
     this.marker = this.buildMarker();
     this.north = this.buildNorth();
-    this.cityRoot.add(this.plate, this.orbitRing, this.marker, this.north);
+    this.radar = this.buildRadar();
+    this.cityRoot.add(this.plate, this.orbitRing, this.marker, this.north, this.radar);
+
+    // Маркеры POI живут в масштабе города (это часть макета), подписи и
+    // карточка — в мире: текст не должен уменьшаться вместе с макетом.
+    this.poiGroup = new THREE.Group();
+    this.poiGroup.name = 'city-pois';
+    this.cityRoot.add(this.poiGroup);
+    this.buildPoiCard();
 
     // Полоса переноса — отдельная ветка сцены: манипуляция перехватывает
     // длинный выбор, поэтому удержание работает только вне тела города.
@@ -444,7 +668,9 @@ class CityOrbit extends xb.Script {
     this.model.add(this.cityRoot, this.padGroup);
     this.add(this.model);
 
-    // Рисованная плита в телефоне = фальшивый пол: в alpha-blend прячем.
+    // Аддитивная сетка-земля в телефоне (alpha-blend) копит альфу канваса и
+    // гасит камеру под собой — большую и слабую по яркости подложку прячем,
+    // сам город и кольца остаются: они светятся и читаются как голограмма.
     hideInPassthrough([this.plate]);
 
     this.buildHud();
@@ -454,12 +680,13 @@ class CityOrbit extends xb.Script {
   // --- части города ---------------------------------------------------------
 
   buildPlate() {
-    const geo = new THREE.CircleGeometry(RADIUS + 6, 72).rotateX(-Math.PI / 2);
-    this.plateMat = new THREE.MeshStandardMaterial({
-      color: C.plate, roughness: 0.92, metalness: 0, transparent: true, opacity: 0.88,
-    });
+    // Сетка-земля во всю площадь района (до внутреннего края полосы переноса):
+    // у неё мягкая кромка, поэтому город не висит в пустоте резким диском.
+    const geo = new THREE.CircleGeometry(PAD_IN, 96).rotateX(-Math.PI / 2);
+    this.plateMat = makeGridMaterial(PAD_IN);
     const plate = new THREE.Mesh(geo, this.plateMat);
-    plate.name = 'city-plate';
+    plate.name = 'city-grid';
+    plate.position.y = -0.4;         // чуть ниже подошвы домов
     return plate;
   }
 
@@ -538,6 +765,63 @@ class CityOrbit extends xb.Script {
     return cone;
   }
 
+  // Радарное кольцо квартала: тонкий аддитивный кант с бегущей дугой —
+  // «свой район как обстановка на экране».
+  buildRadar() {
+    const geo = new THREE.RingGeometry(RADIUS - 5, RADIUS + 5, 160, 1).rotateX(-Math.PI / 2);
+    this.radarMat = glowBlending(new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      uniforms: {uColor: {value: new THREE.Color(0x7fe1ff)}, uPhase: {value: 0}},
+      vertexShader: /* glsl */`
+        varying vec2 vXZ;
+        void main() {
+          vXZ = position.xz;
+          gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: /* glsl */`
+        uniform vec3 uColor;
+        uniform float uPhase;
+        varying vec2 vXZ;
+        void main() {
+          float ang = atan(vXZ.y, vXZ.x);
+          float d = abs(atan(sin(ang - uPhase), cos(ang - uPhase)));  // ближайшая дуга
+          float arc = exp(-pow(d / 0.35, 2.0));
+          gl_FragColor = vec4(uColor * (0.7 + 1.3 * arc), 0.14 + 0.9 * arc);
+        }`,
+    }));
+    const ring = new THREE.Mesh(geo, this.radarMat);
+    ring.name = 'city-radar';
+    ring.position.y = 1.5;
+    return ring;
+  }
+
+  // Карточка POI: одна на всех, всплывает у маркера и закрывается повторным тапом.
+  buildPoiCard() {
+    try {
+      this.poiUi = {
+        name: new xb.UIText({text: '', style: {fontSize: 16, fontWeight: 'bold', color: '#eaf8ff'}}),
+        info: new xb.UIText({text: '', style: {fontSize: 12, color: '#9fe8ff', opacity: 0.9}}),
+      };
+      this.poiUi.center = new xb.UIButton({
+        label: 'ЦЕНТРОВАТЬ', icon: 'my_location',
+        onClick: () => this.centerOnPoi(),
+      });
+      this.poiCard = new xb.UICard({
+        size: {width: 0.34, height: 'auto'},
+        visible: false,
+        children: [this.poiUi.name, this.poiUi.info, this.poiUi.center],
+      });
+      this.poiCard.add(new xb.FaceCamera({mode: 'spherical'}));
+      this.add(this.poiCard);
+    } catch (e) {
+      // Без карточки POI остаются маркерами: слой необязательный.
+      this.poiCard = null;
+      this.poiUi = null;
+    }
+  }
+
   // --- HUD: нативный UIOverlay (view-space) ---------------------------------
 
   buildHud() {
@@ -549,6 +833,10 @@ class CityOrbit extends xb.Script {
       stat: new xb.UIText({
         text: ' ',
         style: {fontSize: 13, color: '#cfe0ff', opacity: 0.9, textAlign: 'center', lineHeight: 1.4},
+      }),
+      poi: new xb.UIText({
+        text: ' ',
+        style: {fontSize: 13, color: '#7fe1ff', opacity: 0.95, textAlign: 'center', lineHeight: 1.4},
       }),
       hint: new xb.UIText({
         text: HINT.loading,
@@ -578,6 +866,7 @@ class CityOrbit extends xb.Script {
         }),
         this.ui.mode,
         this.ui.stat,
+        this.ui.poi,
         this.ui.hint,
         new xb.UIPanel({
           style: {width: '100%', flexDirection: 'row', gap: 12},
@@ -613,6 +902,15 @@ class CityOrbit extends xb.Script {
     this.ui.stat.text =
       `зданий ${this.records.length} · высота ${Math.round(this.hMin)}–${Math.round(this.hMax)} м · ` +
       `радиус ${RADIUS} м · масштаб ×${zoom < 0.1 ? zoom.toFixed(3) : zoom.toFixed(2)}`;
+    // Строка POI: сколько точек и что ближе всего — как строка обстановки.
+    if (!this.pois.length) {
+      this.ui.poi.text = 'POI: нет точек в ответе — только город';
+      return;
+    }
+    const near = this.pois[this.poiIndex >= 0 ? this.poiIndex : 0];
+    const az = poiAzimuth(near);
+    this.ui.poi.text =
+      `POI ${this.pois.length} · ближайший: ${near.name} · ${Math.round(near.d)} м · ${az.rose}`;
   }
 
   // --- данные ---------------------------------------------------------------
@@ -676,8 +974,9 @@ class CityOrbit extends xb.Script {
     }
   }
 
-  // Полигоны → один InstancedMesh. Цвет по высоте: низ тёмный, верх светлый —
-  // по макету сразу видно, где даунтаун, где окраина.
+  // Полигоны → один InstancedMesh. Материал — голограмма: unlit, аддитив,
+  // градиент по высоте считает шейдер (см. makeCityMaterial), а instanceColor
+  // даёт только оттенок квартала. Плюс редкие глифы на крышах.
   install(records, mode) {
     this.disposeCity();
     this.records = records;
@@ -686,9 +985,7 @@ class CityOrbit extends xb.Script {
     if (!records.length) return;
 
     const geo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0xffffff, roughness: 0.68, metalness: 0.06,
-    });
+    const mat = makeCityMaterial();
     const mesh = new THREE.InstancedMesh(geo, mat, records.length);
     const dummy = this._dummy;
     const color = this._color;
@@ -700,9 +997,9 @@ class CityOrbit extends xb.Script {
       dummy.scale.set(Math.max(b.w, 2), b.h, Math.max(b.d, 2));
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
-      const k = Math.pow(clamp((b.h - 6) / 64, 0, 1), 0.75);
-      color.copy(C.low).lerp(C.high, k);
-      color.offsetHSL(0, 0, (((b.index * 37) % 11) - 5) / 120);
+      // Квартал (клетка 150 м) — свой оттенок множителем к градиенту высоты.
+      const cell = (((Math.floor(b.cx / 150) * 7 + Math.floor(b.cz / 150) * 13) % 5) + 5) % 5;
+      color.copy(C.low).lerp(C.high, ((cell * 3) % 5) / 4);
       mesh.setColorAt(i, color);
       if (b.h < hMin) hMin = b.h;
       if (b.h > hMax) hMax = b.h;
@@ -716,6 +1013,12 @@ class CityOrbit extends xb.Script {
     this.buildings = mesh;
     this.cityRoot.add(mesh);
 
+    // Глифы на крышах: редкие светящиеся точки — город читается как данные,
+    // а не как застройка, и по ним видно высоту даже на мелком масштабе.
+    this.glyphs = this.buildGlyphs(records);
+    this.cityRoot.add(this.glyphs);
+    mat.uniforms.uMaxHeight.value = Math.max(60, hMax);
+
     this.hMin = hMin;
     this.hMax = hMax;
     this.cityRoot.scale.setScalar(BASE_SCALE);
@@ -726,6 +1029,186 @@ class CityOrbit extends xb.Script {
     this.renderStat();
     this.setHint(this.inSession ? HINT.grounding : HINT.ready);
     this.requestPlacement(this.inSession ? 0 : 1);
+    // Слой POI: в live — второй лёгкий запрос, в демо — детерминированная
+    // подстановка из тех же кварталов (офлайн-опыт остаётся полным).
+    if (mode === 'live') this.loadPois();
+    else this.installPois(demoPois(records));
+  }
+
+  // --- слой POI -------------------------------------------------------------
+
+  // Второй, лёгкий запрос: точки вокруг. Слой необязательный, поэтому его
+  // провал ничего не ломает — города он не касается.
+  async loadPois() {
+    const {lat, lon} = this.site;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), POI_TIMEOUT);
+    try {
+      const json = await fetchPois(lat, lon, ctrl.signal);
+      if (this.ready) this.installPois(parsePois(json, this.site));
+    } catch (e) {
+      // Нет ответа или нет точек — просто нет слоя.
+      if (this.ready) this.installPois([]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  installPois(pois) {
+    this.clearPois();
+    this.pois = pois;
+    if (!pois.length) {
+      this.renderStat();
+      return;
+    }
+    // Слой POI — надстройка над городом: любая его поломка (маркеры, плашки,
+    // UI-подсистема) обязана оставить опыт с городом, а не без него.
+    try {
+      this.buildPoiMarkers(pois);
+    } catch (e) {
+      this.pois = [];
+      this.clearPois();
+    }
+    this.renderStat();
+  }
+
+  buildPoiMarkers(pois) {
+    // Все маркеры — один InstancedMesh: столбик со светящимся верхом. Высоту и
+    // яркость ведёт дистанция (логарифм): дальние выше и тусклее, ближние
+    // короче и ярче — так столбик читается как засветка на радаре.
+    const geo = new THREE.CylinderGeometry(3.5, 3.5, 1, 8).translate(0, 0.5, 0);
+    const mat = glowBlending(new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, depthWrite: false,
+    }));
+    const mesh = new THREE.InstancedMesh(geo, mat, pois.length);
+    this.poiMarkers = mesh;
+    const dummy = this._dummy;
+    for (let i = 0; i < pois.length; i++) {
+      const p = pois[i];
+      p.label = poiKind(p.kind)[0];
+      p.h = 16 + 30 * Math.log10(1 + p.d / 40);
+      p.bright = Math.max(0.35, 1.1 - p.d / 520);
+      dummy.position.set(p.cx, 0, p.cz);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, p.h, 1);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+      this.setPoiColor(i, 1);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.frustumCulled = false;
+    mesh.name = 'poi-markers';
+    this.poiGroup.add(mesh);
+
+    // Подписи: 30 плашек на макете 90 см неразличимы, поэтому подписаны
+    // ближайшие — остальные остаются маркерами и доступны кликом.
+    for (const p of pois.slice(0, POI_LABELS)) {
+      try {
+        const card = new xb.UICard({
+          size: {width: 0.12, height: 'auto'},
+          pointerEvents: 'none',     // подпись не должна перехватывать ретикул
+          children: [new xb.UIText({
+            text: p.name,
+            style: {fontSize: 11, color: '#cdefff', textAlign: 'center'},
+          })],
+        });
+        card.add(new xb.FaceCamera({mode: 'spherical'}));
+        this.add(card);
+        this.labels.push({card, poi: p});
+      } catch (e) {
+        break;                       // подписи не критичны
+      }
+    }
+  }
+
+  setPoiColor(index, gain) {
+    const p = this.pois[index];
+    if (!p || !this.poiMarkers) return;
+    this._color.setHex(poiKind(p.kind)[1]).multiplyScalar(p.bright * gain);
+    this.poiMarkers.setColorAt(index, this._color);
+    if (this.poiMarkers.instanceColor) this.poiMarkers.instanceColor.needsUpdate = true;
+  }
+
+  clearPois() {
+    if (this.poiMarkers) {
+      this.poiGroup.remove(this.poiMarkers);
+      this.poiMarkers.geometry.dispose();
+      this.poiMarkers.material.dispose();
+      this.poiMarkers = null;
+    }
+    // Плашки снимаем со сцены, но не трогаем: их монтирует и убирает UI-подсистема.
+    for (const {card} of this.labels) card.removeFromParent();
+    this.labels = [];
+    this.pois = [];
+    this.hidePoi();
+  }
+
+  // Клик по маркеру: карточка рядом с ним; повторный тап закрывает.
+  showPoi(index) {
+    const p = this.pois[index];
+    if (!p) return;
+    if (this.poiIndex === index) {
+      this.hidePoi();
+      return;
+    }
+    if (this.poiIndex >= 0) this.setPoiColor(this.poiIndex, 1);
+    this.poiIndex = index;
+    this.setPoiColor(index, 1.8);
+    if (this.poiCard && this.poiUi) {
+      const az = poiAzimuth(p);
+      this.poiUi.name.text = p.name;
+      this.poiUi.info.text =
+        `${p.label} · ${Math.round(p.d)} м · ${az.rose} (${Math.round(az.deg)}°)`;
+      this.poiCard.visible = true;
+    }
+    this.renderStat();
+  }
+
+  hidePoi() {
+    if (this.poiIndex >= 0) this.setPoiColor(this.poiIndex, 1);
+    this.poiIndex = -1;
+    if (this.poiCard) this.poiCard.visible = false;
+    this.renderStat();
+  }
+
+  // «Центровать»: город доворачивается так, чтобы выбранный POI оказался на
+  // луче «центр города → пользователь», то есть прямо перед ним.
+  centerOnPoi() {
+    const p = this.pois[this.poiIndex];
+    const camera = xb.core?.camera;
+    if (!p || !camera) return;
+    camera.getWorldPosition(this._p);
+    const toUser = Math.atan2(
+      this._p.x - this.cityRoot.position.x,
+      this._p.z - this.cityRoot.position.z
+    );
+    this.yawTarget = toUser - Math.atan2(p.cx, p.cz);
+    this.setHint(`центрую на «${p.name}»`);
+  }
+
+  buildGlyphs(records) {
+    const step = 7;
+    const count = Math.max(1, Math.floor(records.length / step));
+    const pos = new Float32Array(count * 3);
+    let n = 0;
+    for (let i = 0; i < records.length && n < count; i += step) {
+      const b = records[i];
+      pos[n * 3] = b.cx;
+      pos[n * 3 + 1] = b.h + 5;
+      pos[n * 3 + 2] = b.cz;
+      n++;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos.subarray(0, n * 3), 3));
+    const mat = glowBlending(new THREE.PointsMaterial({
+      color: 0xd8fbff, map: glowSprite(), size: 26, sizeAttenuation: true,
+      transparent: true, depthWrite: false, opacity: 0.9,
+    }));
+    const points = new THREE.Points(geo, mat);
+    points.name = 'city-glyphs';
+    points.frustumCulled = false;
+    return points;
   }
 
   disposeCity() {
@@ -738,6 +1221,13 @@ class CityOrbit extends xb.Script {
     mesh.geometry.dispose();
     mesh.material.dispose();
     this.buildings = null;
+    if (this.glyphs) {
+      this.cityRoot.remove(this.glyphs);
+      this.glyphs.geometry.dispose();
+      this.glyphs.material.map?.dispose();
+      this.glyphs.material.dispose();
+      this.glyphs = null;
+    }
   }
 
   // --- постановка на поверхность --------------------------------------------
@@ -761,11 +1251,11 @@ class CityOrbit extends xb.Script {
   ground() {
     if (!this.ready) return;
     if (!this.inSession) {
-      // Плоский десктоп: ни плоскостей, ни глубины — ставим сразу, без
-      // ожидания таймаута, иначе город на секунду висит в голове пользователя.
-      this.placeInFront();
+      // Плоский десктоп: ни плоскостей, ни глубины — сразу на виртуальный
+      // пол, без ожидания таймаута, иначе город на секунду висит в голове.
+      this.placeOnVirtualFloor();
       this.syncPad();
-      this.setHint(HINT.ready);
+      this.setHint(HINT.noSurface);
       this.renderStat();
       return;
     }
@@ -776,7 +1266,7 @@ class CityOrbit extends xb.Script {
     } catch (e) {
       ok = false;
     }
-    if (!ok) this.placeInFront();
+    if (!ok) this.placeOnVirtualFloor();
     this.syncPad();
     this.setHint(ok ? HINT.ready : HINT.noSurface);
     this.renderStat();
@@ -803,11 +1293,12 @@ class CityOrbit extends xb.Script {
     return false;
   }
 
-  // Фолбэк: перед пользователем, чуть ниже глаз. Нужен и на плоском десктопе,
-  // где нет ни плоскостей, ни глубины, — а камера там встаёт на свою высоту
-  // только через несколько кадров, поэтому у ещё низкой камеры берём
-  // абсолютную высоту стола: иначе город оказался бы под краем экрана.
-  placeInFront() {
+  // Фолбэк: поверхностей рядом нет (flat-режим, пустая комната или ретикул не
+  // на плоскости) — город встаёт на виртуальный пол y=0 в двух метрах перед
+  // пользователем. Двух метров достаточно, чтобы город на полу попал в кадр
+  // при взгляде прямо, а не уехал под нижний край. HUD при этом честно
+  // называет пол виртуальным (HINT.noSurface).
+  placeOnVirtualFloor() {
     const camera = xb.core?.camera;
     if (!camera) return;
     camera.getWorldPosition(this._p);
@@ -815,12 +1306,9 @@ class CityOrbit extends xb.Script {
     this._d.y = 0;
     if (this._d.lengthSq() < 1e-6) this._d.set(0, 0, -1);
     this._d.normalize();
-    const reach = 1.25;
-    const eye = this._p.y;
+    const reach = 2;
     this.cityRoot.position.set(
-      this._p.x + this._d.x * reach,
-      eye > 1 ? eye - 0.45 : 1.05,
-      this._p.z + this._d.z * reach
+      this._p.x + this._d.x * reach, 0, this._p.z + this._d.z * reach
     );
     // Север (локальный −z) смотрит от пользователя: карта читается как карта.
     this.cityRoot.rotation.set(0, Math.atan2(-this._d.x, -this._d.z), 0);
@@ -861,7 +1349,9 @@ class CityOrbit extends xb.Script {
 
   onObjectSelectStart(event) {
     const surface = event.surface;
-    if (surface === this.padBand || surface === this.padRim) {
+    if (surface === this.poiMarkers) {
+      this.setHint('маркер POI — отпусти, чтобы открыть карточку');
+    } else if (surface === this.padBand || surface === this.padRim) {
       this.hotTarget.pad = 1;
       this.setHint('удержание — поставить город на поверхность');
     } else if (surface === this.orbitRing) {
@@ -872,16 +1362,24 @@ class CityOrbit extends xb.Script {
     event.stopPropagation();
   }
 
-  onObjectSelectEnd() {
+  onObjectSelectEnd(event) {
     this.hotTarget.pad = 0;
     this.hotTarget.orbit = 0;
     this.hotTarget.body = 0;
+    // Клик по столбику POI (не перетаскивание) открывает карточку: маркеры —
+    // один InstancedMesh, точный маркер даёт instanceId пересечения.
+    const id = event.intersection?.instanceId;
+    if (event.completed && event.surface === this.poiMarkers && id != null) {
+      this.showPoi(id);
+    }
+    event.stopPropagation();
   }
 
   onHoverEnter(event) {
     const surface = event.surface;
     if (surface === this.orbitRing) this.hotTarget.orbit = 1;
     else if (surface === this.padBand || surface === this.padRim) this.hotTarget.pad = 1;
+    else if (surface === this.poiMarkers) this.setHint('POI: клик — карточка точки');
     else this.hotTarget.body = 1;
     event.stopPropagation();
   }
@@ -893,11 +1391,14 @@ class CityOrbit extends xb.Script {
   }
 
   onObjectManipulate(event) {
+    // Скан-полоса: виден признак, что город сейчас «в работе».
+    this.scanOn = event.phase === 'start' || event.phase === 'update';
     if (event.phase === 'start') {
       const what = event.action === xb.ManipulationAction.Rotate ? 'вращение'
         : event.action === xb.ManipulationAction.Scale ? 'масштаб' : 'перенос';
-      this.setHint(`${what} · второй источник — масштаб · удлинение на полосе — постановка`);
+      this.setHint(`${what} · второй источник — масштаб · удержание на полосе — постановка`);
     } else if (event.phase === 'end' || event.phase === 'cancel') {
+      this.scanOn = false;
       this.setHint(HINT.ready);
       this.renderStat();
     }
@@ -918,6 +1419,35 @@ class CityOrbit extends xb.Script {
     this.syncPad();
     this.stepFeedback(dt);
 
+    // Подписи висят над своими маркерами (мир, а не масштаб города).
+    if (this.labels.length) {
+      for (const {card, poi} of this.labels) {
+        this._p.set(poi.cx, poi.h + 9, poi.cz);
+        this.cityRoot.localToWorld(this._p);
+        card.position.copy(this._p);
+      }
+    }
+    if (this.poiIndex >= 0 && this.poiCard) {
+      const p = this.pois[this.poiIndex];
+      this._p.set(p.cx, p.h * 0.8, p.cz);
+      this.cityRoot.localToWorld(this._p);
+      this.poiCard.position.copy(this._p).add(POI_CARD_OFFSET);
+    }
+
+    // Плавный доворот «центровать»: город идёт к цели, а не прыгает.
+    if (this.yawTarget !== null) {
+      const delta = Math.atan2(
+        Math.sin(this.yawTarget - this.cityRoot.rotation.y),
+        Math.cos(this.yawTarget - this.cityRoot.rotation.y)
+      );
+      this.cityRoot.rotation.y += delta * Math.min(1, dt * 4);
+      if (Math.abs(delta) < 0.01) {
+        this.cityRoot.rotation.y = this.yawTarget;
+        this.yawTarget = null;
+        this.setHint(HINT.ready);
+      }
+    }
+
     this._fp += dt;
     if (this._fp >= 0.4) {
       this._fp = 0;
@@ -936,9 +1466,19 @@ class CityOrbit extends xb.Script {
     this.padRimMat.opacity = 0.34 + 0.45 * this.hot.pad + 0.1 * pulse;
     this.northMat.opacity = 0.45 + 0.2 * pulse;
     this.markerMat.opacity = 0.7 + 0.3 * pulse;
-    this.plateMat.opacity = 0.86 + 0.12 * this.hot.body;
+    this.plateMat.uniforms.uGlow.value = 1 + 0.6 * this.hot.body;
+    this.radarMat.uniforms.uPhase.value = this.t * 1.1;
     const beat = 1 + 0.06 * pulse;
     this.marker.scale.setScalar(beat);
+
+    // Скан-полоса бежит по высоте города, пока его держат (и плавно гаснет).
+    this.scanT = (this.scanT + dt * 0.45) % 1;
+    this.scanK += ((this.scanOn ? 1 : 0) - this.scanK) * Math.min(1, dt * 5);
+    const city = this.buildings?.material?.uniforms;
+    if (city) {
+      city.uScan.value = this.scanT;
+      city.uScanOn.value = this.scanK;
+    }
   }
 
   // --- уборка ---------------------------------------------------------------
@@ -949,7 +1489,10 @@ class CityOrbit extends xb.Script {
     this.abortTimer = 0;
     this.abort = null;
     this.placeAt = null;
+    this.yawTarget = null;
     this.disposeCity();
+    this.clearPois();
+    this.poiCard?.removeFromParent();
 
     // Геометрии и материалы частей города — наши; сам UIOverlay принадлежит
     // UI-подсистеме XR Blocks и убирается ею, чужие меши не трогаем.
@@ -965,7 +1508,7 @@ class CityOrbit extends xb.Script {
         }
       });
     };
-    for (const part of [this.plate, this.orbitRing, this.marker, this.north, this.padGroup]) {
+    for (const part of [this.plate, this.orbitRing, this.marker, this.north, this.radar, this.padGroup]) {
       drop(part);
     }
     this.records = [];
@@ -997,10 +1540,10 @@ document.addEventListener('DOMContentLoaded', () => {
   xb.add(new CityOrbit());
   xb.init(options);
   watchXrButton([
-    'Вход — кнопка по центру: город соберётся перед тобой',
-    'Тянуть город — перенос, кольцо вокруг — вращение',
-    'Второй источник (вторая рука или второй курсор) — масштаб: от макета до улиц',
+    'Вход — кнопка по центру: голограмма города соберётся перед тобой',
+    'Тянуть город — перенос, кольцо вокруг — вращение, второй источник — масштаб',
     'Наведи ретикул на стол или пол и нажми RELOCATE (или удержи полосу) — город встанет туда',
+    'Нет поверхностей — город встанет на виртуальный пол, об этом скажет статус',
   ]);
 });
 </script>

@@ -189,6 +189,9 @@ const CFG = {
   maxDb: -12,
   toneGain: 0.05,     // DEMO TONE намеренно тихий: это фон, а не концерт
   rippleTime: 0.9,    // с, за которое волна удара уходит от гало
+  snapReach: 0.85,    // м: с какой высоты снимок ещё «садится» на поверхность
+  snapSettle: 0.22,   // с посадки: короткий доводчик, а не телепорт
+  spin: 0.16,         // рад/с: дыхание снимка вокруг своей оси
   maxForms: 10,
   formDist: 0.78,
   gain: {min: 0.4, max: 5, step: 0.1, def: 1.6},
@@ -255,29 +258,49 @@ for (let k = 0; k < B; k++) {
   RING_QUAT.push(new THREE.Quaternion().setFromAxisAngle(AXIS_Y, a));
 }
 
+// Голографический слой: инстанс-бокс, у которого яркость задаётся уровнем
+// полосы, кромка — fresnel по взгляду, а вдоль высоты бегут строки развёртки.
+// Всё это один draw call на кольцо и один на каждый снимок.
 const GLOW_VERT = /* glsl */`
   attribute vec3 aColor;
   attribute float aGlow;
   varying vec3 vColor;
   varying float vGlow;
   varying float vT;
+  varying vec3 vNormalW;
+  varying vec3 vToEye;
   void main() {
     vColor = aColor;
     vGlow = aGlow;
-    // Локальные 0…1 вдоль геометрии: у колонны это «от пола к вершине».
+    // Локальные 0…1 вдоль геометрии: у колонны это «от стола к вершине».
     vT = clamp(position.y, 0.0, 1.0);
-    gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+    vec4 world = modelMatrix * instanceMatrix * vec4(position, 1.0);
+    // Нормали боксов осевые, поэтому mat3(instanceMatrix) их только удлиняет:
+    // направление остаётся верным и даёт честную fresnel-кромку.
+    vNormalW = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * normal);
+    vToEye = cameraPosition - world.xyz;
+    gl_Position = projectionMatrix * viewMatrix * world;
   }`;
 const GLOW_FRAG = /* glsl */`
   uniform float uIntensity;
   uniform float uBoost;
+  uniform float uTime;
   varying vec3 vColor;
   varying float vGlow;
   varying float vT;
+  varying vec3 vNormalW;
+  varying vec3 vToEye;
   void main() {
     // Гаснет к основанию и разгорается к вершине: колонна читается как рост.
     float edge = 0.22 + 0.78 * vT;
-    gl_FragColor = vec4(vColor * (0.45 + 1.15 * vT) * uBoost, vGlow * edge * uIntensity);
+    // Кромка: смотрим вдоль грани — света почти нет, смотрим поперёк — горит.
+    float fres = pow(1.0 - abs(dot(normalize(vNormalW), normalize(vToEye))), 2.2);
+    // Строки развёртки: цифровая поверхность, а не заливка.
+    float scan = 0.82 + 0.18 * sin(vT * 46.0 - uTime * 5.0);
+    float data = 0.94 + 0.06 * sin(uTime * 11.0 + vT * 23.0);
+    vec3 rgb = vColor * (0.4 + 1.1 * vT + 1.5 * fres) * uBoost * scan * data;
+    float alpha = (vGlow * edge * uIntensity + fres * 0.55 * uIntensity) * scan;
+    gl_FragColor = vec4(rgb, alpha);
   }`;
 
 function makeGlowMaterial() {
@@ -285,7 +308,7 @@ function makeGlowMaterial() {
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
-    uniforms: {uIntensity: {value: 1}, uBoost: {value: 1}},
+    uniforms: {uIntensity: {value: 1}, uBoost: {value: 1}, uTime: {value: 0}},
     vertexShader: GLOW_VERT,
     fragmentShader: GLOW_FRAG,
   }));
@@ -314,6 +337,7 @@ class SoundSpace extends xb.Script {
     this.rms = 0;
     this.beat = 0;
     this.beatFired = false;
+    this.flash = 0;
     this.bassSlow = 0;
     this.lastBeat = -9;
     this.peakBand = 0;
@@ -331,13 +355,20 @@ class SoundSpace extends xb.Script {
     this._dir = new THREE.Vector3();
     this._quat = new THREE.Quaternion();
     this._mat = new THREE.Matrix4();
+    this._inv4 = new THREE.Matrix4();
     this._sky = new THREE.Quaternion();
+    this._q3 = new THREE.Quaternion();
+    this._n3 = new THREE.Vector3();
+    this._p3 = new THREE.Vector3();
     this._color = new THREE.Color();
+    // Кандидат посадки — один объект на кадр, без аллокаций.
+    this.candidate = {found: false, y: 0, label: '', p: new THREE.Vector3(), q: new THREE.Quaternion()};
 
     this.buildSpace();
     this.buildRing();
     this.buildBeads();
     this.buildRipple();
+    this.buildGhost();
     this.buildSharedFormGeometry();
     this.buildHud();
 
@@ -380,8 +411,10 @@ class SoundSpace extends xb.Script {
   }
 
   // Колонны спектра: одна инстанс-сетка, цвет и яркость — инстанс-атрибуты.
+  // Бокс намеренно тонкий: при fresnel-кромке он читается как световая планка,
+  // а не как столбик.
   buildRing() {
-    const geo = new THREE.BoxGeometry(0.055, 1, 0.014);
+    const geo = new THREE.BoxGeometry(0.05, 1, 0.011);
     geo.translate(0, 0.5, 0);   // растёт от основания: масштаб Y = высота
     this.ringColor = new Float32Array(B * 3);
     this.ringGlow = new Float32Array(B);
@@ -435,6 +468,31 @@ class SoundSpace extends xb.Script {
     this.ripple.xb = {pointerEvents: 'none'};
     this.rippleAge = 1;
     this.add(this.ripple);
+  }
+
+  // Посадочное кольцо: подсветка поверхности под снимком во время переноса и
+  // короткая вспышка в момент посадки. Своё, а не системный ретикл: системный
+  // ретикл показывает цель луча (сам снимок), а нужно показать место посадки.
+  buildGhost() {
+    const mat = glowBlending(new THREE.MeshBasicMaterial({
+      color: 0x8fd8ff, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    const dotMat = glowBlending(new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    this.ghost = new THREE.Group();
+    this.ghost.visible = false;
+    this.ghost.xb = {pointerEvents: 'none'};
+    this.ghostRing = new THREE.Mesh(new THREE.RingGeometry(0.155, 0.185, 36), mat);
+    this.ghostRing.rotation.x = -Math.PI / 2;
+    this.ghostDot = new THREE.Mesh(new THREE.CircleGeometry(0.035, 20), dotMat);
+    this.ghostDot.rotation.x = -Math.PI / 2;
+    this.ghostDot.position.y = 0.001;
+    this.ghost.add(this.ghostRing, this.ghostDot);
+    this.ghostMat = mat;
+    this.ghostDotMat = dotMat;
+    this.ghostPulse = 0;
+    this.add(this.ghost);
   }
 
   // Плита, обод и спицы всех снимков одинаковы по форме — геометрия общая,
@@ -783,11 +841,16 @@ class SoundSpace extends xb.Script {
   driveRing() {
     const R = this.ring;
     const c = this._color;
-    const y0 = CFG.plinthY + this.beat * 0.03;
+    this.glowMat.uniforms.uTime.value = this.t;
+    // Кольцо подпрыгивает и на ударе, и на общей громкости: реакция видна даже
+    // когда слайдер чувствительности убавлен.
+    const y0 = CFG.plinthY + this.beat * 0.03 + this.level * 0.04;
     for (let k = 0; k < B; k++) {
       const l = this.lev[k];
-      const h = 0.07 + CFG.colMax * Math.pow(l, 1.25);
-      const wide = 0.75 + 0.5 * l;
+      // Показатель 1.05 вместо 1.25: середина спектра тоже поднимает колонну,
+      // иначе кольцо выглядит почти плоским.
+      const h = 0.08 + CFG.colMax * Math.pow(l, 1.05) * (1 + 0.25 * this.beat);
+      const wide = 0.7 + 0.7 * l + 0.12 * this.beat;
       this._mat.compose(
         this._p.set(RING_SIN[k] * CFG.radius, y0, RING_COS[k] * CFG.radius),
         RING_QUAT[k],
@@ -812,6 +875,9 @@ class SoundSpace extends xb.Script {
     for (let k = 0; k < B; k++) sum += this.lev[k];
     const spin = this.t * 0.05;
     const c = this._color;
+    // Вспышка гало на переходе через порог низа: одна яркая волна поверх
+    // обычной, чтобы удар было видно и на уровне глаз.
+    const flash = 1 + 1.4 * this.flash;
     for (let i = 0; i < NB; i++) {
       let v = 0;
       for (let k = 0; k < B; k++) {
@@ -821,22 +887,22 @@ class SoundSpace extends xb.Script {
       }
       const w = v / sum;
       const a = Math.PI + (i / NB) * TAU + spin;
-      const scale = 0.45 + 1.1 * Math.abs(w);
+      const scale = (0.45 + 1.1 * Math.abs(w)) * (1 + 0.7 * this.flash);
       // Гало не расходится по радиусу, а изгибается по высоте: волна читается
       // как живая лента вокруг пользователя, а не как дрожь в глубину.
       this._mat.compose(
-        this._p.set(Math.sin(a) * CFG.halo, CFG.haloY + w * 0.22, Math.cos(a) * CFG.halo),
+        this._p.set(Math.sin(a) * CFG.halo, CFG.haloY + w * 0.22 + this.flash * 0.03, Math.cos(a) * CFG.halo),
         this._quat.identity(),
         this._scale.set(scale, scale, scale)
       );
       mesh.setMatrixAt(i, this._mat);
       const bright = 0.25 + 0.95 * Math.min(1, Math.abs(w) * 1.6);
-      c.copy(BEAD_COLOR).multiplyScalar(bright);
+      c.copy(BEAD_COLOR).multiplyScalar(bright * flash);
       const o = i * 3;
       this.beadColor[o] = c.r;
       this.beadColor[o + 1] = c.g;
       this.beadColor[o + 2] = c.b;
-      this.beadGlow[i] = 0.2 + 0.8 * bright;
+      this.beadGlow[i] = Math.min(1.6, (0.2 + 0.8 * bright) * flash);
     }
     mesh.instanceMatrix.needsUpdate = true;
     this.beads.colorAttr.needsUpdate = true;
@@ -844,10 +910,6 @@ class SoundSpace extends xb.Script {
   }
 
   driveRipple(dt) {
-    if (this.beatFired) {
-      this.rippleAge = 0;
-      this.beatFired = false;
-    }
     if (this.rippleAge >= 1) {
       this.rippleMat.opacity = 0;
       return;
@@ -865,14 +927,71 @@ class SoundSpace extends xb.Script {
   // предмета можно держать одновременно.
   updateForms(dt) {
     const k = ease(dt, 0.12);
+    let ghostForm = null;
     for (const form of this.forms) {
       const u = form.userData;
       const target = u.grab > 0 ? 1 : u.hover > 0 ? 0.62 : 0;
       u.glow += (target - u.glow) * k;
-      u.rimMat.opacity = 0.34 + 0.6 * u.glow;
       u.spikeMat.uniforms.uBoost.value = 1 + 0.55 * u.glow;
-      const s = 1 + 0.05 * u.glow;
-      u.rim.scale.setScalar(s);
+      u.spikeMat.uniforms.uTime.value = this.t;
+      // Обод пульсирует сам: снимок должен читаться как живая голограмма,
+      // а не как наклейка. Захват и наведение добавляют к пульсу.
+      const pulse = 0.85 + 0.15 * Math.sin(this.t * 2.1 + u.phase);
+      u.rimMat.opacity = (0.3 * pulse + 0.55 * u.glow) * (1 + 0.6 * u.landFlash);
+      u.rim.scale.setScalar(1 + 0.05 * u.glow + 0.02 * Math.sin(this.t * 1.6 + u.phase));
+
+      if (u.settle.active) {
+        // Посадка: короткий доводчик позы вместо телепорта — видно, что предмет
+        // именно сел на поверхность.
+        u.settle.t += dt;
+        const s = Math.min(1, u.settle.t / CFG.snapSettle);
+        const e = s * s * (3 - 2 * s);
+        form.position.lerpVectors(u.settle.fromP, u.settle.toP, e);
+        form.quaternion.slerpQuaternions(u.settle.fromQ, u.settle.toQ, e);
+        if (s >= 1) {
+          u.settle.active = false;
+          u.baseScale = form.scale.x;
+        }
+      } else if (u.grab === 0) {
+        // Дыхание свободного снимка: медленный поворот вокруг своей оси и
+        // минимальное дыхание масштаба. Во время захвата этим владеет SDK.
+        form.rotateZ(dt * CFG.spin * (u.place ? 1 : 0.45));
+        form.scale.setScalar(u.baseScale * (1 + 0.018 * Math.sin(this.t * 1.9 + u.phase)));
+      }
+
+      u.landFlash = Math.max(0, u.landFlash - dt * 2.4);
+      if (u.grab > 0 && u.place) ghostForm = form;
+      else if (!ghostForm && u.landFlash > 0 && u.place) ghostForm = form;
+    }
+    this.driveGhost(ghostForm);
+  }
+
+  // Посадочное кольцо: пока перенос идёт — пульсирует на найденной поверхности,
+  // после посадки — расширяется и гаснет. Цвет — по доминирующей полосе.
+  driveGhost(form) {
+    if (!form) {
+      this.ghost.visible = false;
+      return;
+    }
+    const u = form.userData;
+    const landing = u.grab === 0;
+    this.ghost.visible = true;
+    this.ghost.position.copy(u.placePos);
+    this.ghost.quaternion.copy(u.placeQuat);
+    this._color.copy(PALETTE[this.peakBand]).lerp(WHITE, 0.4);
+    this.ghostMat.color.copy(this._color);
+    this.ghostDotMat.color.copy(this._color);
+    if (landing) {
+      const s = 1 + (1 - u.landFlash) * 1.1;
+      this.ghost.scale.set(s, 1, s);
+      this.ghostMat.opacity = 0.75 * u.landFlash;
+      this.ghostDotMat.opacity = 0.5 * u.landFlash;
+    } else {
+      const pulse = 0.55 + 0.45 * Math.sin(this.t * 4.6);
+      const s = 1 + 0.05 * pulse;
+      this.ghost.scale.set(s, 1, s);
+      this.ghostMat.opacity = 0.35 + 0.45 * pulse;
+      this.ghostDotMat.opacity = 0.35 + 0.5 * pulse;
     }
   }
 
@@ -883,6 +1002,14 @@ class SoundSpace extends xb.Script {
     this.frames++;
 
     this.frameAudio(dt);
+    // Удар обрабатывается один раз на кадр: он запускает волну, вспышку гало и
+    // подъём всего кольца.
+    if (this.beatFired) {
+      this.beatFired = false;
+      this.rippleAge = 0;
+      this.flash = 1;
+    }
+    this.flash = Math.max(0, this.flash - dt * 3.4);
     this.driveRing();
     this.driveBeads();
     this.driveRipple(dt);
@@ -915,9 +1042,19 @@ class SoundSpace extends xb.Script {
       `${src} · LEVEL ${Math.round(this.level * 100)}% (rms ${Math.round(this.rms * 100)}%) · ` +
       `PEAK ${peak} · BANDS ${on}/${B} · FORMS ${this.forms.length}`;
     if (this.reason) line += ` · микрофон не дали (${this.reason}) → синтетика`;
+    // Подсказка посадки: видно не только глазом (кольцо), но и строкой.
+    for (const form of this.forms) {
+      const u = form.userData;
+      if (u.place && (u.grab > 0 || u.landFlash > 0)) {
+        line += ` · посадка: ${u.placeLabel || 'поверхность'}`;
+        break;
+      }
+    }
     if (DEBUG) {
+      const planes = xb.core?.world?.planes?.get?.() ?? [];
       line += ` · ctx ${this.ctx ? this.ctx.state : 'нет'} · bins ${this.freq ? this.freq.length : 0}` +
-        ` · sens ×${this.gain.toFixed(1)} · ${this.live ? 'analyser' : 'model'}`;
+        ` · sens ×${this.gain.toFixed(1)} · ${this.live ? 'analyser' : 'model'}` +
+        ` · planes ${planes.length} · flash ${this.flash.toFixed(2)}`;
     }
     return line;
   }
@@ -925,6 +1062,72 @@ class SoundSpace extends xb.Script {
   bandHz(band) {
     const binHz = this.ctx ? this.ctx.sampleRate / CFG.fft : BIN_HZ;
     return ((EDGE[band] + EDGE[band + 1]) / 2) * binHz;
+  }
+
+  // --- посадка на поверхность -------------------------------------------------
+
+  // Кандидат посадки: горизонтальная плоскость ОСНОВАНИЯ под предметом. Своя
+  // вертикаль, а не луч контроллера: важно не куда смотрит рука, а над чем
+  // предмет выпустили. Нет ни одной плоскости (плоский десктоп, симулятор без
+  // сцены) — работает пол y=0: он и есть local-floor.
+  findPlacement(point) {
+    const c = this.candidate;
+    c.found = false;
+    const planes = xb.core?.world?.planes?.get?.() ?? [];
+    for (const plane of planes) {
+      if (!plane) continue;
+      plane.updateWorldMatrix(true, false);
+      plane.getWorldQuaternion(this._q3);
+      this._n3.set(0, 1, 0).applyQuaternion(this._q3);
+      if (this._n3.y < 0.8) continue;            // стены и наклонные — не стол
+      plane.getWorldPosition(this._p3);
+      const drop = point.y - this._p3.y;
+      if (drop < -0.1 || drop > CFG.snapReach) continue;
+      if (!this.overPlane(plane, point)) continue;
+      if (!c.found || this._p3.y > c.y) {        // выше = стол важнее пола
+        c.found = true;
+        c.y = this._p3.y;
+        // Вниз под самим предметом, а не в начало плоскости: у большого пола
+        // origin может быть далеко в стороне.
+        c.p.set(point.x, this._p3.y, point.z);
+        c.q.copy(this._q3);
+        c.label = plane.label || plane.orientation || 'плоскость';
+      }
+    }
+    if (!c.found && point.y <= CFG.snapReach) {
+      c.found = true;
+      c.y = 0;
+      c.p.set(point.x, 0, point.z);
+      c.q.identity();
+      c.label = 'пол y=0';
+    }
+    return c.found;
+  }
+
+  // Полигон плоскости не разбираем: её ограничивающий бокс в локальных осях
+  // (полигон лежит в XZ, нормаль +Y) — достаточно, чтобы не сажать мимо стола.
+  overPlane(plane, point) {
+    const geo = plane.geometry;
+    if (!geo) return true;
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    const bb = geo.boundingBox;
+    if (!bb) return true;
+    this._inv4.copy(plane.matrixWorld).invert();
+    this._p3.copy(point).applyMatrix4(this._inv4);
+    const margin = 0.12;                         // снимок может свисать с края
+    return this._p3.x > bb.min.x - margin && this._p3.x < bb.max.x + margin &&
+      this._p3.z > bb.min.z - margin && this._p3.z < bb.max.z + margin;
+  }
+
+  // Поза посадки: снимок ложится плашмя — его нормаль (локальная +Z) идёт по
+  // нормали поверхности, а сам он встаёт чуть выше неё, чтобы плита не спорила
+  // с реальным столом.
+  placementPose(outPos, outQuat) {
+    const c = this.candidate;
+    this._n3.set(0, 1, 0).applyQuaternion(c.q);          // нормаль поверхности
+    this._q3.setFromUnitVectors(AXIS_Z, this._n3);       // диск плашмя
+    outPos.copy(c.p).addScaledVector(this._n3, 0.012);
+    outQuat.copy(this._q3);
   }
 
   // --- снимки спектра --------------------------------------------------------
@@ -945,6 +1148,14 @@ class SoundSpace extends xb.Script {
     form.userData = {
       isForm: true, hover: 0, grab: 0, glow: 0,
       spikeMat: null, rim: null, rimMat: null,
+      // Посадка: кандидат, накопленный во время переноса, и доводчик позы.
+      place: false, placeLabel: '', landFlash: 0, baseScale: 1, phase: this.spawnIndex * 1.7,
+      placePos: new THREE.Vector3(), placeQuat: new THREE.Quaternion(),
+      settle: {
+        active: false, t: 0,
+        fromP: new THREE.Vector3(), toP: new THREE.Vector3(),
+        fromQ: new THREE.Quaternion(), toQ: new THREE.Quaternion(),
+      },
     };
 
     // Плита — тёмная подложка: снимок читается как предмет, а не как свечение.
@@ -1074,8 +1285,32 @@ class SoundSpace extends xb.Script {
   onObjectManipulate(event) {
     const form = event.owner;
     if (!form?.userData?.isForm) return;
-    if (event.phase === 'start') form.userData.grab = 1;
-    else if (event.phase === 'end' || event.phase === 'cancel') form.userData.grab = 0;
+    const u = form.userData;
+    if (event.phase === 'start') {
+      u.grab = 1;
+      return;
+    }
+    const translating = event.action === 'translate' && Boolean(event.worldPosition);
+    if (translating && (event.phase === 'update' || event.phase === 'end')) {
+      // Перенос: ищем поверхность ровно под предметом и подсвечиваем её.
+      u.place = this.findPlacement(event.worldPosition);
+      if (u.place) {
+        u.placePos.copy(this.candidate.p);
+        u.placeQuat.copy(this.candidate.q);
+        u.placeLabel = this.candidate.label;
+      }
+    }
+    if (event.phase !== 'end' && event.phase !== 'cancel') return;
+    u.grab = 0;
+    if (event.phase !== 'end' || !translating || !u.place) return;
+    // Посадка: доводим позу до поверхности и зажигаем кольцо на месте.
+    const s = u.settle;
+    s.active = true;
+    s.t = 0;
+    s.fromP.copy(form.position);
+    s.fromQ.copy(form.quaternion);
+    this.placementPose(s.toP, s.toQ);
+    u.landFlash = 1;
   }
 
   onKeyDown(event) {
@@ -1102,6 +1337,11 @@ class SoundSpace extends xb.Script {
       mesh.geometry.dispose();
       mesh.material.dispose();
     }
+    for (const mesh of [this.ghostRing, this.ghostDot]) {
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+    }
+    this.remove(this.ghost);
     this.formGeo.plate.dispose();
     this.formGeo.rim.dispose();
     this.formGeo.spike.dispose();
@@ -1114,6 +1354,10 @@ options.enableReticles();
 // Руки — основной способ взять снимок в XR; на телефоне installXrGuards
 // повторяет запрос сессии без required hand-tracking.
 options.enableHands();
+// Плоскости — только для посадки снимков (feature опциональный, без него
+// работает пол y=0). Debug-визуализация плоскостей — по ?debug=1.
+options.enablePlaneDetection();
+options.world.planes.showDebugVisualizations = DEBUG;
 options.xrButton.showEnterSimulatorButton = true;
 options.setAppTitle('SOUND//SPACE');
 options.setAppDescription('Звук комнаты становится формой: микрофон → спектр → кольцо света, снимок спектра можно взять в руки.');

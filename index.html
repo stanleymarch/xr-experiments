@@ -162,17 +162,13 @@
     document.getElementById('lang-ru').onclick = () => { LANG = 'ru'; localStorage.setItem('xr-lang', LANG); applyLang(); };
     document.getElementById('lang-en').onclick = () => { LANG = 'en'; localStorage.setItem('xr-lang', LANG); applyLang(); };
 
-    let ENTRIES = [];
-    const SECTIONS = () => ({
-      xrblocks: { title: t('sec_xrblocks_title'), note: t('sec_xrblocks_note') },
-      '8thwall': { title: t('sec_8thwall_title'), note: t('sec_8thwall_note') },
-    });
     const desc = (e) => (LANG === 'ru' && e.description_ru) ? e.description_ru : e.description;
     const card = (e) => {
-      const url = new URL(e.path, window.location.href).href;
+      const target = hrefFor(e);
+      const url = new URL(target, window.location.href).href;
       const tags = (e.tags || []).map((tag) => `<span>${tag}</span>`).join('');
       return `
-        <a class="card" href="${e.path}">
+        <a class="card" href="${target}">
           <div class="qr">
             <img alt="QR for ${e.title}" loading="lazy"
                  src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}"
@@ -197,6 +193,14 @@
           <div id="list">${items.map(card).join('')}</div>`;
       }).join('') || `<p class="empty">${t('empty')}</p>`;
     }
+    let ENTRIES = [];
+    // Десктоп сразу падает в симулятор: flat-десктоп без WebXR иначе показывает
+    // только entry-экран с кнопкой. Тач-устройствам — чистый URL (там свой AR-вход).
+    const isTouchDevice = () =>
+      window.matchMedia?.('(pointer: coarse)').matches ||
+      'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    const hrefFor = (e) => (e.stack === 'xrblocks' && !isTouchDevice())
+      ? `${e.path}?formFactor=desktop` : e.path;
     (async () => {
       try {
         const res = await fetch('manifest.json');
@@ -210,3 +214,4 @@
   </script>
 </body>
 </html>
+

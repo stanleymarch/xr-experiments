@@ -345,7 +345,9 @@ const CFG = {
   drops: 220,                          // пул капель (= квады с анимацией всплеска)
   snow: 260,                           // снежинки-точки
   stars: 140,
+  motes: 90,                           // аэрозоль влажности
   splashFrames: 15, splashSpeed: 2.0,  // спрайт-лист 4×4, weight 0…30
+  dropStretch: 2.1,                    // вытяжка летящей капли в росчерк
   deckW: 7,
   soundUrl: 'https://cdn.jsdelivr.net/gh/xrblocks/assets@main/demos/rain/rain.opus',
 };
@@ -357,6 +359,24 @@ const C = {
   cloudDay: new THREE.Color(0x9fb4cf), cloudNight: new THREE.Color(0x2c3550),
 };
 
+// Горизонтальная ориентация квадов-пятен на полу.
+const FLAT_QUAT = new THREE.Quaternion().setFromAxisAngle(
+  new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+
+// Иконка погоды (Material Symbols) по коду WMO и времени суток.
+function iconFor(s) {
+  const c = s.code;
+  const suffix = s.isDay ? '_day' : '_night';
+  if (c === 0) return 'clear' + suffix;
+  if (c === 1) return 'partly_cloudy' + suffix;
+  if (c <= 3) return 'cloud';
+  if (c <= 48) return 'fog';
+  if (c <= 67) return 'rainy';
+  if (c <= 77 || (c >= 85 && c <= 86)) return 'snowing';
+  if (c <= 82) return 'rainy';
+  return 'thunderstorm';
+}
+
 // --- опыт --------------------------------------------------------------------
 
 class WeatherRoom extends xb.Script {
@@ -367,17 +387,34 @@ class WeatherRoom extends xb.Script {
     };
     this.offset = 0;
     this.rainK = 0; this.showerK = 0; this.snowK = 0;
+    // Префикс телеметрии: источник данных виден всегда, а не один кадр.
+    this.source = 'ПОИСК…';
+    this.surfaces = [];        // горизонтальные плоскости комнаты (детектор)
+    this._surfaceAge = 0;
+    this.stains = null;        // пул мокрых пятен — ленивый
+    this._stainCd = 0;
+    this.flakes = null;        // накопление снега на полу — ленивый
     this.data = null;
     this.lat = 59.934; this.lon = 30.335;
     this._fp = 0;
 
-    // Пол-подложка: в VR даёт каплям землю, в AR прячется.
+    // Пол-подложка: в VR даёт каплям землю, в AR прячется. Мокрый блеск —
+    // lit-материал (свет ниже), как в официальных сценах, а не flat-Basic.
     this.floor = new THREE.Mesh(
       new THREE.PlaneGeometry(CFG.atm.x * 3, CFG.atm.z * 3),
-      new THREE.MeshBasicMaterial({ color: 0x1c3a52, transparent: true, opacity: 0.35 })
+      new THREE.MeshPhongMaterial({
+        color: 0x27506e, transparent: true, opacity: 0.5,
+        shininess: 80, specular: 0x9fd8ff,
+      })
     );
     this.floor.rotation.x = -Math.PI / 2;
     this.add(this.floor);
+    // Свет — паттерн официальных шаблонов; интенсивностью дышит погода ниже.
+    this.hemi = new THREE.HemisphereLight(0xffffff, 0x46536b, 2.4);
+    this.add(this.hemi);
+    this.sun = new THREE.DirectionalLight(0xdfeaff, 1.1);
+    this.sun.position.set(2.5, 4, -1.5);
+    this.add(this.sun);
 
     this.buildDeck();
     this.buildHaze();
@@ -386,6 +423,7 @@ class WeatherRoom extends xb.Script {
     this.drops = null;                   // система дождя — после спрайт-листа
     this.loadTextures();
     this.buildCloudVolume();
+    this.moteL = this.buildMotes();     // аэрозоль влажности
 
     this.buildHud();
     hideInPassthrough([this.hazeMesh, this.deckMesh, this.floor]);
@@ -430,6 +468,7 @@ class WeatherRoom extends xb.Script {
       this.derive();
       this.applyLook();
       this.ui.sliderLabel.text = 'NOW · DEMO STORM';
+    this.source = 'AUTOMATION · DEMO STORM';
     } else {
       this.locate();
     }
@@ -441,7 +480,12 @@ class WeatherRoom extends xb.Script {
     this.ui = {
       stat: new xb.UIText({
         text: 'запрос геопозиции…',
-        style: { fontSize: 14, opacity: 0.8, textAlign: 'center', lineHeight: 1.4 },
+        style: { fontSize: 14, opacity: 0.8, textAlign: 'center', lineHeight: 1.4, flexGrow: 1 },
+      }),
+      icon: new xb.UIIcon({
+        icon: 'partly_cloudy_day',
+        ariaLabel: 'текущая погода',
+        style: { fontSize: 40 },
       }),
       sliderLabel: new xb.UIText({
         text: 'NOW',
@@ -483,7 +527,10 @@ class WeatherRoom extends xb.Script {
           text: 'WEATHER//ROOM',
           style: { fontSize: 28, fontWeight: 'bold', textAlign: 'center' },
         }),
-        this.ui.stat,
+        new xb.UIPanel({
+          style: { flexDirection: 'row', gap: 10, alignItems: 'center', width: '100%' },
+          children: [this.ui.icon, this.ui.stat],
+        }),
         this.ui.sliderLabel,
         this.ui.slider,
         new xb.UIPanel({
@@ -505,8 +552,27 @@ class WeatherRoom extends xb.Script {
       this.buildDrops(t);
     });
     loader.load('textures/snowflake1.png', (t) => {
-      t.colorSpace = THREE.SRGBColorSpace;
-      if (this.snow.mat.uniforms.map) this.snow.mat.uniforms.map.value = t;
+      // Файл сэмпла — непрозрачный квадрат (проверено пикселями): строим
+      // альфу вырезанием по яркости с авто-полярностью фона, иначе снежинки
+      // падают «кубиками».
+      const S = t.image.width;
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = S;
+      const ctx = cv.getContext('2d');
+      ctx.drawImage(t.image, 0, 0);
+      const img = ctx.getImageData(0, 0, S, S);
+      const d = img.data;
+      const invert = d[0] > 127; // фон в углу кадра
+      for (let i = 0; i < d.length; i += 4) {
+        const l = Math.max(d[i], d[i + 1], d[i + 2]);
+        const shape = invert ? 255 - l : l;
+        d[i] = d[i + 1] = d[i + 2] = 255;
+        d[i + 3] = shape;
+      }
+      ctx.putImageData(img, 0, 0);
+      const cut = new THREE.CanvasTexture(cv);
+      cut.colorSpace = THREE.SRGBColorSpace;
+      if (this.snow.mat.uniforms.map) this.snow.mat.uniforms.map.value = cut;
     });
   }
 
@@ -531,6 +597,8 @@ class WeatherRoom extends xb.Script {
         uCameraPosition: { value: new THREE.Vector3() },
         uOpacity: { value: 0.8 },
         uLit: { value: 1 },
+        uStretch: { value: CFG.dropStretch },
+        uLeanWorld: { value: new THREE.Vector3() },
       },
       vertexShader: /* glsl */`
         attribute float aWeight;
@@ -539,6 +607,8 @@ class WeatherRoom extends xb.Script {
         varying float vVisibility;
         varying vec2 vUv;
         uniform vec3 uCameraPosition;
+        uniform float uStretch;
+        uniform vec3 uLeanWorld;
         void main() {
           vUv = uv;
           vWeight = aWeight;
@@ -557,6 +627,8 @@ class WeatherRoom extends xb.Script {
               sin(angle), 0.0,  cos(angle)
             );
             rotatedPosition = rotationMatrix * position;
+            // Росчерк: летящий квад вытягивается по вертикали.
+            rotatedPosition.y *= uStretch;
           } else {
             // Всплеск: квад кладётся горизонтально (поворот X на 90°).
             float angle = 1.5707963;
@@ -568,6 +640,8 @@ class WeatherRoom extends xb.Script {
             rotatedPosition = rotationMatrix * position;
           }
           vec4 finalPosition = instanceMatrix * vec4(rotatedPosition, 1.0);
+          // Снос ветром: верх росчерка отклоняется по миру, только в полёте.
+          finalPosition.xyz += uLeanWorld * (1.0 - step(1.5, vWeight)) * (vUv.y - 0.5);
           gl_Position = projectionMatrix * viewMatrix * finalPosition;
         }`,
       fragmentShader: /* glsl */`
@@ -807,15 +881,22 @@ class WeatherRoom extends xb.Script {
   // --- данные и погодная моторика ---------------------------------------------
 
   locate() {
-    if (!navigator.geolocation) return this.load(this.lat, this.lon);
+    if (!navigator.geolocation) {
+      this._defaulted = true;
+      return this.load(this.lat, this.lon);
+    }
     this.stat('LOCATING…');
+    this._defaulted = false;
     navigator.geolocation.getCurrentPosition(
       (p) => {
         this.lat = +p.coords.latitude.toFixed(3);
         this.lon = +p.coords.longitude.toFixed(3);
         this.load(this.lat, this.lon);
       },
-      () => this.load(this.lat, this.lon),
+      () => {
+        this._defaulted = true;
+        this.load(this.lat, this.lon);
+      },
       { timeout: 6000 }
     );
   }
@@ -824,10 +905,11 @@ class WeatherRoom extends xb.Script {
     this.stat(`METEO ${lat.toFixed(2)}, ${lon.toFixed(2)} …`);
     try {
       this.data = await fetchWeather(lat, lon);
-      this.stat(`LIVE · OPEN-METEO · ${lat.toFixed(2)}, ${lon.toFixed(2)}`);
+      // Источник данных виден в телеметрии всегда, а не один кадр.
+      this.source = `LIVE · OPEN-METEO${this._defaulted ? ' · ТОЧКА ПО УМОЛЧАНИЮ' : ''} · ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
     } catch (e) {
       this.data = demoData();
-      this.stat(`OFFLINE DEMO (no network): ${e.message}`);
+      this.source = `DEMO (нет сети: ${e.message}) · синтетика`;
     }
     this.applyHour();
   }
@@ -870,6 +952,7 @@ class WeatherRoom extends xb.Script {
     this.ui.sliderLabel.text =
       `${this.offset === 0 ? 'NOW · ' : ''}${when.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} ` +
       `· ${this.offset >= 0 ? '+' : ''}${this.offset}h`;
+    this.ui.icon.icon = iconFor(this.state);
   }
 
   // Поля ответа → параметры сцены.
@@ -907,6 +990,23 @@ class WeatherRoom extends xb.Script {
       for (let i = n; i < this.snow.active; i++) p[i * 3 + 1] = -60;
       this.snow.active = n;
       this.snow.posAttr.needsUpdate = true;
+    }
+    // Аэрозоль влажности: гуще при высокой rh, цвет от температуры.
+    if (this.moteL) {
+      const rh01 = clamp((this.state.rh - 25) / 74, 0, 1);
+      const n = Math.round((0.15 + 0.85 * rh01) * (1 - 0.4 * this.fogK) * this.moteL.count);
+      const p = this.moteL.pos;
+      for (let i = this.moteL.active; i < n; i++) {
+        const ix = i * 3;
+        p[ix] = (Math.random() * 2 - 1) * CFG.atm.x;
+        p[ix + 1] = 0.05 + Math.random() * (CFG.atm.top - 0.05);
+        p[ix + 2] = (Math.random() * 2 - 1) * CFG.atm.z;
+      }
+      for (let i = n; i < this.moteL.active; i++) p[i * 3 + 1] = -60;
+      this.moteL.active = n;
+      this.moteL.posAttr.needsUpdate = true;
+      this.moteL.baseT.set(0x9fc4ff).lerp(new THREE.Color(0xffd2a0),
+        clamp((this.state.temp + 15) / 45, 0, 1));
     }
   }
 
@@ -1003,10 +1103,15 @@ class WeatherRoom extends xb.Script {
           visibility = 0;
         }
       }
-      // Пол: посадка и всплеск.
-      if (y <= 0) {
-        y = 0;
-        if (D.weights[i] < 0.5) D.weights[i] = 1;
+      // Поверхность: детектируемая плоскость (стол/пол комнаты) или пол y=0.
+      const surf = this.surfaceAt(x, z);
+      const groundY = surf ? surf.y : 0;
+      if (y <= groundY) {
+        y = groundY;
+        if (D.weights[i] < 0.5) {
+          D.weights[i] = 1;
+          this.wetSpot(x, y, z, surf ? surf.quaternion : FLAT_QUAT, false);
+        }
       }
       if (D.weights[i] > 0) D.weights[i] += dt * 60;
       if (D.weights[i] > CFG.splashFrames * CFG.splashSpeed) {
@@ -1027,6 +1132,248 @@ class WeatherRoom extends xb.Script {
     D.weightAttr.needsUpdate = true;
     D.visAttr.needsUpdate = true;
     D.mat.uniforms.uCameraPosition.value.copy(camera.position);
+    // Наклон росчерка — по текущему ветру (заметнее, чем физический снос).
+    D.mat.uniforms.uLeanWorld.value.set(wx * 0.11, 0, wz * 0.11);
+  }
+
+  // Горизонтальные плоскости комнаты (plane detection): стол, пол, столешница.
+  // Тонкие боксы с малой толщиной по Y — вертикальные стены дождь не ловят.
+  sampleSurfaces() {
+    const next = [];
+    let planes = [];
+    try { planes = xb.world.planes.get(); } catch { /* детектор выключен */ }
+    const box = new THREE.Box3();
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    for (const plane of planes) {
+      plane.updateWorldMatrix(true, false);
+      box.setFromObject(plane);
+      box.getSize(size);
+      if (size.y > Math.max(0.05, Math.min(size.x, size.z) * 0.35)) continue;
+      if (box.max.y <= 0.02 || box.max.y > CFG.atm.top) continue;
+      box.getCenter(center);
+      plane.getWorldQuaternion(q);
+      const n = new THREE.Vector3(0, 1, 0).applyQuaternion(q).normalize();
+      if (n.y < 0) n.negate();
+      next.push({
+        x0: box.min.x, x1: box.max.x, z0: box.min.z, z1: box.max.z,
+        y: center.y,
+        quaternion: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n),
+      });
+    }
+    this.surfaces = next;
+  }
+
+  surfaceAt(x, z) {
+    for (const s of this.surfaces) {
+      if (x < s.x0 || x > s.x1 || z < s.z0 || z > s.z1) continue;
+      return s;
+    }
+    return null;
+  }
+
+  // Мокрые пятна: пул плоских квадов с процедурной текстурой, NormalBlending —
+  // это след, а не свет. Жизнь 5…13 с, рецикл старейшего слота.
+  ensureStains() {
+    if (this.stains) return;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 128;
+    const ctx = cv.getContext('2d');
+    const g = ctx.createRadialGradient(64, 64, 4, 64, 64, 60);
+    g.addColorStop(0, 'rgba(255,255,255,0.9)');
+    g.addColorStop(0.55, 'rgba(255,255,255,0.35)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 128, 128);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const geo = new THREE.PlaneGeometry(1, 1);
+    const pool = [];
+    for (let i = 0; i < 26; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex, color: 0xbfe3ff, transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.NormalBlending,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.visible = false;
+      this.add(mesh);
+      pool.push({ mesh, life: 1e9, dur: 1, peak: 0.4 });
+    }
+    this.stains = { tex, geo, pool };
+  }
+
+  wetSpot(x, y, z, quaternion, isSnow) {
+    if (this._stainCd > 0) return;
+    this.ensureStains();
+    const rate = this.rainK * 0.5 + this.showerK * 0.75 + this.snowK * 0.35;
+    this._stainCd = 0.42 - 0.3 * clamp(rate, 0, 1);
+    const s = this.stains.pool.find((p) => p.life >= p.dur) || this.stains.pool[0];
+    s.life = 0;
+    s.dur = isSnow ? 9 + Math.random() * 4 : 5 + Math.random() * 4;
+    s.peak = isSnow ? 0.3 : 0.42;
+    s.mesh.position.set(x, y + 0.004, z);
+    s.mesh.quaternion.copy(quaternion);
+    s.mesh.scale.setScalar(isSnow ? 0.05 + Math.random() * 0.03 : 0.09 + Math.random() * 0.07);
+    s.mesh.material.color.set(isSnow ? 0xeef6ff : 0xbfe3ff);
+    s.mesh.visible = true;
+  }
+
+  stepStains(dt) {
+    if (!this.stains) return;
+    for (const s of this.stains.pool) {
+      if (s.life >= s.dur) {
+        if (s.mesh.visible) s.mesh.visible = false;
+        continue;
+      }
+      s.life += dt;
+      const f = Math.min(1, s.life / s.dur);
+      s.mesh.material.opacity = s.peak * (1 - f) * (1 - f);
+    }
+  }
+
+  // Накопление снега: точки на полу в месте посадки, живут ~минуту.
+  ensureFlakes() {
+    if (this.flakes) return;
+    const N = 400;
+    const pos = new Float32Array(N * 3).fill(-60);
+    const geo = new THREE.BufferGeometry();
+    const pa = new THREE.BufferAttribute(pos, 3);
+    pa.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', pa);
+    const mat = glowBlending(new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false,
+      uniforms: {
+        map: { value: glowSprite() },
+        uSize: { value: 0.014 },
+        uColor: { value: new THREE.Color(0xeef6ff) },
+        uOpacity: { value: 0.8 },
+      },
+      vertexShader: /* glsl */`
+        varying float vFog;
+        uniform float uSize;
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          float dist = max(0.1, -mv.z);
+          gl_PointSize = uSize * 900.0 / dist;
+          vFog = exp(-dist * 0.12);
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: /* glsl */`
+        varying float vFog;
+        uniform sampler2D map;
+        uniform vec3 uColor;
+        uniform float uOpacity;
+        void main() {
+          float a = texture2D(map, gl_PointCoord).a;
+          gl_FragColor = vec4(uColor * vFog, a * uOpacity);
+        }`,
+    }));
+    const points = new THREE.Points(geo, mat);
+    points.frustumCulled = false;
+    this.add(points);
+    this.flakes = { pos, pa, geo, mat, points, head: 0, N, life: new Float32Array(N) };
+  }
+
+  snowDot(x, z) {
+    if (this.snowK < 0.05) return;
+    this.ensureFlakes();
+    const F = this.flakes;
+    F.head = (F.head + 1) % F.N;
+    const i = F.head;
+    F.pos[i * 3] = x;
+    F.pos[i * 3 + 1] = 0.006;
+    F.pos[i * 3 + 2] = z;
+    F.life[i] = 40 + Math.random() * 20;
+    F.pa.needsUpdate = true;
+  }
+
+  stepFlakes(dt) {
+    if (!this.flakes) return;
+    const F = this.flakes;
+    let any = false;
+    for (let i = 0; i < F.N; i++) {
+      if (F.life[i] <= 0) continue;
+      F.life[i] -= dt;
+      if (F.life[i] <= 0) {
+        F.pos[i * 3 + 1] = -60;
+        any = true;
+      }
+    }
+    if (any) F.pa.needsUpdate = true;
+  }
+
+  // Аэрозоль влажности: мелкие пылинки, плотность от rh, цвет от температуры,
+  // дрожь от порывов — ещё одно поле ответа с видимой причиной.
+  buildMotes() {
+    const count = CFG.motes;
+    const pos = new Float32Array(count * 3).fill(-60);
+    const geo = new THREE.BufferGeometry();
+    const pa = new THREE.BufferAttribute(pos, 3);
+    pa.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', pa);
+    const mat = glowBlending(new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false,
+      uniforms: {
+        map: { value: glowSprite() },
+        uSize: { value: 0.011 },
+        uColor: { value: new THREE.Color(0x9fc4ff) },
+        uOpacity: { value: 0.12 },
+      },
+      vertexShader: /* glsl */`
+        varying float vFog;
+        uniform float uSize;
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          float dist = max(0.1, -mv.z);
+          gl_PointSize = uSize * 900.0 / dist;
+          vFog = exp(-dist * 0.12);
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: /* glsl */`
+        varying float vFog;
+        uniform sampler2D map;
+        uniform vec3 uColor;
+        uniform float uOpacity;
+        void main() {
+          float a = texture2D(map, gl_PointCoord).a;
+          gl_FragColor = vec4(uColor * vFog, a * uOpacity);
+        }`,
+    }));
+    const points = new THREE.Points(geo, mat);
+    points.frustumCulled = false;
+    this.add(points);
+    return {
+      count, pos, geo, mat, points, active: 0, posAttr: pa,
+      phase: new Float32Array(count).map(() => Math.random() * Math.PI * 2),
+      baseT: new THREE.Color(0x9fc4ff),
+    };
+  }
+
+  stepMotes(dt) {
+    const M = this.moteL;
+    if (!M || !M.active) return;
+    const st = this.state;
+    const a = ((st.wdir + 180) % 360) * Math.PI / 180;
+    const wx = Math.sin(a) * st.wind * 0.35;
+    const wz = -Math.cos(a) * st.wind * 0.35;
+    const gust = clamp(st.gust / 14, 0, 1);
+    const t = performance.now() * 0.001;
+    const p = M.pos, ph = M.phase;
+    for (let i = 0; i < M.active; i++) {
+      const ix = i * 3, an = ph[i];
+      let x = p[ix] + (wx + Math.sin(t * 0.9 + an) * 0.4 * gust) * dt;
+      let y = p[ix + 1] + (Math.sin(t * 0.7 + an * 2.3) * 0.2 + 0.04) * dt;
+      let z = p[ix + 2] + (wz + Math.cos(t * 0.8 + an * 1.3) * 0.4 * gust) * dt;
+      if (x > CFG.atm.x) x -= CFG.atm.x * 2; else if (x < -CFG.atm.x) x += CFG.atm.x * 2;
+      if (z > CFG.atm.z) z -= CFG.atm.z * 2; else if (z < -CFG.atm.z) z += CFG.atm.z * 2;
+      if (y > CFG.atm.top) y = 0.05; else if (y < 0.05) y = CFG.atm.top;
+      p[ix] = x; p[ix + 1] = y; p[ix + 2] = z;
+    }
+    M.posAttr.needsUpdate = true;
+    const rh01 = clamp((st.rh - 25) / 74, 0, 1);
+    M.mat.uniforms.uOpacity.value = (0.05 + 0.16 * rh01) * (1 - 0.4 * this.fogK) * (0.5 + 0.6 * this.lumK);
+    M.mat.uniforms.uColor.value.lerp(M.baseT, Math.min(1, dt * 2));
   }
 
   stepSnow(dt) {
@@ -1044,7 +1391,10 @@ class WeatherRoom extends xb.Script {
       let x = p[ix] + (wx + Math.sin(t * 1.3 + an) * 0.22) * dt;
       let z = p[ix + 2] + (wz + Math.cos(t * 1.1 + an * 1.7) * 0.22) * dt;
       let y = p[ix + 1] - (fall + Math.sin(t * 2.1 + an * 2.3) * 0.06) * dt;
-      if (y <= 0) {
+      const surf = this.surfaceAt(x, z);
+      const gy = surf ? surf.y : 0;
+      if (y <= gy) {
+        this.snowDot(x, z);
         x = (Math.random() * 2 - 1) * CFG.atm.x;
         y = CFG.atm.top;
         z = (Math.random() * 2 - 1) * CFG.atm.z;
@@ -1075,12 +1425,20 @@ class WeatherRoom extends xb.Script {
     }
     this.flash = Math.max(0, this.flash - dt * 3.2);
 
+    if ((this._surfaceAge += dt) > 1) { this._surfaceAge = 0; this.sampleSurfaces(); }
     this.stepDrops(dt, camera);
     this.stepSnow(dt);
+    this.stepMotes(dt);
+    this.stepFlakes(dt);
+    this.stepStains(dt);
+    this._stainCd = Math.max(0, this._stainCd - dt);
     this._depthOn = this.depthLive();
 
     const k = Math.min(1, dt * 2.2);
     const lit = this.lumK * (1 + this.flash * 0.9) * this._arGain;
+    // Свет дышит погодой: день/облака/мгла и вспышки молний.
+    this.hemi.intensity = 0.9 + 1.6 * lit;
+    this.sun.intensity = 0.4 + 1.0 * lit + this.flash * 2.2;
 
     // Слои: плавная подстройка к целям текущего часа.
     if (this.drops) {
@@ -1121,8 +1479,8 @@ class WeatherRoom extends xb.Script {
         const u = v.mesh.material.uniforms;
         this._cloudTint.copy(this.cloudTint).multiplyScalar(0.45 + 0.75 * this.lumK);
         u.base.value.lerp(this._cloudTint, k);
-        u.threshold.value = 0.27 - 0.15 * this.cloud;
-        u.opacity.value = (0.12 + 0.38 * this.cloud) * (1 - 0.45 * this.fogK) * (1 + this.flash * 0.4);
+        u.threshold.value = 0.32 - 0.18 * this.cloud;
+        u.opacity.value = (0.16 + 0.44 * this.cloud) * (1 - 0.45 * this.fogK) * (1 + this.flash * 0.4);
       }
     }
 
@@ -1139,11 +1497,11 @@ class WeatherRoom extends xb.Script {
       const vis = s.vis >= 1000 ? `${(s.vis / 1000).toFixed(1)} km` : `${Math.round(s.vis)} m`;
       const sound = this.soundOn ? (this.soundReady ? 'on' : 'loading') : this.soundFailed ? 'unavailable' : 'off';
       this.stat(
-        `${this.condition()} · ${s.temp.toFixed(1)}°C · wind ${s.wind.toFixed(1)} m/s ${dirName(s.wdir)}, gust ${s.gust.toFixed(1)} · ` +
+        `${this.source} · ${this.condition()} · ${s.temp.toFixed(1)}°C · wind ${s.wind.toFixed(1)} m/s ${dirName(s.wdir)}, gust ${s.gust.toFixed(1)} · ` +
         `cloud ${Math.round(s.cloud)}% · rh ${Math.round(s.rh)}% · vis ${vis} · ${Math.round(s.press)} hPa · ` +
         `rain ${s.rain.toFixed(2)} · showers ${s.showers.toFixed(2)} · snow ${s.snow.toFixed(2)} cm/h · ` +
         `drops ${this.drops?.active ?? 0} · snowflakes ${this.snow?.active ?? 0} · ` +
-        `depth ${this._depthOn ? 'live' : 'off'} · sound ${sound}`
+        `surfaces ${this.surfaces.length} · depth ${this._depthOn ? 'live' : 'off'} · sound ${sound}`
       );
     }
   }
@@ -1155,11 +1513,26 @@ class WeatherRoom extends xb.Script {
       this.remove(this.drops.mesh);
       this.drops = null;
     }
-    for (const S of [this.snow, this.stars]) {
+    for (const S of [this.snow, this.stars, this.moteL]) {
       if (!S) continue;
       S.geo.dispose();
       S.mat.dispose();
       this.remove(S.points);
+    }
+    if (this.stains) {
+      for (const s of this.stains.pool) {
+        s.mesh.material.dispose();
+        this.remove(s.mesh);
+      }
+      this.stains.geo.dispose();
+      this.stains.tex.dispose();
+      this.stains = null;
+    }
+    if (this.flakes) {
+      this.flakes.geo.dispose();
+      this.flakes.mat.dispose();
+      this.remove(this.flakes.points);
+      this.flakes = null;
     }
     this.deckMesh.geometry.dispose();
     this.deckMat.dispose();

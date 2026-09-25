@@ -50,6 +50,41 @@
     font-size:12px; border-radius:999px; }
   body:has(#XRButtonWrapper.in-session) #back { display:none; }
   body.automation #back, body.automation #XRButtonWrapper { display:none !important; }
+
+  /* Контролы опыта — DOM-панель (как кнопка старта в официальном сэмпле
+     rain): работает мышью, тапом на телефоне и в симуляторе, не зависит от
+     interaction-пайплайна. В XR-сессии и automation скрывается. */
+  .wx-panel { position:fixed; left:50%; bottom:calc(12px + env(safe-area-inset-bottom));
+    transform:translateX(-50%); z-index:35; width:min(560px, calc(100vw - 24px));
+    display:grid; gap:8px; padding:14px 16px; border-radius:16px;
+    background:rgba(7,14,25,.82); border:1px solid rgba(84,214,255,.5);
+    color:#eaf9ff; font:400 13px/1.45 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    backdrop-filter:blur(10px); box-shadow:0 10px 28px rgba(0,0,0,.38); }
+  .wx-head { display:flex; align-items:center; gap:8px; }
+  .wx-icon { font-size:22px; }
+  .wx-title { font-weight:600; letter-spacing:.08em; color:#54d6ff; font-size:14px; }
+  .wx-src, .wx-stat, .wx-detail, .wx-time { white-space:pre-line; }
+  .wx-src { color:#9fb2d2; font-size:11px; }
+  .wx-stat { font-weight:600; font-size:14px; }
+  .wx-detail { color:#9fb2d2; font-size:11px; }
+  .wx-time { text-align:center; font-weight:600; color:#cfe8ff; }
+  .wx-slider { -webkit-appearance:none; appearance:none; width:100%; height:26px;
+    background:transparent; margin:0; }
+  .wx-slider::-webkit-slider-runnable-track { height:6px; border-radius:3px;
+    background:rgba(84,214,255,.25); }
+  .wx-slider::-webkit-slider-thumb { -webkit-appearance:none; width:20px; height:20px;
+    margin-top:-7px; border-radius:50%; background:#38bdf8;
+    box-shadow:0 0 10px rgba(56,189,248,.8); }
+  .wx-slider::-moz-range-track { height:6px; border-radius:3px;
+    background:rgba(84,214,255,.25); }
+  .wx-slider::-moz-range-thumb { width:20px; height:20px; border:none; border-radius:50%;
+    background:#38bdf8; }
+  .wx-row { display:flex; gap:8px; }
+  .wx-row button { flex:1; min-height:42px; border:1px solid #3c94b0; border-radius:10px;
+    color:#eaf9ff; background:#10243a; font:600 13px/1 system-ui,sans-serif; cursor:pointer; }
+  .wx-row button:active { color:#04121c; background:#54d6ff; }
+  body:has(#XRButtonWrapper.in-session) .wx-panel,
+  body.automation .wx-panel { display:none; }
 </style>
 </head>
 <body>
@@ -78,7 +113,8 @@
 //     реальной геометрии лучом из камеры;
 //   облако: аддон VolumetricCloud, как в том же сэмпле;
 //   скелет: золотой промпт Gemini Canvas — один файл, import-map CDN,
-//     xb.Script, встроенный spatial UI (UIOverlay), дефолтный симулятор.
+//     xb.Script, контролы — DOM-панель (как кнопка старта официального
+//     сэмпла rain: работает мышью, тапом и в симуляторе).
 //
 // Инлайненные device-контракты (причины — в XR-BLOCKS.md корня):
 //   glowBlending — premultiplied-alpha телефонного AR (аддитив копит альфу
@@ -363,18 +399,18 @@ const C = {
 const FLAT_QUAT = new THREE.Quaternion().setFromAxisAngle(
   new THREE.Vector3(1, 0, 0), -Math.PI / 2);
 
-// Иконка погоды (Material Symbols) по коду WMO и времени суток.
+// Иконка погоды (эмодзи для DOM-панели) по коду WMO и времени суток.
 function iconFor(s) {
   const c = s.code;
-  const suffix = s.isDay ? '_day' : '_night';
-  if (c === 0) return 'clear' + suffix;
-  if (c === 1) return 'partly_cloudy' + suffix;
-  if (c <= 3) return 'cloud';
-  if (c <= 48) return 'fog';
-  if (c <= 67) return 'rainy';
-  if (c <= 77 || (c >= 85 && c <= 86)) return 'snowing';
-  if (c <= 82) return 'rainy';
-  return 'thunderstorm';
+  const night = !s.isDay;
+  if (c === 0) return night ? '🌙' : '☀️';
+  if (c === 1) return night ? '🌙' : '🌤';
+  if (c <= 3) return '☁️';
+  if (c <= 48) return '🌫';
+  if (c <= 67) return '🌧';
+  if (c <= 77 || (c >= 85 && c <= 86)) return '❄️';
+  if (c <= 82) return '🌧';
+  return '⛈';
 }
 
 // --- опыт --------------------------------------------------------------------
@@ -425,7 +461,7 @@ class WeatherRoom extends xb.Script {
     this.buildCloudVolume();
     this.moteL = this.buildMotes();     // аэрозоль влажности
 
-    this.buildHud();
+    this.buildPanel();
     hideInPassthrough([this.hazeMesh, this.deckMesh, this.floor]);
     this._arGain = 1;
     const xr = xb.core?.renderer?.xr;
@@ -467,82 +503,85 @@ class WeatherRoom extends xb.Script {
       };
       this.derive();
       this.applyLook();
-      this.ui.sliderLabel.text = 'NOW · DEMO STORM';
-    this.source = 'AUTOMATION · DEMO STORM';
+      this.source = 'AUTOMATION · DEMO STORM';
+      if (this.dom) this.dom.time.textContent = 'NOW · DEMO STORM';
     } else {
       this.locate();
     }
   }
 
-  // HUD — нативный UIOverlay (view-space): канон телефонного AR, работает и
-  // на плоском десктопе до входа в сессию.
-  buildHud() {
-    this.ui = {
-      stat: new xb.UIText({
-        text: 'запрос геопозиции…',
-        style: { fontSize: 14, opacity: 0.8, textAlign: 'center', lineHeight: 1.4, flexGrow: 1 },
-      }),
-      icon: new xb.UIIcon({
-        icon: 'partly_cloudy_day',
-        ariaLabel: 'текущая погода',
-        style: { fontSize: 40 },
-      }),
-      sliderLabel: new xb.UIText({
-        text: 'NOW',
-        style: { fontSize: 15, fontWeight: 'bold', textAlign: 'center' },
-      }),
+  // Контролы — DOM-панель: официальные сэмплы делают так же (кнопка старта
+  // rain), она одинаково работает мышью, тапом и в симуляторе, не зависит от
+  // interaction-пайплайна и не имеет цены spatial-UI. В XR-сессии скрывается —
+  // там остаётся чистая сцена.
+  buildPanel() {
+    const el = document.createElement('section');
+    el.className = 'wx-panel';
+    el.innerHTML = `
+      <div class="wx-head"><span class="wx-icon">☁️</span><span class="wx-title">WEATHER//ROOM</span></div>
+      <div class="wx-src">запрос геопозиции…</div>
+      <div class="wx-stat"></div>
+      <div class="wx-detail"></div>
+      <div class="wx-time">NOW</div>
+      <input class="wx-slider" type="range" min="-24" max="24" step="0.25" value="0" aria-label="время ±24ч">
+      <div class="wx-row">
+        <button data-act="minus">−1ч</button>
+        <button data-act="now">NOW</button>
+        <button data-act="plus">+1ч</button>
+      </div>
+      <div class="wx-row">
+        <button data-act="geo">LOCATE</button>
+        <button data-act="sound">SOUND OFF</button>
+      </div>`;
+    document.body.append(el);
+    this.dom = {
+      el,
+      icon: el.querySelector('.wx-icon'),
+      src: el.querySelector('.wx-src'),
+      stat: el.querySelector('.wx-stat'),
+      detail: el.querySelector('.wx-detail'),
+      time: el.querySelector('.wx-time'),
+      slider: el.querySelector('.wx-slider'),
+      soundBtn: el.querySelector('[data-act="sound"]'),
     };
-    this.ui.slider = new xb.UISlider({
-      ariaLabel: 'время ±24ч',
-      min: -24, max: 24, step: 1, value: 0,
-      style: { width: '100%', height: 40 },
-      onInput: (v) => { this.offset = v; this.applyHour(); },
+    this.dom.slider.addEventListener('input', (e) => {
+      this.offset = parseFloat(e.target.value);
+      this.applyHour();
     });
-    this.ui.now = new xb.UIButton({
-      label: 'NOW', icon: 'schedule', style: { flexGrow: 1 },
-      onClick: () => {
-        this.ui.slider.value = 0;
+    el.addEventListener('click', (e) => {
+      const act = e.target?.dataset?.act;
+      if (!act) return;
+      if (act === 'minus') this.stepTime(-1);
+      else if (act === 'plus') this.stepTime(1);
+      else if (act === 'now') {
         this.offset = 0;
+        this.dom.slider.value = '0';
         this.applyHour();
-      },
+      } else if (act === 'geo') this.locate();
+      else if (act === 'sound') this.toggleSound();
     });
-    this.ui.geo = new xb.UIButton({
-      label: 'LOCATE', icon: 'my_location', style: { flexGrow: 1 },
-      onClick: () => this.locate(),
-    });
-    this.ui.sound = new xb.UIButton({
-      label: 'SOUND OFF', icon: 'graphic_eq', style: { flexGrow: 1 },
-      onClick: () => this.toggleSound(),
-    });
-    this.ui.overlay = new xb.UIOverlay({
-      style: {
-        width: 620,
-        position: 'absolute',
-        left: '50%',
-        bottom: 24,
-        transform: { translateX: '-50%' },
-      },
-      children: [
-        new xb.UIText({
-          text: 'WEATHER//ROOM',
-          style: { fontSize: 28, fontWeight: 'bold', textAlign: 'center' },
-        }),
-        new xb.UIPanel({
-          style: { flexDirection: 'row', gap: 10, alignItems: 'center', width: '100%' },
-          children: [this.ui.icon, this.ui.stat],
-        }),
-        this.ui.sliderLabel,
-        this.ui.slider,
-        new xb.UIPanel({
-          style: { width: '100%', flexDirection: 'row', gap: 12 },
-          children: [this.ui.now, this.ui.geo, this.ui.sound],
-        }),
-      ],
-    });
-    this.add(this.ui.overlay);
   }
 
-  stat(s) { this.ui.stat.text = s; }
+  stepTime(delta) {
+    this.offset = clamp(Math.round((this.offset + delta) * 4) / 4, -24, 24);
+    if (this.dom) this.dom.slider.value = String(this.offset);
+    this.applyHour();
+  }
+
+  // Десктопные шорткаты: стрелки мотают время, N — сейчас, L — локация, S — звук.
+  onKeyDown(event) {
+    const k = event.key;
+    if (k === 'ArrowLeft' || k === '[') this.stepTime(-1);
+    else if (k === 'ArrowRight' || k === ']') this.stepTime(1);
+    else if (k === 'n' || k === 'N' || k === 'Home') {
+      this.offset = 0;
+      if (this.dom) this.dom.slider.value = '0';
+      this.applyHour();
+    } else if (k === 'l' || k === 'L') this.locate();
+    else if (k === 's' || k === 'S') this.toggleSound();
+  }
+
+  stat(s) { if (this.dom) this.dom.src.textContent = s; }
 
   // Текстуры официального сэмпла rain — локальные ассеты опыта.
   loadTextures() {
@@ -826,14 +865,18 @@ class WeatherRoom extends xb.Script {
 
   // --- звук: жест SOUND → буфер официального ассета, громкость от осадков ---
 
+  setSound(label) {
+    if (this.dom) this.dom.soundBtn.textContent = label;
+  }
+
   toggleSound() {
     if (this.soundOn) {
       this.soundOn = false;
-      this.ui.sound.label = 'SOUND OFF';
+      this.setSound('SOUND OFF');
       return;
     }
     this.soundOn = true;
-    this.ui.sound.label = this.soundReady ? 'SOUND ON' : 'SOUND …';
+    this.setSound(this.soundReady ? 'SOUND ON' : 'SOUND …');
     this.ensureAudio();
     this.playRain();
   }
@@ -844,7 +887,7 @@ class WeatherRoom extends xb.Script {
     if (!camera) {
       this.soundOn = false;
       this.soundFailed = true;
-      this.ui.sound.label = 'SOUND OFF';
+      this.setSound('SOUND OFF');
       return;
     }
     this.listener = new THREE.AudioListener();
@@ -859,14 +902,14 @@ class WeatherRoom extends xb.Script {
         this.rainSound.setVolume(0);
         if (this.soundOn) {
           this.playRain();
-          this.ui.sound.label = 'SOUND ON';
+          this.setSound('SOUND ON');
         }
       },
       undefined,
       () => {
         this.soundFailed = true;
         this.soundOn = false;
-        this.ui.sound.label = 'SOUND OFF';
+        this.setSound('SOUND OFF');
       }
     );
   }
@@ -928,8 +971,19 @@ class WeatherRoom extends xb.Script {
   applyHour() {
     if (!this.data?.hourly) return;
     const h = this.data.hourly;
-    const i = Math.min(h.time.length - 1, Math.max(0, this.nowIndex() + this.offset));
-    const g = (key, d = 0) => num(h[key] && h[key][i], d);
+    // Дробная перемотка: слайдер с шагом 0.25 ч, поля интерполируются между
+    // часами — скраб видно каждым движением, а не «щёлками» раз в час.
+    const idx = clamp(this.nowIndex() + this.offset, 0, h.time.length - 1);
+    const i0 = Math.floor(idx);
+    const i1 = Math.min(h.time.length - 1, i0 + 1);
+    const fr = idx - i0;
+    const g = (key, d = 0) => {
+      const a = num(h[key] && h[key][i0], d);
+      const b = num(h[key] && h[key][i1], d);
+      return a + (b - a) * fr;
+    };
+    const speed = num(h.wind_speed_10m && h.wind_speed_10m[i0], 4);
+    const speed1 = num(h.wind_speed_10m && h.wind_speed_10m[i1], speed);
     const rain = g('rain');
     const showers = g('showers');
     this.state = {
@@ -937,7 +991,7 @@ class WeatherRoom extends xb.Script {
       rh: g('relative_humidity_2m', 65),
       cloud: g('cloud_cover', 50),
       wind: g('wind_speed_10m', 4),
-      gust: g('wind_gusts_10m', num(h.wind_speed_10m && h.wind_speed_10m[i], 4) * 1.6),
+      gust: g('wind_gusts_10m', (speed + (speed1 - speed) * fr) * 1.6),
       wdir: g('wind_direction_10m', 225),
       press: g('pressure_msl', 1010),
       vis: g('visibility', 15000),
@@ -948,11 +1002,15 @@ class WeatherRoom extends xb.Script {
     };
     this.derive();
     this.applyLook();
-    const when = new Date(Date.parse(h.time[i]));
-    this.ui.sliderLabel.text =
-      `${this.offset === 0 ? 'NOW · ' : ''}${when.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} ` +
-      `· ${this.offset >= 0 ? '+' : ''}${this.offset}h`;
-    this.ui.icon.icon = iconFor(this.state);
+    const when = new Date(Date.parse(h.time[i0]) + fr * 3600e3);
+    const off = this.offset;
+    if (this.dom) {
+      this.dom.time.textContent =
+        `${Math.abs(off) < 0.13 ? 'NOW · ' : ''}${when.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} ` +
+        `· ${off >= 0 ? '+' : '−'}${Math.abs(off).toFixed(off % 1 ? 2 : 0).replace(/\.0+$/, '')}h`;
+      this.dom.icon.textContent = iconFor(this.state);
+      if (Math.abs(Number(this.dom.slider.value) - off) > 1e-6) this.dom.slider.value = String(off);
+    }
   }
 
   // Поля ответа → параметры сцены.
@@ -964,7 +1022,7 @@ class WeatherRoom extends xb.Script {
     this.fogK = clamp(fog, 0, 1);
     this.dayK = s.isDay ? 1 : 0.34;
     const cloud01 = clamp(s.cloud / 100, 0, 1);
-    this.lumK = clamp(this.dayK * (1 - cloud01 * 0.5) * (1 - this.fogK * 0.45), 0.22, 1);
+    this.lumK = clamp(this.dayK * (1 - cloud01 * 0.5) * (1 - this.fogK * 0.45), 0.45, 1);
     this.rainK = clamp(s.rain / 0.6, 0, 1);
     this.showerK = clamp(s.showers / 3, 0, 1);
     this.snowK = clamp(s.snow / 1.2, 0, 1);
@@ -976,10 +1034,11 @@ class WeatherRoom extends xb.Script {
     this.deckColorT.copy(this.state.isDay ? C.deckDay : C.deckNight);
     this.hazeColorT.copy(this.state.isDay ? C.hazeDay : C.hazeNight);
     this.cloudTint.copy(this.state.isDay ? C.cloudDay : C.cloudNight);
+    const tier = [0.3, 0.6, 1][this._q ?? 2];
     this.applyDropCount();
     // Снег: активные точки пересчитываются прямо в буфере.
     if (this.snow) {
-      const n = Math.round(this.snowK * this.snow.count);
+      const n = Math.round(this.snowK * this.snow.count * tier);
       const p = this.snow.pos;
       for (let i = this.snow.active; i < n; i++) {
         const ix = i * 3;
@@ -994,7 +1053,7 @@ class WeatherRoom extends xb.Script {
     // Аэрозоль влажности: гуще при высокой rh, цвет от температуры.
     if (this.moteL) {
       const rh01 = clamp((this.state.rh - 25) / 74, 0, 1);
-      const n = Math.round((0.15 + 0.85 * rh01) * (1 - 0.4 * this.fogK) * this.moteL.count);
+      const n = Math.round((0.15 + 0.85 * rh01) * (1 - 0.4 * this.fogK) * this.moteL.count * tier);
       const p = this.moteL.pos;
       for (let i = this.moteL.active; i < n; i++) {
         const ix = i * 3;
@@ -1012,8 +1071,9 @@ class WeatherRoom extends xb.Script {
 
   applyDropCount() {
     if (!this.drops) return;
+    const tier = [0.55, 0.8, 1][this._q ?? 2];
     const wet = clamp(this.rainK * 0.6 + this.showerK * 0.75, 0, 1);
-    const n = Math.round(wet * this.drops.count);
+    const n = Math.round(wet * this.drops.count * tier);
     for (let i = this.drops.active; i < n; i++) this.respawnDrop(i, false);
     for (let i = n; i < this.drops.active; i++) {
       this.drops.pos[i * 3 + 1] = -60;
@@ -1204,7 +1264,7 @@ class WeatherRoom extends xb.Script {
   }
 
   wetSpot(x, y, z, quaternion, isSnow) {
-    if (this._stainCd > 0) return;
+    if (this._stainCd > 0 || (this._q ?? 2) === 0) return;
     this.ensureStains();
     const rate = this.rainK * 0.5 + this.showerK * 0.75 + this.snowK * 0.35;
     this._stainCd = 0.42 - 0.3 * clamp(rate, 0, 1);
@@ -1276,7 +1336,7 @@ class WeatherRoom extends xb.Script {
   }
 
   snowDot(x, z) {
-    if (this.snowK < 0.05) return;
+    if (this.snowK < 0.05 || (this._q ?? 2) === 0) return;
     this.ensureFlakes();
     const F = this.flakes;
     F.head = (F.head + 1) % F.N;
@@ -1425,6 +1485,17 @@ class WeatherRoom extends xb.Script {
     }
     this.flash = Math.max(0, this.flash - dt * 3.2);
 
+    // Авто-качество: стабильно дорогой кадр — гасим самые тяжёлые слои
+    // (объёмное облако, часть частиц, пятна), дешёвый — возвращаем.
+    this._ft = this._ft === undefined ? dt : this._ft * 0.95 + dt * 0.05;
+    this._qAge = (this._qAge || 0) + dt;
+    if (this._qAge > 2.5) {
+      this._qAge = 0;
+      this._q = this._q ?? 2;
+      if (this._ft > 0.05 && this._q > 0) { this._q--; this.applyLook(); }
+      else if (this._ft < 0.028 && this._q < 2) { this._q++; this.applyLook(); }
+    }
+
     if ((this._surfaceAge += dt) > 1) { this._surfaceAge = 0; this.sampleSurfaces(); }
     this.stepDrops(dt, camera);
     this.stepSnow(dt);
@@ -1464,15 +1535,15 @@ class WeatherRoom extends xb.Script {
     this.drift.y = (this.drift.y - Math.cos(a) * s.wind * dt * 0.012) % 6;
     this.deckMat.uniforms.uDrift.value.copy(this.drift);
 
-    // Мгла.
-    this.hazeMat.uniforms.uFog.value += (this.fogK - this.hazeMat.uniforms.uFog.value) * k;
+    // Мгла — вдвое мягче: пелена атмосферы, а не занавес.
+    this.hazeMat.uniforms.uFog.value += (this.fogK * 0.55 - this.hazeMat.uniforms.uFog.value) * k;
     this.hazeMat.uniforms.uColor.value.lerp(this.hazeColorT, k);
     this.hazeMat.uniforms.uLum.value = 0.35 + 0.65 * this.dayK + this.flash * 0.3;
 
     // Объёмное облако: официальный аддон; в passthrough не ставится.
     if (this.cloudVolume) {
       const v = this.cloudVolume;
-      v.visible = !isPassthrough() && this.cloud > 0.15;
+      v.visible = !isPassthrough() && (this._q ?? 2) === 2 && this.cloud > 0.15;
       if (v.visible) {
         v.position.y = this.deckY;
         v.update(camera, xb.core.depth);
@@ -1490,23 +1561,28 @@ class WeatherRoom extends xb.Script {
       this.rainSound.setVolume(wet < 0.02 ? 0 : 0.12 + 0.5 * wet);
     }
 
-    // Телеметрия дважды в секунду.
+    // Телеметрия: три строки DOM-панели, дважды в секунду.
     this._fp += dt;
     if (this._fp > 0.5) {
       this._fp = 0;
-      const vis = s.vis >= 1000 ? `${(s.vis / 1000).toFixed(1)} km` : `${Math.round(s.vis)} m`;
-      const sound = this.soundOn ? (this.soundReady ? 'on' : 'loading') : this.soundFailed ? 'unavailable' : 'off';
-      this.stat(
-        `${this.source} · ${this.condition()} · ${s.temp.toFixed(1)}°C · wind ${s.wind.toFixed(1)} m/s ${dirName(s.wdir)}, gust ${s.gust.toFixed(1)} · ` +
-        `cloud ${Math.round(s.cloud)}% · rh ${Math.round(s.rh)}% · vis ${vis} · ${Math.round(s.press)} hPa · ` +
-        `rain ${s.rain.toFixed(2)} · showers ${s.showers.toFixed(2)} · snow ${s.snow.toFixed(2)} cm/h · ` +
-        `drops ${this.drops?.active ?? 0} · snowflakes ${this.snow?.active ?? 0} · ` +
-        `surfaces ${this.surfaces.length} · depth ${this._depthOn ? 'live' : 'off'} · sound ${sound}`
-      );
+      const vis = s.vis >= 1000 ? `${(s.vis / 1000).toFixed(1)} км` : `${Math.round(s.vis)} м`;
+      const sound = this.soundOn ? (this.soundReady ? 'вкл' : '…') : this.soundFailed ? 'нет' : 'выкл';
+      if (this.dom) {
+        this.dom.src.textContent = this.source;
+        this.dom.stat.textContent = `${this.condition()} · ${s.temp.toFixed(1)}°C · ветер ${s.wind.toFixed(1)} м/с ${dirName(s.wdir)}`;
+        this.dom.detail.textContent =
+          `дождь ${(s.rain + s.showers).toFixed(2)} · снег ${s.snow.toFixed(2)} см/ч · облака ${Math.round(s.cloud)}% · видимость ${vis} · ${Math.round(s.press)} гПа · потолок ${this.deckY.toFixed(1)} м\n` +
+          `поверхности ${this.surfaces.length} · капли ${this.drops?.active ?? 0} · depth ${this._depthOn ? 'есть' : 'нет'} · звук ${sound}${
+            (this._q ?? 2) < 2 ? ` · качество ${this._q}/2` : ''}`;
+      }
     }
   }
 
   dispose() {
+    if (this.dom) {
+      this.dom.el.remove();
+      this.dom = null;
+    }
     if (this.drops) {
       this.drops.geo.dispose();
       this.drops.mat.dispose();

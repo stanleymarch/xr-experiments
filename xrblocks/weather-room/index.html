@@ -85,6 +85,14 @@
   .wx-row button:active { color:#04121c; background:#54d6ff; }
   body:has(#XRButtonWrapper.in-session) .wx-panel,
   body.automation .wx-panel { display:none; }
+
+  /* Телефон: панель сверху — кнопка входа XR остаётся свободной по центру,
+     крупные тап-таргеты, безопасная зона сверху учтена. */
+  @media (pointer:coarse) {
+    .wx-panel { top:calc(46px + env(safe-area-inset-top)); bottom:auto;
+      width:calc(100vw - 24px); padding:10px 12px; gap:6px; }
+    .wx-row button { min-height:44px; }
+  }
 </style>
 </head>
 <body>
@@ -425,6 +433,8 @@ class WeatherRoom extends xb.Script {
     this.rainK = 0; this.showerK = 0; this.snowK = 0;
     // Префикс телеметрии: источник данных виден всегда, а не один кадр.
     this.source = 'ПОИСК…';
+    this.geoState = 'idle';   // idle | searching | ok | default
+    this.geoMsg = '';
     this.surfaces = [];        // горизонтальные плоскости комнаты (детектор)
     this._surfaceAge = 0;
     this.stains = null;        // пул мокрых пятен — ленивый
@@ -462,10 +472,15 @@ class WeatherRoom extends xb.Script {
     this.moteL = this.buildMotes();     // аэрозоль влажности
 
     this.buildPanel();
+    this.buildSessionCard();
     hideInPassthrough([this.hazeMesh, this.deckMesh, this.floor]);
     this._arGain = 1;
     const xr = xb.core?.renderer?.xr;
-    const syncArGain = () => { this._arGain = isPassthrough() ? 1.3 : 1; };
+    const syncArGain = () => {
+      this._arGain = isPassthrough() ? 1.3 : 1;
+      // Spatial-статус виден только внутри XR-сессии.
+      if (this.sessionUi) this.sessionUi.overlay.visible = Boolean(xr?.getSession?.());
+    };
     xr?.addEventListener('sessionstart', syncArGain);
     xr?.addEventListener('sessionend', syncArGain);
 
@@ -560,6 +575,33 @@ class WeatherRoom extends xb.Script {
       } else if (act === 'geo') this.locate();
       else if (act === 'sound') this.toggleSound();
     });
+  }
+
+  // Минимальный spatial-статус для XR-сессии: вне сессии скрыт (в браузере
+  // есть DOM-панель), в сессии — единственный интерфейс. Только чтение, без
+  // интерактива: лучи/тачи его не трогают, чистая презентация данных.
+  buildSessionCard() {
+    const cond = new xb.UIText({
+      text: '',
+      style: { fontSize: 16, fontWeight: 'bold', height: 22, overflow: 'hidden' },
+    });
+    const line = new xb.UIText({
+      text: '',
+      style: { fontSize: 12, opacity: 0.85, height: 34, overflow: 'hidden', whiteSpace: 'pre-line', lineHeight: 1.3 },
+    });
+    const overlay = new xb.UIOverlay({
+      appearance: 'surface',
+      pointerEvents: 'none',
+      style: { width: 440, position: 'absolute', left: 16, top: 16, flexDirection: 'column', gap: 6, padding: 12 },
+      children: [
+        new xb.UIText({ text: 'WEATHER//ROOM', style: { fontSize: 13, fontWeight: 'bold' } }),
+        cond,
+        line,
+      ],
+    });
+    overlay.visible = false;
+    this.add(overlay);
+    this.sessionUi = { overlay, cond, line };
   }
 
   stepTime(delta) {
@@ -923,12 +965,16 @@ class WeatherRoom extends xb.Script {
 
   // --- данные и погодная моторика ---------------------------------------------
 
+  // Геопозиция: состояние видно в панели на каждом шаге — «запрос», «живая
+  // точка», «отказ/таймаут → точка по умолчанию». Таймаут 15 с и maximumAge
+  // 5 мин: браузер может отдать сохранённую позицию мгновенно.
   locate() {
     if (!navigator.geolocation) {
-      this._defaulted = true;
+      this.geoState = 'default';
+      this.geoMsg = 'нет API';
       return this.load(this.lat, this.lon);
     }
-    this.stat('LOCATING…');
+    this.geoState = 'searching';
     this._defaulted = false;
     navigator.geolocation.getCurrentPosition(
       (p) => {
@@ -936,11 +982,13 @@ class WeatherRoom extends xb.Script {
         this.lon = +p.coords.longitude.toFixed(3);
         this.load(this.lat, this.lon);
       },
-      () => {
+      (err) => {
         this._defaulted = true;
+        this.geoState = 'default';
+        this.geoMsg = err && err.code === 1 ? 'отказ в доступе' : 'таймаут';
         this.load(this.lat, this.lon);
       },
-      { timeout: 6000 }
+      { timeout: 15000, maximumAge: 300000 }
     );
   }
 
@@ -949,11 +997,12 @@ class WeatherRoom extends xb.Script {
     try {
       this.data = await fetchWeather(lat, lon);
       // Источник данных виден в телеметрии всегда, а не один кадр.
-      this.source = `LIVE · OPEN-METEO${this._defaulted ? ' · ТОЧКА ПО УМОЛЧАНИЮ' : ''} · ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+      this.source = `LIVE · OPEN-METEO${this._defaulted ? ` · ТОЧКА ПО УМОЛЧАНИЮ (${this.geoMsg || 'нет гео'})` : ''} · ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
     } catch (e) {
       this.data = demoData();
       this.source = `DEMO (нет сети: ${e.message}) · синтетика`;
     }
+    if (this.geoState !== 'default') this.geoState = 'ok';
     this.applyHour();
   }
 
@@ -1432,7 +1481,7 @@ class WeatherRoom extends xb.Script {
     }
     M.posAttr.needsUpdate = true;
     const rh01 = clamp((st.rh - 25) / 74, 0, 1);
-    M.mat.uniforms.uOpacity.value = (0.05 + 0.16 * rh01) * (1 - 0.4 * this.fogK) * (0.5 + 0.6 * this.lumK);
+    M.mat.uniforms.uOpacity.value = (0.05 + 0.16 * rh01) * (1 - 0.4 * this.fogK) * (0.5 + 0.6 * this.lumK) * this._arGain;
     M.mat.uniforms.uColor.value.lerp(M.baseT, Math.min(1, dt * 2));
   }
 
@@ -1568,17 +1617,27 @@ class WeatherRoom extends xb.Script {
       const vis = s.vis >= 1000 ? `${(s.vis / 1000).toFixed(1)} км` : `${Math.round(s.vis)} м`;
       const sound = this.soundOn ? (this.soundReady ? 'вкл' : '…') : this.soundFailed ? 'нет' : 'выкл';
       if (this.dom) {
-        this.dom.src.textContent = this.source;
+        this.dom.src.textContent = this.geoState === 'searching' ? 'ГЕОПОЗИЦИЯ: запрос… (разреши доступ)' : this.source;
         this.dom.stat.textContent = `${this.condition()} · ${s.temp.toFixed(1)}°C · ветер ${s.wind.toFixed(1)} м/с ${dirName(s.wdir)}`;
         this.dom.detail.textContent =
           `дождь ${(s.rain + s.showers).toFixed(2)} · снег ${s.snow.toFixed(2)} см/ч · облака ${Math.round(s.cloud)}% · видимость ${vis} · ${Math.round(s.press)} гПа · потолок ${this.deckY.toFixed(1)} м\n` +
           `поверхности ${this.surfaces.length} · капли ${this.drops?.active ?? 0} · depth ${this._depthOn ? 'есть' : 'нет'} · звук ${sound}${
             (this._q ?? 2) < 2 ? ` · качество ${this._q}/2` : ''}`;
       }
+      if (this.sessionUi) {
+        this.sessionUi.cond.text = `${this.condition()} · ${s.temp.toFixed(1)}°C · ветер ${s.wind.toFixed(1)} м/с ${dirName(s.wdir)}`;
+        this.sessionUi.line.text =
+          `дождь ${(s.rain + s.showers).toFixed(2)} · снег ${s.snow.toFixed(2)} см/ч · облака ${Math.round(s.cloud)}%\n` +
+          `видимость ${vis} · ${Math.round(s.press)} гПа · потолок ${this.deckY.toFixed(1)} м · капли ${this.drops?.active ?? 0}`;
+      }
     }
   }
 
   dispose() {
+    if (this.sessionUi) {
+      this.remove(this.sessionUi.overlay);
+      this.sessionUi = null;
+    }
     if (this.dom) {
       this.dom.el.remove();
       this.dom = null;

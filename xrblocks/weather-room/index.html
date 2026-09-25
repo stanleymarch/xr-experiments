@@ -398,13 +398,12 @@ class WeatherRoom extends xb.Script {
     this.lat = 59.934; this.lon = 30.335;
     this._fp = 0;
 
-    // Пол и комната: VR-интерьер, в AR прячется. Lit-материалы — как в
-    // официальных сценах, а не flat-Basic: комнату видно и понятно с первого
-    // кадра, дождь стучит по столу, сетка читает масштаб.
+    // Пол-подложка: в VR даёт каплям землю, в AR прячется. Мокрый блеск —
+    // lit-материал (свет ниже), как в официальных сценах, а не flat-Basic.
     this.floor = new THREE.Mesh(
       new THREE.PlaneGeometry(CFG.atm.x * 3, CFG.atm.z * 3),
       new THREE.MeshPhongMaterial({
-        color: 0x27506e, transparent: true, opacity: 0.55,
+        color: 0x27506e, transparent: true, opacity: 0.5,
         shininess: 80, specular: 0x9fd8ff,
       })
     );
@@ -416,7 +415,6 @@ class WeatherRoom extends xb.Script {
     this.sun = new THREE.DirectionalLight(0xdfeaff, 1.1);
     this.sun.position.set(2.5, 4, -1.5);
     this.add(this.sun);
-    this.room = this.buildRoom();
 
     this.buildDeck();
     this.buildHaze();
@@ -428,7 +426,7 @@ class WeatherRoom extends xb.Script {
     this.moteL = this.buildMotes();     // аэрозоль влажности
 
     this.buildHud();
-    hideInPassthrough([this.hazeMesh, this.deckMesh, this.floor, ...this.room.parts]);
+    hideInPassthrough([this.hazeMesh, this.deckMesh, this.floor]);
     this._arGain = 1;
     const xr = xb.core?.renderer?.xr;
     const syncArGain = () => { this._arGain = isPassthrough() ? 1.3 : 1; };
@@ -470,7 +468,7 @@ class WeatherRoom extends xb.Script {
       this.derive();
       this.applyLook();
       this.ui.sliderLabel.text = 'NOW · DEMO STORM';
-      this.source = 'AUTOMATION · DEMO STORM';
+    this.source = 'AUTOMATION · DEMO STORM';
     } else {
       this.locate();
     }
@@ -479,20 +477,10 @@ class WeatherRoom extends xb.Script {
   // HUD — нативный UIOverlay (view-space): канон телефонного AR, работает и
   // на плоском десктопе до входа в сессию.
   buildHud() {
-    // Три фиксированные строки: фиксированные высоты + overflow гасят
-    // переукладку при обновлении текста (HUD не «дышит» и не дрожит).
     this.ui = {
-      src: new xb.UIText({
-        text: 'запрос геопозиции…',
-        style: { fontSize: 12, opacity: 0.75, textAlign: 'center', height: 16, overflow: 'hidden' },
-      }),
       stat: new xb.UIText({
-        text: '',
-        style: { fontSize: 16, fontWeight: 'bold', textAlign: 'center', height: 22, overflow: 'hidden' },
-      }),
-      detail: new xb.UIText({
-        text: '',
-        style: { fontSize: 12, opacity: 0.8, textAlign: 'center', height: 34, overflow: 'hidden', lineHeight: 1.35, whiteSpace: 'pre-line' },
+        text: 'запрос геопозиции…',
+        style: { fontSize: 14, opacity: 0.8, textAlign: 'center', lineHeight: 1.4, flexGrow: 1 },
       }),
       icon: new xb.UIIcon({
         icon: 'partly_cloudy_day',
@@ -501,18 +489,14 @@ class WeatherRoom extends xb.Script {
       }),
       sliderLabel: new xb.UIText({
         text: 'NOW',
-        style: { fontSize: 18, fontWeight: 'bold', textAlign: 'center' },
+        style: { fontSize: 15, fontWeight: 'bold', textAlign: 'center' },
       }),
     };
     this.ui.slider = new xb.UISlider({
       ariaLabel: 'время ±24ч',
-      min: -24, max: 24, step: 0.25, value: 0,
+      min: -24, max: 24, step: 1, value: 0,
       style: { width: '100%', height: 40 },
       onInput: (v) => { this.offset = v; this.applyHour(); },
-    });
-    this.ui.minus = new xb.UIButton({
-      label: '−1ч', icon: 'remove', style: { flexGrow: 1 },
-      onClick: () => this.stepTime(-1),
     });
     this.ui.now = new xb.UIButton({
       label: 'NOW', icon: 'schedule', style: { flexGrow: 1 },
@@ -521,10 +505,6 @@ class WeatherRoom extends xb.Script {
         this.offset = 0;
         this.applyHour();
       },
-    });
-    this.ui.plus = new xb.UIButton({
-      label: '+1ч', icon: 'add', style: { flexGrow: 1 },
-      onClick: () => this.stepTime(1),
     });
     this.ui.geo = new xb.UIButton({
       label: 'LOCATE', icon: 'my_location', style: { flexGrow: 1 },
@@ -543,48 +523,26 @@ class WeatherRoom extends xb.Script {
         transform: { translateX: '-50%' },
       },
       children: [
+        new xb.UIText({
+          text: 'WEATHER//ROOM',
+          style: { fontSize: 28, fontWeight: 'bold', textAlign: 'center' },
+        }),
         new xb.UIPanel({
           style: { flexDirection: 'row', gap: 10, alignItems: 'center', width: '100%' },
           children: [this.ui.icon, this.ui.stat],
         }),
-        this.ui.src,
-        this.ui.detail,
         this.ui.sliderLabel,
         this.ui.slider,
         new xb.UIPanel({
-          style: { width: '100%', flexDirection: 'row', gap: 10 },
-          children: [this.ui.minus, this.ui.now, this.ui.plus],
-        }),
-        new xb.UIPanel({
-          style: { width: '100%', flexDirection: 'row', gap: 10 },
-          children: [this.ui.geo, this.ui.sound],
+          style: { width: '100%', flexDirection: 'row', gap: 12 },
+          children: [this.ui.now, this.ui.geo, this.ui.sound],
         }),
       ],
     });
     this.add(this.ui.overlay);
   }
 
-  stat(s) { this.ui.src.text = s; }
-
-  // Десктопные шорткаты: стрелки мотают время, N — сейчас, L — локация,
-  // S — звук. Клик-путь (кнопки −1ч/+1ч) не зависит от драга мышью.
-  onKeyDown(event) {
-    const k = event.key;
-    if (k === 'ArrowLeft' || k === '[') this.stepTime(-1);
-    else if (k === 'ArrowRight' || k === ']') this.stepTime(1);
-    else if (k === 'n' || k === 'N' || k === 'Home') {
-      this.offset = 0;
-      this.ui.slider.value = 0;
-      this.applyHour();
-    } else if (k === 'l' || k === 'L') this.locate();
-    else if (k === 's' || k === 'S') this.toggleSound();
-  }
-
-  stepTime(delta) {
-    this.offset = clamp(Math.round((this.offset + delta) * 4) / 4, -24, 24);
-    this.ui.slider.value = this.offset;
-    this.applyHour();
-  }
+  stat(s) { this.ui.stat.text = s; }
 
   // Текстуры официального сэмпла rain — локальные ассеты опыта.
   loadTextures() {
@@ -822,74 +780,6 @@ class WeatherRoom extends xb.Script {
     this.stars = { count, pos, geo, mat, points };
   }
 
-  // Комната: lit-интерьер вокруг пользователя — стены, окно с рамой и стеклом,
-  // стол, скамья, сетка пола. Даёт понятность пространства и твёрдые
-  // поверхности, по которым капли стучат (room.surfaces → surfaceAt).
-  buildRoom() {
-    const group = new THREE.Group();
-    this.add(group);
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x3a4c63, roughness: 0.92, metalness: 0.02 });
-    const woodMat = new THREE.MeshStandardMaterial({ color: 0x70583f, roughness: 0.68, metalness: 0.03 });
-    const half = 3.5, H = 3.6;
-    const put = (mesh) => { group.add(mesh); return mesh; };
-    // Задняя стена с окном: две колонны, перемычка, подоконник.
-    const winW = 2.1, winH = 1.5, winY = 1.75;
-    const colW = (half * 2 - winW) / 2;
-    for (const side of [-1, 1]) {
-      put(new THREE.Mesh(new THREE.BoxGeometry(colW, H, 0.12), wallMat))
-        .position.set(side * (winW / 2 + colW / 2), H / 2, -half);
-    }
-    put(new THREE.Mesh(new THREE.BoxGeometry(winW, H - winY - winH / 2, 0.12), wallMat))
-      .position.set(0, (H + winY + winH / 2) / 2, -half);
-    put(new THREE.Mesh(new THREE.BoxGeometry(winW, winY - winH / 2, 0.12), wallMat))
-      .position.set(0, (winY - winH / 2) / 2, -half);
-    this.glassMat = new THREE.MeshPhongMaterial({
-      color: 0x18243a, transparent: true, opacity: 0.35,
-      shininess: 90, specular: 0xcfe8ff, side: THREE.DoubleSide,
-    });
-    put(new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), this.glassMat))
-      .position.set(0, winY, -half + 0.02);
-    // Боковые стены.
-    for (const side of [-1, 1]) {
-      put(new THREE.Mesh(new THREE.BoxGeometry(0.12, H, half * 2), wallMat))
-        .position.set(side * half, H / 2, 0);
-    }
-    // Сетка пола — масштаб и «поверхность» читаются сразу.
-    const grid = new THREE.GridHelper(half * 2, 14, 0x54d6ff, 0x24425c);
-    grid.position.y = 0.01;
-    grid.material.transparent = true;
-    grid.material.opacity = 0.35;
-    grid.material.depthWrite = false;
-    put(grid);
-    // Стол и скамья: твёрдые поверхности для посадки капель.
-    const tableX = 0.75, tableZ = -1.2, topY = 0.86;
-    put(new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.05, 0.75), woodMat))
-      .position.set(tableX, topY, tableZ);
-    for (const [dx, dz] of [[-0.6, -0.32], [0.6, -0.32], [-0.6, 0.32], [0.6, 0.32]]) {
-      put(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, topY, 10), woodMat))
-        .position.set(tableX + dx, topY / 2, tableZ + dz);
-    }
-    const benchX = -2.6, benchZ = -0.9, seatY = 0.4;
-    put(new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.08, 1.5), woodMat))
-      .position.set(benchX, seatY, benchZ);
-    put(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 1.5), woodMat))
-      .position.set(benchX - 0.24, seatY + 0.27, benchZ);
-    for (const dz of [-0.65, 0.65]) {
-      put(new THREE.Mesh(new THREE.BoxGeometry(0.5, seatY, 0.08), woodMat))
-        .position.set(benchX, seatY / 2, benchZ + dz);
-    }
-    // Внутренний светильник — живой свет комнаты, дышит погодой.
-    this.lamp = new THREE.PointLight(0x9fd8ff, 0.8, 8);
-    this.lamp.position.set(0, 2.5, -0.7);
-    put(this.lamp);
-    const quat = FLAT_QUAT.clone();
-    const surfaces = [
-      { x0: tableX - 0.63, x1: tableX + 0.63, z0: tableZ - 0.35, z1: tableZ + 0.35, y: topY + 0.025, quaternion: quat },
-      { x0: benchX - 0.27, x1: benchX + 0.27, z0: benchZ - 0.73, z1: benchZ + 0.73, y: seatY + 0.04, quaternion: quat.clone() },
-    ];
-    return { group, parts: [group], surfaces };
-  }
-
   buildDeck() {
     this.deckMat = new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, side: THREE.DoubleSide,
@@ -1038,19 +928,8 @@ class WeatherRoom extends xb.Script {
   applyHour() {
     if (!this.data?.hourly) return;
     const h = this.data.hourly;
-    // Дробная перемотка: слайдер с шагом 0.25 ч, поля интерполируются между
-    // часами — скраб видно каждым движением, а не «щёлками» раз в час.
-    const idx = clamp(this.nowIndex() + this.offset, 0, h.time.length - 1);
-    const i0 = Math.floor(idx);
-    const i1 = Math.min(h.time.length - 1, i0 + 1);
-    const fr = idx - i0;
-    const g = (key, d = 0) => {
-      const a = num(h[key] && h[key][i0], d);
-      const b = num(h[key] && h[key][i1], d);
-      return a + (b - a) * fr;
-    };
-    const speed = num(h.wind_speed_10m && h.wind_speed_10m[i0], 4);
-    const speed1 = num(h.wind_speed_10m && h.wind_speed_10m[i1], speed);
+    const i = Math.min(h.time.length - 1, Math.max(0, this.nowIndex() + this.offset));
+    const g = (key, d = 0) => num(h[key] && h[key][i], d);
     const rain = g('rain');
     const showers = g('showers');
     this.state = {
@@ -1058,7 +937,7 @@ class WeatherRoom extends xb.Script {
       rh: g('relative_humidity_2m', 65),
       cloud: g('cloud_cover', 50),
       wind: g('wind_speed_10m', 4),
-      gust: g('wind_gusts_10m', (speed + (speed1 - speed) * fr) * 1.6),
+      gust: g('wind_gusts_10m', num(h.wind_speed_10m && h.wind_speed_10m[i], 4) * 1.6),
       wdir: g('wind_direction_10m', 225),
       press: g('pressure_msl', 1010),
       vis: g('visibility', 15000),
@@ -1069,11 +948,10 @@ class WeatherRoom extends xb.Script {
     };
     this.derive();
     this.applyLook();
-    const when = new Date(Date.parse(h.time[i0]) + fr * 3600e3);
-    const off = this.offset;
+    const when = new Date(Date.parse(h.time[i]));
     this.ui.sliderLabel.text =
-      `${Math.abs(off) < 0.13 ? 'NOW · ' : ''}${when.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} ` +
-      `· ${off >= 0 ? '+' : '−'}${Math.abs(off).toFixed(off % 1 ? 2 : 0).replace(/\.0+$/, '')}h`;
+      `${this.offset === 0 ? 'NOW · ' : ''}${when.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} ` +
+      `· ${this.offset >= 0 ? '+' : ''}${this.offset}h`;
     this.ui.icon.icon = iconFor(this.state);
   }
 
@@ -1086,7 +964,7 @@ class WeatherRoom extends xb.Script {
     this.fogK = clamp(fog, 0, 1);
     this.dayK = s.isDay ? 1 : 0.34;
     const cloud01 = clamp(s.cloud / 100, 0, 1);
-    this.lumK = clamp(this.dayK * (1 - cloud01 * 0.5) * (1 - this.fogK * 0.45), 0.45, 1);
+    this.lumK = clamp(this.dayK * (1 - cloud01 * 0.5) * (1 - this.fogK * 0.45), 0.22, 1);
     this.rainK = clamp(s.rain / 0.6, 0, 1);
     this.showerK = clamp(s.showers / 3, 0, 1);
     this.snowK = clamp(s.snow / 1.2, 0, 1);
@@ -1098,11 +976,10 @@ class WeatherRoom extends xb.Script {
     this.deckColorT.copy(this.state.isDay ? C.deckDay : C.deckNight);
     this.hazeColorT.copy(this.state.isDay ? C.hazeDay : C.hazeNight);
     this.cloudTint.copy(this.state.isDay ? C.cloudDay : C.cloudNight);
-    const tier = [0.3, 0.6, 1][this._q ?? 2];
     this.applyDropCount();
     // Снег: активные точки пересчитываются прямо в буфере.
     if (this.snow) {
-      const n = Math.round(this.snowK * this.snow.count * tier);
+      const n = Math.round(this.snowK * this.snow.count);
       const p = this.snow.pos;
       for (let i = this.snow.active; i < n; i++) {
         const ix = i * 3;
@@ -1117,7 +994,7 @@ class WeatherRoom extends xb.Script {
     // Аэрозоль влажности: гуще при высокой rh, цвет от температуры.
     if (this.moteL) {
       const rh01 = clamp((this.state.rh - 25) / 74, 0, 1);
-      const n = Math.round((0.15 + 0.85 * rh01) * (1 - 0.4 * this.fogK) * this.moteL.count * tier);
+      const n = Math.round((0.15 + 0.85 * rh01) * (1 - 0.4 * this.fogK) * this.moteL.count);
       const p = this.moteL.pos;
       for (let i = this.moteL.active; i < n; i++) {
         const ix = i * 3;
@@ -1135,9 +1012,8 @@ class WeatherRoom extends xb.Script {
 
   applyDropCount() {
     if (!this.drops) return;
-    const tier = [0.55, 0.8, 1][this._q ?? 2];
     const wet = clamp(this.rainK * 0.6 + this.showerK * 0.75, 0, 1);
-    const n = Math.round(wet * this.drops.count * tier);
+    const n = Math.round(wet * this.drops.count);
     for (let i = this.drops.active; i < n; i++) this.respawnDrop(i, false);
     for (let i = n; i < this.drops.active; i++) {
       this.drops.pos[i * 3 + 1] = -60;
@@ -1290,15 +1166,6 @@ class WeatherRoom extends xb.Script {
   }
 
   surfaceAt(x, z) {
-    // Поверхности виртуальной комнаты первичны — но только там, где комната
-    // видна (VR/flat). В AR-passthrough комната скрыта: капли садятся на
-    // реальные плоскости и depth, а не на невидимый стол.
-    if (!isPassthrough()) {
-      for (const s of this.room.surfaces) {
-        if (x < s.x0 || x > s.x1 || z < s.z0 || z > s.z1) continue;
-        return s;
-      }
-    }
     for (const s of this.surfaces) {
       if (x < s.x0 || x > s.x1 || z < s.z0 || z > s.z1) continue;
       return s;
@@ -1337,7 +1204,7 @@ class WeatherRoom extends xb.Script {
   }
 
   wetSpot(x, y, z, quaternion, isSnow) {
-    if (this._stainCd > 0 || (this._q ?? 2) === 0) return;
+    if (this._stainCd > 0) return;
     this.ensureStains();
     const rate = this.rainK * 0.5 + this.showerK * 0.75 + this.snowK * 0.35;
     this._stainCd = 0.42 - 0.3 * clamp(rate, 0, 1);
@@ -1409,7 +1276,7 @@ class WeatherRoom extends xb.Script {
   }
 
   snowDot(x, z) {
-    if (this.snowK < 0.05 || (this._q ?? 2) === 0) return;
+    if (this.snowK < 0.05) return;
     this.ensureFlakes();
     const F = this.flakes;
     F.head = (F.head + 1) % F.N;
@@ -1558,17 +1425,6 @@ class WeatherRoom extends xb.Script {
     }
     this.flash = Math.max(0, this.flash - dt * 3.2);
 
-    // Авто-качество: стабильно дорогой кадр — гасим самые тяжёлые слои
-    // (объёмное облако, часть частиц, пятна), дешёвый — возвращаем.
-    this._ft = this._ft === undefined ? dt : this._ft * 0.95 + dt * 0.05;
-    this._qAge = (this._qAge || 0) + dt;
-    if (this._qAge > 2.5) {
-      this._qAge = 0;
-      this._q = this._q ?? 2;
-      if (this._ft > 0.05 && this._q > 0) { this._q--; this.applyLook(); }
-      else if (this._ft < 0.028 && this._q < 2) { this._q++; this.applyLook(); }
-    }
-
     if ((this._surfaceAge += dt) > 1) { this._surfaceAge = 0; this.sampleSurfaces(); }
     this.stepDrops(dt, camera);
     this.stepSnow(dt);
@@ -1580,15 +1436,9 @@ class WeatherRoom extends xb.Script {
 
     const k = Math.min(1, dt * 2.2);
     const lit = this.lumK * (1 + this.flash * 0.9) * this._arGain;
-    // Свет дышит погодой: день/облака/мгла и вспышки молний. Никогда не
-    // в полной темноте — пол лампы комнаты держит нижний уровень.
-    this.hemi.intensity = 1.2 + 1.4 * lit;
-    this.sun.intensity = 0.5 + 1.1 * lit + this.flash * 2.2;
-    if (this.lamp) this.lamp.intensity = 0.5 + 0.9 * lit;
-    if (this.glassMat) {
-      this.glassMat.color.copy(this.deckColorT).lerp(this.cloudTint, this.cloud)
-        .multiplyScalar(1.5 + 0.9 * lit);
-    }
+    // Свет дышит погодой: день/облака/мгла и вспышки молний.
+    this.hemi.intensity = 0.9 + 1.6 * lit;
+    this.sun.intensity = 0.4 + 1.0 * lit + this.flash * 2.2;
 
     // Слои: плавная подстройка к целям текущего часа.
     if (this.drops) {
@@ -1614,16 +1464,15 @@ class WeatherRoom extends xb.Script {
     this.drift.y = (this.drift.y - Math.cos(a) * s.wind * dt * 0.012) % 6;
     this.deckMat.uniforms.uDrift.value.copy(this.drift);
 
-    // Мгла — вдвое мягче: пелена атмосферы, а не занавес.
-    this.hazeMat.uniforms.uFog.value += (this.fogK * 0.55 - this.hazeMat.uniforms.uFog.value) * k;
+    // Мгла.
+    this.hazeMat.uniforms.uFog.value += (this.fogK - this.hazeMat.uniforms.uFog.value) * k;
     this.hazeMat.uniforms.uColor.value.lerp(this.hazeColorT, k);
     this.hazeMat.uniforms.uLum.value = 0.35 + 0.65 * this.dayK + this.flash * 0.3;
 
-    // Объёмное облако: официальный аддон; в passthrough и на низком
-    // качестве не ставится (premultiplied-контракт + цена рей-марчинга).
+    // Объёмное облако: официальный аддон; в passthrough не ставится.
     if (this.cloudVolume) {
       const v = this.cloudVolume;
-      v.visible = !isPassthrough() && (this._q ?? 2) === 2 && this.cloud > 0.15;
+      v.visible = !isPassthrough() && this.cloud > 0.15;
       if (v.visible) {
         v.position.y = this.deckY;
         v.update(camera, xb.core.depth);
@@ -1641,32 +1490,23 @@ class WeatherRoom extends xb.Script {
       this.rainSound.setVolume(wet < 0.02 ? 0 : 0.12 + 0.5 * wet);
     }
 
-    // Телеметрия: три фиксированные строки, обновление дважды в секунду.
+    // Телеметрия дважды в секунду.
     this._fp += dt;
     if (this._fp > 0.5) {
       this._fp = 0;
-      const vis = s.vis >= 1000 ? `${(s.vis / 1000).toFixed(1)} км` : `${Math.round(s.vis)} м`;
-      const sound = this.soundOn ? (this.soundReady ? 'вкл' : '…') : this.soundFailed ? 'нет' : 'выкл';
-      this.ui.src.text = this.source;
-      this.ui.stat.text = `${this.condition()} · ${s.temp.toFixed(1)}°C · ветер ${s.wind.toFixed(1)} м/с ${dirName(s.wdir)}`;
-      this.ui.detail.text =
-        `дождь ${(s.rain + s.showers).toFixed(2)} · снег ${s.snow.toFixed(2)} см/ч · облака ${Math.round(s.cloud)}% · видимость ${vis} · ${Math.round(s.press)} гПа · потолок ${this.deckY.toFixed(1)} м\n` +
-        `поверхности ${this.room.surfaces.length + this.surfaces.length} · капли ${this.drops?.active ?? 0} · depth ${this._depthOn ? 'есть' : 'нет'} · звук ${sound}${
-          (this._q ?? 2) < 2 ? ` · качество ${this._q}/2` : ''}`;
+      const vis = s.vis >= 1000 ? `${(s.vis / 1000).toFixed(1)} km` : `${Math.round(s.vis)} m`;
+      const sound = this.soundOn ? (this.soundReady ? 'on' : 'loading') : this.soundFailed ? 'unavailable' : 'off';
+      this.stat(
+        `${this.source} · ${this.condition()} · ${s.temp.toFixed(1)}°C · wind ${s.wind.toFixed(1)} m/s ${dirName(s.wdir)}, gust ${s.gust.toFixed(1)} · ` +
+        `cloud ${Math.round(s.cloud)}% · rh ${Math.round(s.rh)}% · vis ${vis} · ${Math.round(s.press)} hPa · ` +
+        `rain ${s.rain.toFixed(2)} · showers ${s.showers.toFixed(2)} · snow ${s.snow.toFixed(2)} cm/h · ` +
+        `drops ${this.drops?.active ?? 0} · snowflakes ${this.snow?.active ?? 0} · ` +
+        `surfaces ${this.surfaces.length} · depth ${this._depthOn ? 'live' : 'off'} · sound ${sound}`
+      );
     }
   }
 
   dispose() {
-    if (this.room) {
-      this.room.group.traverse((o) => {
-        o.geometry?.dispose();
-        if (o.material) {
-          (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
-        }
-      });
-      this.remove(this.room.group);
-      this.room = null;
-    }
     if (this.drops) {
       this.drops.geo.dispose();
       this.drops.mat.dispose();

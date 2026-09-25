@@ -1,0 +1,6 @@
+{
+  "title": "ECHO//ROOM",
+  "description": "Rewind the past movement: the room keeps a 60-second ring buffer of your head and hands; scrub back in time and select a ghost to see where you were and how far you've come.",
+  "description_ru": "Перемотай прошлое движение: комната держит 60-секундное кольцо поз головы и кистей; отмотай время и выбери призрака — увидишь, где был и как далеко ушёл.",
+  "tags": ["time-travel", "ring-buffer", "poses", "simulator"]
+}

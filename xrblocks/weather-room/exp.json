@@ -1,0 +1,6 @@
+{
+  "title": "WEATHER//ROOM",
+  "description": "Live local weather becomes the body of your room: rain falls and splashes on real surfaces, cloud ceiling and fog follow the forecast, a ±24h slider scrubs time.",
+  "description_ru": "Живая погода твоей точки — телом комнаты: дождь падает и всплескивается на реальных поверхностях, облачный потолок и мгла — по прогнозу, слайдер мотает время ±24 ч.",
+  "tags": ["weather", "open-meteo", "rain", "particles", "depth"]
+}

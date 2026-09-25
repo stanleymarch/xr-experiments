@@ -1,0 +1,1106 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>REALITY//FIELD — xrblocks</title>
+<link rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
+<script>window.litDisableBundleWarning = true;</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+    "three/": "https://cdn.jsdelivr.net/npm/three@0.184.0/",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/",
+    "@pmndrs/uikit": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit@1.0.64/dist/index.min.js",
+    "@pmndrs/uikit-pub-sub": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit-pub-sub@1.0.64/dist/index.min.js",
+    "@pmndrs/msdfonts": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.64/dist/index.min.js",
+    "@preact/signals-core": "https://cdn.jsdelivr.net/npm/@preact/signals-core@1.14.0/dist/signals-core.mjs",
+    "yoga-layout/load": "https://cdn.jsdelivr.net/npm/yoga-layout@3.2.1/dist/src/load.js",
+    "lit": "https://esm.sh/lit@3.3.1",
+    "lit/": "https://esm.sh/lit@3.3.1/",
+    "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/xrblocks.js",
+    "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/addons/"
+  }
+}
+</script>
+<style>
+  /* Поверх официального xr.css: только телефонная эргономика и режимы.
+     Официальный слой уже рисует полноэкранный entry-экран с заголовком,
+     описанием и кнопкой входа по центру. */
+  #back { position:fixed; top:10px; left:10px; z-index:40; color:#54d6ff;
+    font:600 13px/1 system-ui,sans-serif; text-decoration:none;
+    background:rgba(7,10,18,.72); border:1px solid #1c2942; border-radius:10px;
+    padding:6px 12px; }
+  /* Подсказки управления внутри официального entry-экрана. */
+  #XRButtonWrapper .app-hints { margin:0; padding:0 20px; list-style:none;
+    display:grid; gap:6px; max-width:480px; }
+  #XRButtonWrapper .app-hints li { font:400 13px/1.45 system-ui,sans-serif;
+    color:#9fb2d2; }
+  /* На телефоне вторая кнопка (симулятор — десктоп-режим) не нужна. */
+  @media (pointer:coarse) {
+    #XRButtonWrapper .XRButton ~ .XRButton { display:none; }
+  }
+  /* В сессии: кнопка END XR компактной пилюлей у верхнего края. */
+  #XRButtonWrapper.in-session { top:calc(10px + env(safe-area-inset-top));
+    left:auto; right:12px; width:auto; height:auto; justify-items:end;
+    align-items:end; }
+  #XRButtonWrapper.in-session > *:not(.XRButton) { display:none; }
+  #XRButtonWrapper.in-session .XRButton { min-height:0; padding:9px 16px;
+    font-size:12px; border-radius:999px; }
+  body:has(#XRButtonWrapper.in-session) #back { display:none; }
+  body.automation #back, body.automation #XRButtonWrapper { display:none !important; }
+</style>
+</head>
+<body>
+<a id="back" href="../../">← все опыты</a>
+<script type="module">
+// REALITY//FIELD — комната отвечает силой.
+//
+// ИДЕЯ: жест руки — это удар по полю. Пользователь складывает пальцы, ДЕРЖИТ
+// позу (копит заряд в ладони) и отпускает — из ладони уходит импульс. Пул из
+// 48 динамических тел разлетается, бьётся о пол и о НАСТОЯЩУЮ геометрию
+// комнаты (depth mesh как коллайдер), затухает и засыпает. Четыре встроенных
+// жеста SDK — четыре разных силовых профиля, и это единственная причина,
+// почему опыт вообще нужен именно в XR:
+//   pinch     → узкий луч: мало тел, высокий Δv (точечный удар)
+//   open-palm → широкая волна: много тел, средний Δv
+//   fist      → слэм: полусфера вокруг ладони, сильный подброс вверх
+//   spread    → разлёт с закруткой: радиальный импульс + тангенциальная
+//               составляющая (тела уходят по орбите, а не по прямой)
+// Каждая фаза имеет видимую причину: пока копится заряд — в ладони растёт
+// сияющая сфера; в момент удара от ладони уходит кольцо; тела светятся тем
+// сильнее, чем быстрее летят; HUD печатает Δv, число задетых тел и состояние
+// пула.
+//
+// ВОПЛОЩЕНИЕ — официальные образцы, не выдумка:
+//   физика: samples/advanced/ballpit + templates/10_environment_physics —
+//     options.physics.RAPIER, тела в initPhysics(), позы в physicsStep(),
+//     коллайдер из реальной геометрии через xrDepthMeshPhysicsOptions;
+//   жесты: samples/xr_interaction/hand_gestures + manual/HandGestures.md —
+//     options.enableGestures(), события gesturestart/update/end у
+//     xb.core.gestureRecognition, геометрия ладони (wrist, palm normal) через
+//     WebXRHandPoseEstimator — тот же объект, которым пользуется сама
+//     GestureRecognition;
+//   скелет: золотой промпт Gemini Canvas — один файл, import-map CDN,
+//     xb.Script, встроенный spatial UI (UIOverlay), дефолтный симулятор.
+//
+// ЧЕСТНОСТЬ РЕЖИМОВ. Rapier подтягивается динамическим import с CDN: если сети
+// нет — опыт НЕ ломается, включается FALLBACK: те же 48 тел, но интеграция
+// velocity руками (гравитация, пол y=0, отскок с restitution, засыпание).
+// HUD всегда пишет, какой режим реально работает и живёт ли depth. Третий
+// режим — плоский десктоп без WebXR: там цель вводится с клавиатуры (Space),
+// потому что select-события мыши в этой версии SDK живут только в симуляторе.
+//
+// Инлайненные device-контракты (причины — в XR-BLOCKS.md корня):
+//   glowBlending — premultiplied-alpha телефонного AR (аддитив копит альфу
+//     канваса — композитор гасит камеру под «свечением»);
+//   installXrGuards — телефонный Chrome отклоняет сессию с required
+//     depth-sensing/hand-tracking/local-floor; повторный запрос без них;
+//   isPassthrough/hideInPassthrough — 'alpha-blend' = телефон; декорации
+//     комнаты (подложка пола, кольцо арены) в AR прячутся, тела остаются.
+
+import * as THREE from 'three';
+import * as xb from 'xrblocks';
+
+const AUTOMATION = new URLSearchParams(window.location.search).has('xrAutomation');
+const DEBUG = new URLSearchParams(window.location.search).has('debug');
+
+// --- контракты --------------------------------------------------------------
+
+function glowBlending(material) {
+  material.blending = THREE.CustomBlending;
+  material.blendSrc = THREE.SrcAlphaFactor;
+  material.blendDst = THREE.OneFactor;
+  material.blendSrcAlpha = THREE.ZeroFactor;
+  material.blendDstAlpha = THREE.OneFactor;
+  return material;
+}
+
+// Телефонный AR-passthrough: Quest отдаёт 'additive', телефоны 'alpha-blend'.
+function isPassthrough() {
+  const session = xb.core?.renderer?.xr?.getSession?.();
+  return Boolean(session) && session.environmentBlendMode === 'alpha-blend';
+}
+
+function hideInPassthrough(objects) {
+  const xr = xb.core?.renderer?.xr;
+  if (!xr) return;
+  const sync = () => {
+    const ar = isPassthrough();
+    for (const object of objects) if (object) object.visible = !ar;
+  };
+  xr.addEventListener('sessionstart', sync);
+  xr.addEventListener('sessionend', sync);
+}
+
+function installXrGuards() {
+  const xr = navigator.xr;
+  if (!xr || xr.__downgradeGuard) return;
+  xr.__downgradeGuard = true;
+  const orig = xr.requestSession.bind(xr);
+  xr.requestSession = (mode, init) =>
+    orig(mode, init).catch((err) => {
+      const required = (init && init.requiredFeatures) || [];
+      const heavy = required.filter(
+        (f) => f === 'depth-sensing' || f === 'hand-tracking' || f === 'local-floor'
+      );
+      if (!heavy.length) throw err;
+      init.requiredFeatures = required.filter((f) => !heavy.includes(f));
+      return orig(mode, init);
+    });
+}
+
+// Класс .in-session на #XRButtonWrapper (кнопка стала END XR) + подсказки
+// внутрь официального entry-экрана. Wrapper появляется внутри xb.init().
+function watchXrButton(hints = []) {
+  const sync = (w) => {
+    const btn = w.querySelector('button');
+    if (btn) w.classList.toggle('in-session', /end/i.test(btn.textContent));
+  };
+  const attach = () => {
+    const w = document.getElementById('XRButtonWrapper');
+    if (!w) return false;
+    if (hints.length && !w.querySelector('.app-hints')) {
+      const list = document.createElement('ul');
+      list.className = 'app-hints';
+      for (const hint of hints) {
+        const item = document.createElement('li');
+        item.textContent = hint;
+        list.append(item);
+      }
+      w.append(list);
+    }
+    sync(w);
+    new MutationObserver(() => sync(w)).observe(w, {
+      childList: true, characterData: true, subtree: true,
+    });
+    return true;
+  };
+  if (attach()) return;
+  const io = new MutationObserver(() => { if (attach()) io.disconnect(); });
+  io.observe(document.body, { childList: true, subtree: false });
+}
+
+// --- конфигурация -----------------------------------------------------------
+
+// Rapier: тот же пакет и та же сборка, что в официальном сэмпле ballpit и в
+// шаблоне 10_environment_physics. Import map пилота этот пакет не объявляет,
+// поэтому тянем его динамическим import — ровно один вариант движка в графе.
+const RAPIER_CDN = 'https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-simd-compat@0.19.2/rapier.mjs';
+const RAPIER_TIMEOUT_MS = AUTOMATION ? 2500 : 6000;
+
+const CFG = {
+  count: 48,               // потолок пула — заявленное ограничение
+  radii: [0.045, 0.058, 0.072],
+  rest: 0.62,              // restitution: тела живые, но не мячики
+  gravity: -9.81,
+  damp: 0.26,              // 1/с, только fallback
+  floorFriction: 0.84,
+  arena: 7.0,              // м; дальше тело возвращается в слот (арена не пустеет)
+  sleepSpeed: 0.05,        // м/с
+  sleepTime: 0.45,
+  maxSpeed: 7.5,           // м/с — шкала свечения
+  ringInner: 1.0,
+  ringOuter: 2.2,
+  ringCenterZ: -0.6,       // кольцо покоя смещено вперёд: видно, не наступая
+  chargeTime: 0.75,        // с до полного заряда
+  minHold: 0.35,           // с; короче — пролетающая поза, не команда
+  maxHold: 2.5,            // с; дольше — уже спокойно лежащая рука, не жест
+  cooldown: 0.22,          // с; глушит парные события (жест + select одной рукой)
+  // Профили: dv — Δv в м/с при полном заряде, reach — м, cone — cos полуугла
+  // (−1 = сфера вокруг ладони), swirl — доля тангенциальной составляющей,
+  // up — доля подброса вверх. Конусы подобраны под поле, лежащее на полу:
+  // от головы тело в 1.5 м впереди уходит на ~45° вниз, поэтому осевые
+  // профили шире, чем «луч в стену».
+  profiles: {
+    pinch: { dv: 6.4, reach: 2.4, cone: 0.94, swirl: 0.00, up: 0.10 },
+    'open-palm': { dv: 3.6, reach: 3.1, cone: 0.62, swirl: 0.00, up: 0.18 },
+    fist: { dv: 5.0, reach: 1.7, cone: -1, swirl: 0.00, up: 0.55 },
+    spread: { dv: 3.0, reach: 3.3, cone: -1, swirl: 0.75, up: 0.30 },
+  },
+  select: { dv: 4.2, reach: 3.0, cone: 0.65, swirl: 0.00, up: 0.12 }, // мышь/контроллер
+  key: { dv: 3.8, reach: 3.0, cone: 0.65, swirl: 0.00, up: 0.12 },
+  auto: {                                   // ?xrAutomation=1: расписание ударов
+    period: 8.0,
+    shots: [
+      { t: 0.8, name: 'spread' },
+      { t: 2.9, name: 'pinch' },
+      { t: 4.6, name: 'fist' },
+      { t: 6.4, name: 'open-palm' },
+    ],
+  },
+};
+
+// Цвет = масса: мелкие — холодные, крупные — тёплые. Скорость читается
+// свечением, размер — цветом.
+const PALETTE = [0x54d6ff, 0x8be9ff, 0xa48cff, 0xd6a8ff, 0xffc46b, 0xffe9a8];
+
+// Детерминированный [0,1): раскладка пула не должна дёргаться между запусками
+// (иначе демо-прогон неповторяем), Math.random оставлен только для «жизни».
+function hash01(n) {
+  const x = Math.sin(n * 12.9898 + 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// --- опыт -------------------------------------------------------------------
+
+class RealityField extends xb.Script {
+  // handPose — общий с GestureRecognition оценщик позы: по нему берём мировые
+  // координаты кисти и нормаль ладони (жест даёт имя, поза — точку удара).
+  constructor({ handPose = null } = {}) {
+    super();
+    this.handPose = handPose;
+  }
+
+  init() {
+    this.physicsMode = false;      // станет true в initPhysics()
+    this.physics = null;
+    this.depthOn = false;
+    this.awake = 0;
+    this.auto = AUTOMATION;        // демо-расписание включено в automation-режиме
+    this.autoSince = performance.now();
+    this.autoShot = 0;
+    this.lastAutoLocal = 0;
+    this.charge = null;            // активный заряд {key, name, label, origin, dir, at}
+    this.sessions = new Map();     // key → заряд; жест и select одной руки живут раздельно
+    this.ambient = { left: undefined, right: undefined }; // поза, с которой пришла рука
+    this.lastFireAt = -1e9;
+    this.fires = 0;
+    this.last = null;              // {label, dv, hit}
+    this.statT = 0;
+    this.debugT = performance.now();
+
+    // Временные объекты: ни одного new внутри кадра.
+    this._dummy = new THREE.Object3D();
+    this._color = new THREE.Color();
+    this._quat = new THREE.Quaternion();
+    this._v3 = new THREE.Vector3();
+    this._v3b = new THREE.Vector3();
+    this._origin = new THREE.Vector3();
+    this._dir = new THREE.Vector3();
+    this._zAxis = new THREE.Vector3(0, 0, 1);
+
+    this.buildArena();
+    this.buildBodies();
+    this.buildFx();
+    this.buildHud();
+
+    this.onGestureStart = (e) => this.beginCharge('gesture:' + e.detail.hand, e.detail);
+    this.onGestureUpdate = (e) => this.holdCharge('gesture:' + e.detail.hand, e.detail);
+    this.onGestureEnd = (e) => this.releaseCharge('gesture:' + e.detail.hand, e.detail);
+    const gestures = xb.core?.gestureRecognition;
+    if (gestures) {
+      gestures.addEventListener('gesturestart', this.onGestureStart);
+      gestures.addEventListener('gestureupdate', this.onGestureUpdate);
+      gestures.addEventListener('gestureend', this.onGestureEnd);
+    } else {
+      // Жестов нет (нет рук, нет recognizer'а) — остаются select и Space.
+      this.gestureNote = 'gestures off';
+    }
+
+    hideInPassthrough([this.floorMesh, this.arenaMesh]);
+  }
+
+  // --- сцена -----------------------------------------------------------------
+
+  buildArena() {
+    // Пол-подложка: в VR даёт телам видимую опору, в AR прячется (там опора —
+    // настоящая геометрия из depth).
+    this.floorMesh = new THREE.Mesh(
+      new THREE.CircleGeometry(3.6, 48),
+      new THREE.MeshBasicMaterial({ color: 0x16304a, transparent: true, opacity: 0.22, depthWrite: false })
+    );
+    this.floorMesh.rotation.x = -Math.PI / 2;
+    this.floorMesh.position.y = 0.001;
+    this.add(this.floorMesh);
+
+    this.arenaMesh = new THREE.Mesh(
+      new THREE.TorusGeometry(CFG.ringOuter, 0.005, 6, 96),
+      glowBlending(new THREE.MeshBasicMaterial({ color: 0x2f7fa8, transparent: true, opacity: 0.5, depthWrite: false }))
+    );
+    this.arenaMesh.rotation.x = -Math.PI / 2;
+    this.arenaMesh.position.z = CFG.ringCenterZ;
+    this.arenaMesh.position.y = 0.004;
+    this.add(this.arenaMesh);
+
+    this.add(new THREE.HemisphereLight(0xbfd9ff, 0x1b2540, 2.2));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+    sun.position.set(0.6, 3.2, 0.8);
+    this.add(sun);
+  }
+
+  buildBodies() {
+    const geo = new THREE.IcosahedronGeometry(1, 1);   // единичный шар: масштаб = радиус
+    this.bodyGeo = geo;
+    this.bodyMat = new THREE.MeshStandardMaterial({ roughness: 0.34, metalness: 0.18, flatShading: true });
+    this.bodyMesh = new THREE.InstancedMesh(geo, this.bodyMat, CFG.count);
+    this.bodyMesh.frustumCulled = false;
+    this.bodyMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.add(this.bodyMesh);
+
+    // Гало — аддитивная оболочка, яркость = скорость (спящее тело не светится).
+    this.haloMat = glowBlending(new THREE.MeshBasicMaterial({
+      transparent: true, opacity: 0.55, depthWrite: false, color: 0xffffff,
+    }));
+    this.haloMesh = new THREE.InstancedMesh(geo, this.haloMat, CFG.count);
+    this.haloMesh.frustumCulled = false;
+    this.haloMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.add(this.haloMesh);
+
+    this.bodies = [];
+    for (let i = 0; i < CFG.count; i++) {
+      const radius = CFG.radii[i % CFG.radii.length];
+      const slot = new THREE.Vector3();
+      this.slotFor(i, slot);
+      const body = {
+        r: radius,
+        slot,
+        body: null,                                   // Rapier RigidBody (режим physics)
+        pos: slot.clone(),
+        quat: new THREE.Quaternion(),
+        vel: new THREE.Vector3(),
+        axis: new THREE.Vector3(0, 1, 0),             // ось кувыркания в fallback
+        spin: 0,
+        awake: false,
+        sleepT: 0,
+        color: new THREE.Color(PALETTE[(i % 3) * 2 + (hash01(i * 11 + 3) > 0.5 ? 1 : 0)]),
+      };
+      body.axis.set(hash01(i * 5 + 2) - 0.5, 1, hash01(i * 13 + 7) - 0.5).normalize();
+      this.bodies.push(body);
+      this.bodyMesh.setColorAt(i, body.color);
+    }
+    if (this.bodyMesh.instanceColor) this.bodyMesh.instanceColor.needsUpdate = true;
+    this.syncVisuals();
+  }
+
+  buildFx() {
+    // Кольцо импульса — читаемая причина: удар уходит именно туда и так широко.
+    this.rings = [];
+    this.ringGeo = new THREE.RingGeometry(0.86, 1, 48);
+    for (let i = 0; i < 3; i++) {
+      const mesh = new THREE.Mesh(this.ringGeo, glowBlending(new THREE.MeshBasicMaterial({
+        color: 0x9fe8ff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
+      })));
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      this.add(mesh);
+      this.rings.push({ mesh, t: 0, dur: 1, alive: false });
+    }
+
+    // Сфера заряда в ладони: растёт, пока держишь позу.
+    this.chargeMesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1, 1),
+      glowBlending(new THREE.MeshBasicMaterial({ color: 0xbfefff, transparent: true, opacity: 0, depthWrite: false }))
+    );
+    this.chargeMesh.visible = false;
+    this.add(this.chargeMesh);
+  }
+
+  buildHud() {
+    this.ui = {
+      stat: new xb.UIText({
+        text: 'инициализация поля…',
+        style: { fontSize: 13, opacity: 0.85, textAlign: 'center', lineHeight: 1.35 },
+      }),
+      last: new xb.UIText({
+        text: ' ',
+        style: { fontSize: 13, opacity: 0.85, textAlign: 'center', lineHeight: 1.35 },
+      }),
+    };
+    this.ui.recall = new xb.UIButton({
+      label: 'RECALL', icon: 'refresh', style: { flexGrow: 1 },
+      onClick: () => this.recallAll(),
+    });
+    this.ui.auto = new xb.UIButton({
+      label: AUTOMATION ? 'AUTO ON' : 'AUTO OFF', icon: 'play_arrow', style: { flexGrow: 1 },
+      onClick: () => this.toggleAuto(),
+    });
+    this.ui.overlay = new xb.UIOverlay({
+      style: {
+        width: 620,
+        position: 'absolute',
+        left: '50%',
+        bottom: 24,
+        transform: { translateX: '-50%' },
+      },
+      children: [
+        new xb.UIText({ text: 'REALITY//FIELD', style: { fontSize: 28, fontWeight: 'bold', textAlign: 'center' } }),
+        this.ui.stat,
+        this.ui.last,
+        new xb.UIPanel({
+          style: { width: '100%', flexDirection: 'row', gap: 12 },
+          children: [this.ui.recall, this.ui.auto],
+        }),
+      ],
+    });
+    this.add(this.ui.overlay);
+  }
+
+  // Позиция слота i в кольце покоя — детерминированная.
+  slotFor(i, out) {
+    const a = hash01(i * 3 + 1) * Math.PI * 2;
+    const rr = CFG.ringInner + (CFG.ringOuter - CFG.ringInner) * Math.pow(hash01(i * 7 + 5), 0.7);
+    out.set(Math.cos(a) * rr, CFG.radii[i % CFG.radii.length], Math.sin(a) * rr + CFG.ringCenterZ);
+    return out;
+  }
+
+  // --- физика: Rapier (приоритет) ---------------------------------------------
+
+  initPhysics(physics) {
+    this.physics = physics;
+    this.physicsMode = true;
+    const { RAPIER, blendedWorld } = physics;
+    this.RAPIER = RAPIER;
+
+    // Пол y=0 как страховка: если depth-меш в этой точке дырявый или его нет,
+    // тела всё равно находят опору. Ровно как в manual/Physics.md.
+    const floorBody = blendedWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.05, 0));
+    this.floorCollider = blendedWorld.createCollider(RAPIER.ColliderDesc.cuboid(6, 0.05, 6), floorBody);
+    this.floorBody = floorBody;
+
+    for (let i = 0; i < CFG.count; i++) {
+      const b = this.bodies[i];
+      b.body = blendedWorld.createRigidBody(
+        RAPIER.RigidBodyDesc.dynamic()
+          .setTranslation(b.pos.x, b.pos.y, b.pos.z)
+          // Мягкое засыпание: пул должен успокаиваться сам, без внешнего таймера.
+          .setLinearDamping(0.15)
+          .setAngularDamping(0.35)
+      );
+      blendedWorld.createCollider(
+        RAPIER.ColliderDesc.ball(b.r).setRestitution(CFG.rest).setFriction(0.6),
+        b.body
+      );
+      // Поле входит в опыт уже успокоенным: тела лежат в кольце, а не падают
+      // на глазах. Импульс будит только те тела, до которых дошёл.
+      b.body.sleep();
+      b.awake = false;
+    }
+  }
+
+  // Единственное место, где позы движка становятся позами картинки.
+  physicsStep() {
+    if (!this.physicsMode) return;
+    this.syncVisuals();
+  }
+
+  // --- физика: fallback -------------------------------------------------------
+
+  // Без Rapier тела живут на velocity: гравитация, пол y=0, отскок, трение,
+  // засыпание. Столкновений тело-тело нет — это честно написано в HUD.
+  stepFallback(dt) {
+    const g = CFG.gravity * dt;
+    const damp = 1 / (1 + CFG.damp * dt);
+    const rest = CFG.rest;
+    for (let i = 0; i < CFG.count; i++) {
+      const b = this.bodies[i];
+      if (!b.awake) continue;
+      const v = b.vel, p = b.pos;
+      v.y += g;
+      v.multiplyScalar(damp);
+      p.addScaledVector(v, dt);
+
+      let touch = false;
+      if (p.y < b.r) {
+        p.y = b.r;
+        touch = true;
+        if (v.y < 0) v.y = -v.y * rest;
+        v.x *= CFG.floorFriction;
+        v.z *= CFG.floorFriction;
+        if (b.spin > 0) b.spin *= 0.72;
+      }
+      // Арена: тело не улетает в бесконечность, а отдаётся обратно.
+      const rsq = p.x * p.x + p.z * p.z;
+      if (rsq > CFG.arena * CFG.arena) {
+        const rl = Math.sqrt(rsq);
+        const nx = p.x / rl, nz = p.z / rl;
+        p.x = nx * CFG.arena;
+        p.z = nz * CFG.arena;
+        const vn = v.x * nx + v.z * nz;
+        if (vn > 0) {
+          v.x -= (1 + rest) * vn * nx;
+          v.z -= (1 + rest) * vn * nz;
+        }
+      }
+      // Кувыркание — чисто визуальное, чтобы fallback не выглядел «программным».
+      if (b.spin > 0.01) {
+        this._quat.setFromAxisAngle(b.axis, b.spin * dt);
+        b.quat.multiply(this._quat);
+      }
+
+      const speed = v.length();
+      if (touch && speed < CFG.sleepSpeed) {
+        b.sleepT += dt;
+        if (b.sleepT > CFG.sleepTime) {
+          b.awake = false;
+          v.set(0, 0, 0);
+          b.spin = 0;
+        }
+      } else {
+        b.sleepT = 0;
+      }
+    }
+  }
+
+  // --- импульс ---------------------------------------------------------------
+
+  // applyImpulse(i, dir(unit), dv): Рапиру нужен импульс (кг·м/с), поэтому Δv
+  // умножается на массу тела — обе ветки дают ОДИНАКОВУЮ скорость.
+  applyImpulse(i, dx, dy, dz, dv) {
+    if (dv <= 0) return;
+    const b = this.bodies[i];
+    b.awake = true;
+    b.sleepT = 0;
+    if (this.physicsMode && b.body) {
+      const m = b.body.mass() || 1e-4;
+      b.body.applyImpulse({ x: dx * dv * m, y: dy * dv * m, z: dz * dv * m }, true);
+      // Немного момента: тела кувыркаются, а не летят «шайбами».
+      let px = -dz, pz = dx;
+      const pl = Math.hypot(px, pz) || 1;
+      px /= pl; pz /= pl;
+      const tq = dv * m * 0.002;
+      b.body.applyTorqueImpulse({ x: px * tq, y: 0, z: pz * tq }, true);
+    } else {
+      b.vel.x += dx * dv;
+      b.vel.y += dy * dv;
+      b.vel.z += dz * dv;
+      b.spin = Math.min(14, b.spin + dv * 0.7);
+    }
+  }
+
+  // Реализация профиля: точка удара и направление → какие тела и с какой силой.
+  emit(origin, dir, prof, power, label) {
+    const dv = prof.dv * power;
+    const reach = prof.reach;
+    const cone = prof.cone;
+    const swirl = prof.swirl;
+    const up = prof.up;
+    let hit = 0;
+    for (let i = 0; i < CFG.count; i++) {
+      const b = this.bodies[i];
+      const dx = b.pos.x - origin.x;
+      const dy = b.pos.y - origin.y;
+      const dz = b.pos.z - origin.z;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d > reach) continue;
+      const inv = 1 / Math.max(d, 0.02);
+      const nx = dx * inv, ny = dy * inv, nz = dz * inv;
+      const facing = nx * dir.x + ny * dir.y + nz * dir.z;
+      if (cone > -1 && facing < cone) continue;
+      const fall = 1 - d / reach;
+      const k = power * fall * fall;
+
+      // Направление: в конусе — вдоль ладони с радиальной подмешкой,
+      // в сфере — строго радиально от ладони.
+      let ax, ay, az;
+      if (cone > -1) {
+        ax = dir.x * 0.75 + nx * 0.25;
+        ay = dir.y * 0.75 + ny * 0.25;
+        az = dir.z * 0.75 + nz * 0.25;
+      } else {
+        ax = nx; ay = ny; az = nz;
+      }
+      if (swirl > 0) {
+        // Тангенс вокруг оси удара: тело уходит по орбите, а не по прямой.
+        const tx = dir.y * nz - dir.z * ny;
+        const ty = dir.z * nx - dir.x * nz;
+        const tz = dir.x * ny - dir.y * nx;
+        const tl = Math.hypot(tx, ty, tz) || 1;
+        ax += (tx / tl) * swirl;
+        ay += (ty / tl) * swirl;
+        az += (tz / tl) * swirl;
+      }
+      ay += up;
+      const al = Math.hypot(ax, ay, az) || 1;
+      this.applyImpulse(i, ax / al, ay / al, az / al, dv * k);
+      hit++;
+    }
+    this.fires++;
+    this.last = { label, dv, hit };
+    this.spawnRing(origin, dir, power);
+  }
+
+  spawnRing(origin, dir, power) {
+    for (const ring of this.rings) {
+      if (ring.alive) continue;
+      ring.alive = true;
+      ring.t = 0;
+      ring.dur = 0.34 + 0.3 * power;
+      ring.mesh.visible = true;
+      ring.mesh.position.copy(origin);
+      ring.mesh.quaternion.setFromUnitVectors(this._zAxis, dir);
+      return;
+    }
+  }
+
+  // --- заряд: одна фаза на источник ------------------------------------------
+  //
+  // ГЕЙТ НАМЕРЕНИЯ (почему так, а не «жест = команда»). Замер на симуляторе:
+  // спокойно лежащая рука уверенно распознаётся как spread (0.72 при пороге
+  // 0.6), а нейтральная кисть — как fist/open-palm. Если считать командой сам
+  // факт позы, поле стреляет при входе и стреляет каждый раз, когда рука
+  // сменила положение. Поэтому командой считается только СМЕНА позы:
+  //   поза, с которой рука пришла (ambient) — фон, из неё удара нет;
+  //   новая поза, удержанная 0.35…2.5 с, — команда, отпускание = удар.
+  // Слишком короткая поза — пролетающая, слишком долгая — уже не жест.
+
+  beginCharge(key, detail, origin, dir, label) {
+    // detail — событие жеста; для select/Space origin и dir передаются готовыми.
+    const isGesture = Boolean(detail);
+    let name = null;
+    if (isGesture) {
+      const hand = detail.hand;
+      name = detail.name;
+      if (this.ambient[hand] === undefined) {
+        // Первая увиденная поза руки — фон, а не команда.
+        this.ambient[hand] = name;
+        return;
+      }
+      if (this.ambient[hand] === name) return;   // возврат в фоновую позу
+      label = (hand === 'left' ? 'LEFT ' : 'RIGHT ') + name;
+      if (!this.handPoseAt(hand, this._origin, this._dir)) {
+        // Поза ладони недоступна — считаем удар от головы, но имя жеста сохраняем.
+        this.headPose(this._origin, this._dir);
+      }
+      origin = this._origin.clone();
+      dir = this._dir.clone();
+    }
+    this.sessions.set(key, {
+      key, name, label,
+      origin: origin.clone(),
+      dir: dir.clone().normalize(),
+      // Заряд меряется стенными часами: при просадке кадров вдох не длится вечно.
+      at: performance.now(),
+      gesture: isGesture,
+    });
+  }
+
+  holdCharge(key, detail) {
+    const s = this.sessions.get(key);
+    if (!s) return;
+    if (detail && this.handPoseAt(detail.hand, this._v3, this._v3b)) {
+      // Кисть за время удержания смещается — удар должен уйти из НОВОЙ точки.
+      s.origin.copy(this._v3);
+      s.dir.copy(this._v3b);
+    }
+  }
+
+  chargeOf(session) {
+    return Math.min(1, (performance.now() - session.at) / 1000 / CFG.chargeTime);
+  }
+
+  heldOf(session) {
+    return (performance.now() - session.at) / 1000;
+  }
+
+  releaseCharge(key, endDetail) {
+    const s = this.sessions.get(key);
+    // Жест кончился: если это была фоновая поза руки — она перестала быть фоном.
+    if (endDetail && this.ambient[endDetail.hand] === endDetail.name) {
+      this.ambient[endDetail.hand] = undefined;
+    }
+    if (!s) return;
+    this.sessions.delete(key);
+    const held = this.heldOf(s);
+    if (s.gesture && held < CFG.minHold) {
+      // Поза промелькнула: это не команда, а движение руки.
+      this.last = { label: `${s.label} too short (${held.toFixed(2)}s)`, dv: 0, hit: 0 };
+      return;
+    }
+    const power = 0.3 + 0.7 * this.chargeOf(s);
+    const prof = (s.name && CFG.profiles[s.name]) || CFG.select;
+    const now = performance.now() * 0.001;
+    // Парные события (жест и select одной рукой) приходят в одном кадре —
+    // второй удар того же момента глушится кулдауном, а не дублирует первый.
+    if (now - this.lastFireAt < CFG.cooldown) return;
+    this.lastFireAt = now;
+    this.emit(s.origin, s.dir, prof, power, s.label);
+  }
+
+  handPoseAt(handLabel, outPos, outDir) {
+    if (!this.handPose) return false;
+    const handedness = handLabel === 'left' ? xb.Handedness.LEFT : xb.Handedness.RIGHT;
+    const ctx = this.handPose.getHandContext(handedness);
+    if (!ctx) return false;
+    const wrist = ctx.getJoint('wrist');
+    if (!wrist) return false;
+    const normal = xb.getPalmNormal(ctx);
+    if (normal) outDir.copy(normal);
+    else {
+      const tip = ctx.getJoint('middle-finger-tip');
+      if (!tip) return false;
+      outDir.subVectors(tip, wrist).normalize();
+    }
+    outPos.copy(wrist);
+    return true;
+  }
+
+  headPose(outPos, outDir) {
+    const camera = xb.core?.camera;
+    if (!camera) { outPos.set(0, 1.5, 0); outDir.set(0, 0, -1); return; }
+    camera.getWorldPosition(outPos);
+    camera.getWorldDirection(outDir);
+  }
+
+  // --- ввод -------------------------------------------------------------------
+
+  onSelectStart(event) {
+    const hand = event?.source?.handedness || 'none';
+    const key = 'select:' + hand;
+    const controller = event?.source?.controller;
+    if (controller) {
+      controller.getWorldPosition(this._origin);
+      // ВАЖНО: Object3D.getWorldDirection() отдаёт +Z (у Camera он переопределён
+      // на −Z). У контроллера/руки «вперёд» — это −Z, иначе удар уходит назад.
+      this._dir.set(0, 0, -1).applyQuaternion(controller.getWorldQuaternion(this._quat));
+    } else this.headPose(this._origin, this._dir);
+    this.beginCharge(key, null, this._origin, this._dir, 'SELECT ' + hand.toUpperCase());
+  }
+
+  onSelectEnd(event) {
+    this.releaseCharge('select:' + (event?.source?.handedness || 'none'));
+  }
+
+  onKeyDown(event) {
+    if (event.code === 'Space') {
+      if (!this.sessions.has('key:space')) {
+        this.headPose(this._origin, this._dir);
+        this.beginCharge('key:space', null, this._origin, this._dir, 'SPACE');
+      }
+    } else if (event.code === 'KeyR') {
+      this.recallAll();
+    }
+  }
+
+  onKeyUp(event) {
+    if (event.code === 'Space') this.releaseCharge('key:space');
+  }
+
+  // --- пул --------------------------------------------------------------------
+
+  // Слот покоя: тело возвращают туда же, где оно стояло — раскладка узнаваема.
+  recallBody(i) {
+    const b = this.bodies[i];
+    b.pos.copy(b.slot);
+    b.vel.set(0, 0, 0);
+    b.spin = 0;
+    b.quat.identity();
+    b.sleepT = 0;
+    b.awake = false;
+    if (b.body) {
+      b.body.setTranslation({ x: b.slot.x, y: b.slot.y, z: b.slot.z }, true);
+      b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      b.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      b.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    }
+  }
+
+  recallAll() {
+    for (let i = 0; i < CFG.count; i++) this.recallBody(i);
+    this.last = { label: 'RECALL', dv: 0, hit: CFG.count };
+    this.syncVisuals();
+  }
+
+  toggleAuto() {
+    this.auto = !this.auto;
+    this.autoSince = performance.now();
+    this.autoShot = 0;
+    this.ui.auto.label = this.auto ? 'AUTO ON' : 'AUTO OFF';
+  }
+
+  // Демо (?xrAutomation=1 и кнопка AUTO): удары идут по фиксированному
+  // расписанию из головы — опыт виден без рук, жестов и сети. Расписание
+  // считается по стенным часам: при просадке кадров оно не растягивается.
+  stepAuto() {
+    if (!this.auto) return;
+    const { period, shots } = CFG.auto;
+    const local = ((performance.now() - this.autoSince) / 1000) % period;
+    if (local < this.lastAutoLocal) this.autoShot = 0;
+    this.lastAutoLocal = local;
+    while (this.autoShot < shots.length && local >= shots[this.autoShot].t) {
+      const shot = shots[this.autoShot++];
+      const prof = CFG.profiles[shot.name];
+      // Демо целится в ближайшее к голове тело и бьёт с 0.35·reach до него:
+      // поле после разлёта полое в центре, прицел «в центр» уходит в пустоту.
+      this.headPose(this._origin, this._dir);
+      let tx = 0, ty = 0, tz = 0, best = Infinity;
+      for (const b of this.bodies) {
+        const dd = (b.pos.x - this._origin.x) ** 2 + (b.pos.y - this._origin.y) ** 2 +
+          (b.pos.z - this._origin.z) ** 2;
+        if (dd < best) { best = dd; tx = b.pos.x; ty = b.pos.y; tz = b.pos.z; }
+      }
+      this._dir.set(tx - this._origin.x, ty - this._origin.y, tz - this._origin.z).normalize();
+      this._origin.addScaledVector(this._dir, Math.max(0.15, Math.sqrt(best) - prof.reach * 0.35));
+      const power = 0.45 + 0.55 * (this.autoShot / shots.length);
+      this.emit(this._origin, this._dir, prof, power, 'AUTO ' + shot.name.toUpperCase());
+    }
+  }
+
+  // --- кадр --------------------------------------------------------------------
+
+  depthLive() {
+    const depth = xb.core?.depth;
+    const mesh = depth?.depthMesh;
+    if (!mesh || depth.depthArray?.[0] === undefined) return false;
+    const min = mesh.minDepth;
+    return typeof min === 'number' && min > 0.1 && min < 8;
+  }
+
+  syncVisuals() {
+    const dummy = this._dummy;
+    const color = this._color;
+    let awake = 0;
+    let maxSpeed = 0;
+    let minY = Infinity;
+    for (let i = 0; i < CFG.count; i++) {
+      const b = this.bodies[i];
+      if (b.body) {
+        const t = b.body.translation();
+        b.pos.set(t.x, t.y, t.z);
+        const r = b.body.rotation();
+        b.quat.set(r.x, r.y, r.z, r.w);
+      }
+      const resting = b.body ? b.body.isSleeping() : !b.awake;
+      if (!resting) awake++;
+      if (b.pos.y < minY) minY = b.pos.y;
+
+      dummy.position.copy(b.pos);
+      dummy.quaternion.copy(b.quat);
+      dummy.scale.setScalar(b.r);
+      dummy.updateMatrix();
+      this.bodyMesh.setMatrixAt(i, dummy.matrix);
+
+      const v = b.body ? b.body.linvel() : b.vel;
+      const speed = Math.hypot(v.x, v.y, v.z);
+      if (speed > maxSpeed) maxSpeed = speed;
+      const k = Math.min(1, speed / CFG.maxSpeed);
+      // Гало: квадрат скорости — медленное тело почти не светится.
+      color.copy(b.color).multiplyScalar(resting ? 0 : k * k * 1.5);
+      this.haloMesh.setColorAt(i, color);
+      dummy.position.copy(b.pos);
+      dummy.quaternion.set(0, 0, 0, 1);
+      dummy.scale.setScalar(b.r * (1.7 + 1.9 * k));
+      dummy.updateMatrix();
+      this.haloMesh.setMatrixAt(i, dummy.matrix);
+    }
+    this.bodyMesh.instanceMatrix.needsUpdate = true;
+    this.haloMesh.instanceMatrix.needsUpdate = true;
+    if (this.haloMesh.instanceColor) this.haloMesh.instanceColor.needsUpdate = true;
+    this.awake = awake;
+    this.maxSpeed = maxSpeed;
+    this.minY = Number.isFinite(minY) ? minY : 0;
+  }
+
+  update() {
+    const dt = Math.min(xb.getDeltaTime(), 0.05);
+
+    if (!this.physicsMode) {
+      this.stepFallback(dt);
+      this.syncVisuals();
+    }
+    this.stepAuto();
+
+    // Заряд: светим сферу в точке удара, пока поза удержана. Поза, которую
+    // держат дольше maxHold, — это уже не жест, а положение руки: снимаем
+    // заряд без удара, иначе спокойная рука даст выстрел при своём движении.
+    let active = null;
+    let stale = null;
+    for (const s of this.sessions.values()) {
+      if (s.gesture && this.heldOf(s) > CFG.maxHold) {
+        (stale ||= []).push(s);
+      } else if (!active || s.at > active.at) {
+        active = s;
+      }
+    }
+    if (stale) {
+      for (const s of stale) {
+        this.sessions.delete(s.key);
+        this.last = { label: `${s.label} held too long`, dv: 0, hit: 0 };
+      }
+    }
+    this.charge = active;
+    const chargeMesh = this.chargeMesh;
+    if (active) {
+      const c = this.chargeOf(active);
+      chargeMesh.visible = true;
+      chargeMesh.position.copy(active.origin);
+      chargeMesh.scale.setScalar(0.035 + 0.075 * c);
+      chargeMesh.material.opacity = 0.35 + 0.5 * c;
+    } else if (chargeMesh.visible) {
+      chargeMesh.visible = false;
+    }
+
+    // Кольца импульса живут своим таймером и уходят в ничто.
+    for (const ring of this.rings) {
+      if (!ring.alive) continue;
+      ring.t += dt;
+      const u = ring.t / ring.dur;
+      if (u >= 1) {
+        ring.alive = false;
+        ring.mesh.visible = false;
+        continue;
+      }
+      ring.mesh.scale.setScalar(0.1 + 2.4 * u);
+      ring.mesh.material.opacity = (1 - u) * (1 - u) * 0.75;
+    }
+
+    this.depthOn = this.depthLive();
+
+    this.statT += dt;
+    if (this.statT > 0.2) {
+      this.statT = 0;
+      this.writeHud();
+    }
+    if (DEBUG) {
+      // Телеметрия — по стенным часам: при просадке кадров её всё равно видно.
+      const now = performance.now();
+      if (now - this.debugT > 2000) {
+        this.debugT = now;
+        console.info('[reality-field]', {
+          physics: this.physicsMode ? 'rapier' : 'fallback',
+          depth: this.depthOn,
+          awake: this.awake,
+          maxV: +(this.maxSpeed ?? 0).toFixed(2),
+          minY: +(this.minY ?? 0).toFixed(3),
+          fires: this.fires,
+          charge: this.charge ? +this.chargeOf(this.charge).toFixed(2) : 0,
+        });
+      }
+    }
+  }
+
+  writeHud() {
+    const mode = this.physicsMode
+      ? (this.depthOn ? 'PHYSICS RAPIER · floor y=0 + room mesh' : 'PHYSICS RAPIER · floor y=0')
+      : 'PHYSICS FALLBACK · floor y=0 · no collisions between nodes';
+    const hands = xb.core?.user?.hands ? ' · hands on' : '';
+    this.ui.stat.text =
+      `${mode} · depth ${this.depthOn ? 'live' : 'off'} · awake ${this.awake}/${CFG.count} · fires ${this.fires}${hands}`;
+
+    if (this.charge) {
+      const c = this.chargeOf(this.charge);
+      const held = this.heldOf(this.charge);
+      const bar = '#'.repeat(Math.round(c * 8)).padEnd(8, '-');
+      const prof = (this.charge.name && CFG.profiles[this.charge.name]) || CFG.select;
+      const dv = (prof.dv * (0.3 + 0.7 * c)).toFixed(1);
+      this.ui.last.text = `charging ${this.charge.label} · hold ${held.toFixed(1)}s [${bar}] · Δv ${dv} · release to fire`;
+    } else if (this.last) {
+      const l = this.last;
+      this.ui.last.text = l.dv > 0
+        ? `last ${l.label} · Δv ${l.dv.toFixed(1)} m/s · ${l.hit} nodes · ${this.fires} fires`
+        : `last ${l.label} · no impulse (hold ${CFG.minHold}–${CFG.maxHold}s)`;
+    } else {
+      this.ui.last.text = 'new pose → hold it → release: impulse · Space on desktop · R = recall';
+    }
+  }
+
+  dispose() {
+    const gestures = xb.core?.gestureRecognition;
+    if (gestures) {
+      gestures.removeEventListener('gesturestart', this.onGestureStart);
+      gestures.removeEventListener('gestureupdate', this.onGestureUpdate);
+      gestures.removeEventListener('gestureend', this.onGestureEnd);
+    }
+    this.sessions.clear();
+    // Тела и их коллайдеры — наши: без removeRigidBody они останутся в мире.
+    if (this.physicsMode) {
+      const world = this.physics?.blendedWorld;
+      for (const b of this.bodies) {
+        if (b.body) {
+          world?.removeRigidBody(b.body);
+          b.body = null;
+        }
+      }
+      if (this.floorBody) {
+        world?.removeRigidBody(this.floorBody);
+        this.floorBody = null;
+        this.floorCollider = null;
+      }
+    }
+    this.bodies = [];
+    this.bodyGeo.dispose();
+    this.bodyMat.dispose();
+    this.haloMat.dispose();
+    this.bodyMesh.dispose?.();
+    this.haloMesh.dispose?.();
+    this.remove(this.bodyMesh, this.haloMesh);
+    for (const ring of this.rings) {
+      ring.mesh.material.dispose();
+      this.remove(ring.mesh);
+    }
+    this.rings = [];
+    this.ringGeo.dispose();
+    this.chargeMesh.geometry.dispose();
+    this.chargeMesh.material.dispose();
+    this.remove(this.chargeMesh);
+    this.floorMesh.geometry.dispose();
+    this.floorMesh.material.dispose();
+    this.arenaMesh.geometry.dispose();
+    this.arenaMesh.material.dispose();
+    this.remove(this.floorMesh, this.arenaMesh);
+  }
+}
+
+// --- сборка -----------------------------------------------------------------
+
+// Rapier — динамическим import: import map пилота его не содержит, а опыт
+// обязан подняться и без сети (тогда работает FALLBACK).
+async function loadRapier() {
+  try {
+    const mod = await Promise.race([
+      import(/* @vite-ignore */ RAPIER_CDN),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), RAPIER_TIMEOUT_MS)),
+    ]);
+    // default-экспорт сборки — тот же namespace, что даёт `import RAPIER from ...`
+    // в официальных сэмплах (init/World/ColliderDesc/RigidBodyDesc).
+    return mod?.default ?? mod;
+  } catch (e) {
+    console.warn('[reality-field] Rapier недоступен, включаю fallback:', e?.message || e);
+    return null;
+  }
+}
+
+installXrGuards();
+if (AUTOMATION) document.body.classList.add('automation');
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const RAPIER = await loadRapier();
+
+  const options = new xb.Options();
+  options.enableReticles();
+  options.enableGestures();
+  options.gestures.minimumConfidence = 0.6;
+  // spread выключен по умолчанию — это четвёртый профиль удара, включаем.
+  options.gestures.setGestureEnabled('spread', true);
+  if (RAPIER) {
+    // Depth-меш как коллайдер комнаты: пресет из templates/10_environment_physics.
+    options.physics.RAPIER = RAPIER;
+    options.depth = new xb.DepthOptions(xb.xrDepthMeshPhysicsOptions);
+  } else {
+    // Без движка depth остаётся полезен прицелу и честной строке состояния.
+    options.enableDepth();
+  }
+  if (DEBUG) options.depth.debugging = true;
+  options.xrButton.showEnterSimulatorButton = true;
+  options.setAppTitle('REALITY//FIELD');
+  options.setAppDescription('Жест руки — удар по полю: 48 тел разлетаются по настоящей комнате.');
+
+  // Один оценщик позы на двоих: его берёт GestureRecognition и он же даёт нам
+  // мировую точку ладони для удара.
+  const handPose = new xb.WebXRHandPoseEstimator();
+  options.gestures.setPoseEstimator(handPose);
+
+  xb.add(new RealityField({ handPose }));
+  await xb.init(options);
+  watchXrButton([
+    'Вход — кнопка по центру: поле встанет вокруг тебя',
+    'Смени позу руки (pinch / open-palm / fist / spread) и подержи её — поза, с которой рука пришла, не команда',
+    'Держишь новую позу — копится заряд, растёт сфера в ладони; отпустил (0.35–2.5 с) — из ладони уходит импульс',
+    'RECALL — вернуть тела в кольцо, AUTO — демо-удары без рук',
+    'Клавиатура: Space — удар от головы, R — recall (плоский десктоп)',
+  ]);
+});
+</script>
+</body>
+</html>

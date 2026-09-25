@@ -1,0 +1,6 @@
+{
+  "title": "SOUND//SPACE",
+  "description": "The room's sound becomes form: mic spectrum as a ring of 28 light columns, a wave halo, and beat ripples; freeze the spectrum into a snapshot you can grab, spin and stretch.",
+  "description_ru": "Звук комнаты становится формой: спектр микрофона — кольцо из 28 световых колонн, гало-волна и волна удара; снимок спектра можно взять в руки, раскрутить и растянуть.",
+  "tags": ["sound", "microphone", "web-audio", "fft", "spectrum", "manipulation"]
+}

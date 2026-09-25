@@ -1,0 +1,875 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>ECHO//ROOM — xrblocks</title>
+<link rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
+<script>window.litDisableBundleWarning = true;</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+    "three/": "https://cdn.jsdelivr.net/npm/three@0.184.0/",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/",
+    "@pmndrs/uikit": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit@1.0.64/dist/index.min.js",
+    "@pmndrs/uikit-pub-sub": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit-pub-sub@1.0.64/dist/index.min.js",
+    "@pmndrs/msdfonts": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.64/dist/index.min.js",
+    "@preact/signals-core": "https://cdn.jsdelivr.net/npm/@preact/signals-core@1.14.0/dist/signals-core.mjs",
+    "yoga-layout/load": "https://cdn.jsdelivr.net/npm/yoga-layout@3.2.1/dist/src/load.js",
+    "lit": "https://esm.sh/lit@3.3.1",
+    "lit/": "https://esm.sh/lit@3.3.1/",
+    "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/xrblocks.js",
+    "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/addons/"
+  }
+}
+</script>
+<style>
+  /* Поверх официального xr.css: только телефонная эргономика и режимы.
+     Официальный слой уже рисует полноэкранный entry-экран с заголовком,
+     описанием и кнопкой входа по центру. */
+  #back { position:fixed; top:10px; left:10px; z-index:40; color:#54d6ff;
+    font:600 13px/1 system-ui,sans-serif; text-decoration:none;
+    background:rgba(7,10,18,.72); border:1px solid #1c2942; border-radius:10px;
+    padding:6px 12px; }
+  /* Подсказки управления внутри официального entry-экрана. */
+  #XRButtonWrapper .app-hints { margin:0; padding:0 20px; list-style:none;
+    display:grid; gap:6px; max-width:480px; }
+  #XRButtonWrapper .app-hints li { font:400 13px/1.45 system-ui,sans-serif;
+    color:#9fb2d2; }
+  /* На телефоне вторая кнопка (симулятор — десктоп-режим) не нужна. */
+  @media (pointer:coarse) {
+    #XRButtonWrapper .XRButton ~ .XRButton { display:none; }
+  }
+  /* В сессии: кнопка END XR компактной пилюлей у верхнего края. */
+  #XRButtonWrapper.in-session { top:calc(10px + env(safe-area-inset-top));
+    left:auto; right:12px; width:auto; height:auto; justify-items:end;
+    align-items:end; }
+  #XRButtonWrapper.in-session > *:not(.XRButton) { display:none; }
+  #XRButtonWrapper.in-session .XRButton { min-height:0; padding:9px 16px;
+    font-size:12px; border-radius:999px; }
+  body:has(#XRButtonWrapper.in-session) #back { display:none; }
+  body.automation #back, body.automation #XRButtonWrapper { display:none !important; }
+</style>
+</head>
+<body>
+<a id="back" href="../../">← все опыты</a>
+<script type="module">
+// ECHO//ROOM — свежая реализация по официальному пути XR Blocks.
+//
+// ИДЕЯ: прошлое движения можно перемотать. Опыт непрерывно пишет позы головы и
+// кистей (позиция + квадратион) в кольцо на 60 с при 20 Гц. Слайдер мотает
+// время назад (−60…0 с): полупрозрачные призраки встают туда, где были голова и
+// руки ТОГДА, а поза между сэмплами берётся интерполяцией (позиция — lerp,
+// поворот — slerp). Ноль слайдера — «сейчас»: призраки уходят, остаются живые
+// маркеры. Select по призраку выбирает тот момент: карточка показывает возраст
+// сэмпла и дистанцию от текущей позы до него. PAUSE замораживает запись, не
+// стирая историю.
+//
+// ВОПЛОЩЕНИЕ:
+//   источник поз — публичный API движка, а не renderer.xr: голова это xb.camera
+//     (движок сам ставит её в позу шлема до вызова скриптов), кисти это
+//     xb.core.input.leftController/rightController — их движок заполняет и в XR
+//     (по событиям connected с handedness), и в симуляторе (ладонные контроллеры
+//     режима Navigation), поэтому один код работает в обоих;
+//   flat-поток без WebXR — камера остаётся источником правды: мышь задаёт
+//     взгляд, WASD/стрелки шагают; включается только вне сессии и симулятора,
+//     и только когда не зажата кнопка (иначе перетаскивание слайдера крутило бы
+//     сцену);
+//   буфер — Float32Array фиксированной длины (1200 сэмплов × 3 сущности),
+//     в кадре не аллоцируется ничего: вся арифметика на заранее созданных
+//     векторах/кватернионах, поиск сэмпла — двоичный по времени;
+//   маркер — сфера + кольцо: у сферы поворот не читается, кольцо его показывает.
+//     Живые маркеры с pointerEvents:'none', иначе кольцо вокруг глаз перехватывало
+//     бы луч и мешало выбирать призраков.
+//
+// Инлайненные device-контракты (причины — в XR-BLOCKS.md корня):
+//   glowBlending — premultiplied-alpha телефонного AR (аддитив копит альфу
+//     канваса — композитор гасит камеру под «свечением»); сюда идут все живые
+//     маркеры: они аддитивные;
+//   installXrGuards — телефонный Chrome отклоняет сессию с required
+//     depth-sensing/hand-tracking/local-floor; повторный запрос без них;
+//   isPassthrough/hideInPassthrough — 'alpha-blend' = телефон; пол-подложка
+//     захвата в AR прячется (перекрывала бы реальный пол), а полупрозрачные
+//     призраки в alpha-blend получают добавку непрозрачности: телефонный
+//     композитор вымывает тонкие слои.
+
+import * as THREE from 'three';
+import * as xb from 'xrblocks';
+
+const AUTOMATION = new URLSearchParams(window.location.search).has('xrAutomation');
+const DEBUG = new URLSearchParams(window.location.search).has('debug');
+
+// --- контракты --------------------------------------------------------------
+
+function glowBlending(material) {
+  material.blending = THREE.CustomBlending;
+  material.blendSrc = THREE.SrcAlphaFactor;
+  material.blendDst = THREE.OneFactor;
+  material.blendSrcAlpha = THREE.ZeroFactor;
+  material.blendDstAlpha = THREE.OneFactor;
+  return material;
+}
+
+// Телефонный AR-passthrough: Quest отдаёт 'additive', телефоны 'alpha-blend'.
+function isPassthrough() {
+  const session = xb.core?.renderer?.xr?.getSession?.();
+  return Boolean(session) && session.environmentBlendMode === 'alpha-blend';
+}
+
+function hideInPassthrough(objects) {
+  const xr = xb.core?.renderer?.xr;
+  if (!xr) return;
+  const sync = () => {
+    const ar = isPassthrough();
+    for (const object of objects) if (object) object.visible = !ar;
+  };
+  xr.addEventListener('sessionstart', sync);
+  xr.addEventListener('sessionend', sync);
+}
+
+function installXrGuards() {
+  const xr = navigator.xr;
+  if (!xr || xr.__downgradeGuard) return;
+  xr.__downgradeGuard = true;
+  const orig = xr.requestSession.bind(xr);
+  xr.requestSession = (mode, init) =>
+    orig(mode, init).catch((err) => {
+      const required = (init && init.requiredFeatures) || [];
+      const heavy = required.filter(
+        (f) => f === 'depth-sensing' || f === 'hand-tracking' || f === 'local-floor'
+      );
+      if (!heavy.length) throw err;
+      init.requiredFeatures = required.filter((f) => !heavy.includes(f));
+      return orig(mode, init);
+    });
+}
+
+// Класс .in-session на #XRButtonWrapper (кнопка стала END XR) + подсказки
+// внутрь официального entry-экрана. Wrapper появляется внутри xb.init().
+function watchXrButton(hints = []) {
+  const sync = (w) => {
+    const btn = w.querySelector('button');
+    if (btn) w.classList.toggle('in-session', /end/i.test(btn.textContent));
+  };
+  const attach = () => {
+    const w = document.getElementById('XRButtonWrapper');
+    if (!w) return false;
+    if (hints.length && !w.querySelector('.app-hints')) {
+      const list = document.createElement('ul');
+      list.className = 'app-hints';
+      for (const hint of hints) {
+        const item = document.createElement('li');
+        item.textContent = hint;
+        list.append(item);
+      }
+      w.append(list);
+    }
+    sync(w);
+    new MutationObserver(() => sync(w)).observe(w, {
+      childList: true, characterData: true, subtree: true,
+    });
+    return true;
+  };
+  if (attach()) return;
+  const io = new MutationObserver(() => { if (attach()) io.disconnect(); });
+  io.observe(document.body, { childList: true, subtree: false });
+}
+
+// --- конфигурация -----------------------------------------------------------
+
+const CFG = {
+  hz: 20,                 // частота записи поз
+  seconds: 60,            // глубина истории в секундах
+  step: 0.02,             // шаг слайдера: мельче сэмпла — видно интерполяцию
+  ghostMinAge: 0.06,      // младше этого возраста призрак не показываем (стоит «на живом»)
+  headR: 0.11,            // радиус маркера головы, м
+  handR: 0.045,           // радиус маркера кисти, м
+  ringK: 1.85,            // во сколько радиусов кольцо вокруг сферы
+  liveAhead: 0.5,         // вынос живого ретикля головы вперёд по взгляду, м
+  liveHeadScale: 0.4,     // и его масштаб: в зрачках кольцо не читается
+  stageR: 2.5,            // радиус пол-подложки захвата, м
+  cardLift: 0.2,          // подъём карточки над призраком, м
+  cardHz: 5,              // частота обновления текста карточки
+  statHz: 2,              // частота телеметрии в HUD
+  eyeHeight: 1.6,         // высота глаз во flat-режиме (движок её не ставит)
+  lookYaw: 1.25,          // радиан на полуэкран по горизонтали
+  lookPitch: 0.95,        // радиан на полуэкран по вертикали
+  lookPitchMax: 1.35,     // предел наклона головы
+  moveSpeed: 1.3,         // м/с шага в flat-режиме
+  moveRadius: 4.5,        // предел ухода от центра захвата, м
+  demoAge: 12,            // возраст замороженного демо-состояния, с
+};
+
+const HEAD = 0, LEFT = 1, RIGHT = 2;
+const NAME = ['HEAD', 'LEFT', 'RIGHT'];
+const COLOR = [0x7ee7ff, 0xffd166, 0xff7ab8];
+const INTERVAL = 1 / CFG.hz;
+const CAPACITY = CFG.hz * CFG.seconds;
+const DEMO_T = CFG.seconds;  // момент, на котором замирает демо-траектория
+
+// --- кольцевой буфер поз ----------------------------------------------------
+
+// Кольцо фиксированной длины: время + позиция + квадратион. Ничего не растёт и
+// не пересобирается; после cap сэмплов новые записи затирают самые старые.
+class PoseTrack {
+  constructor(capacity) {
+    this.capacity = capacity;
+    this.time = new Float32Array(capacity);
+    this.pos = new Float32Array(capacity * 3);
+    this.rot = new Float32Array(capacity * 4);
+    this.count = 0;  // сколько сэмплов записано (≤ capacity)
+    this.next = 0;   // физический индекс следующей записи
+  }
+
+  clear() { this.count = 0; this.next = 0; }
+
+  push(time, position, quaternion) {
+    const i = this.next;
+    const p = i * 3, q = i * 4;
+    this.time[i] = time;
+    this.pos[p] = position.x; this.pos[p + 1] = position.y; this.pos[p + 2] = position.z;
+    this.rot[q] = quaternion.x; this.rot[q + 1] = quaternion.y;
+    this.rot[q + 2] = quaternion.z; this.rot[q + 3] = quaternion.w;
+    this.next = (i + 1) % this.capacity;
+    if (this.count < this.capacity) this.count++;
+  }
+
+  // Логический индекс (0 — самый старый) → физический слот кольца.
+  slot(k) { return (this.next - this.count + k + this.capacity * 2) % this.capacity; }
+
+  get oldestTime() { return this.count ? this.time[this.slot(0)] : 0; }
+  get newestTime() { return this.count ? this.time[this.slot(this.count - 1)] : 0; }
+
+  // Поза на момент time: двоичный поиск пары сэмплов вокруг него, затем линейная
+  // интерполяция позиции и slerp поворота.
+  sample(time, outPosition, outQuaternion) {
+    const n = this.count;
+    if (n === 0) return false;
+    if (n === 1 || time >= this.newestTime) { this.read(n - 1, outPosition, outQuaternion); return true; }
+    if (time <= this.oldestTime) { this.read(0, outPosition, outQuaternion); return true; }
+
+    let lo = 0, hi = n - 1;  // инвариант: t[lo] ≤ time < t[hi]
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (this.time[this.slot(mid)] <= time) lo = mid; else hi = mid;
+    }
+    const a = this.slot(lo), b = this.slot(hi);
+    const t0 = this.time[a], t1 = this.time[b];
+    const alpha = t1 > t0 ? (time - t0) / (t1 - t0) : 0;
+
+    _pa.set(this.pos[a * 3], this.pos[a * 3 + 1], this.pos[a * 3 + 2]);
+    _pb.set(this.pos[b * 3], this.pos[b * 3 + 1], this.pos[b * 3 + 2]);
+    _qa.set(this.rot[a * 4], this.rot[a * 4 + 1], this.rot[a * 4 + 2], this.rot[a * 4 + 3]);
+    _qb.set(this.rot[b * 4], this.rot[b * 4 + 1], this.rot[b * 4 + 2], this.rot[b * 4 + 3]);
+    outPosition.lerpVectors(_pa, _pb, alpha);
+    outQuaternion.slerpQuaternions(_qa, _qb, alpha);
+    return true;
+  }
+
+  read(k, outPosition, outQuaternion) {
+    const i = this.slot(k);
+    outPosition.set(this.pos[i * 3], this.pos[i * 3 + 1], this.pos[i * 3 + 2]);
+    outQuaternion.set(this.rot[i * 4], this.rot[i * 4 + 1], this.rot[i * 4 + 2], this.rot[i * 4 + 3]);
+  }
+}
+
+// Скретч-объекты модуля: в кадре ни одной аллокации.
+const _pa = new THREE.Vector3(), _pb = new THREE.Vector3();
+const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
+const _p = new THREE.Vector3(), _q = new THREE.Quaternion();
+const _fwd = new THREE.Vector3(), _side = new THREE.Vector3();
+const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+// Демо-траектория для ?xrAutomation=1: чистая функция времени, поэтому кадр
+// воспроизводим байт в байт — ни сети, ни разрешений, ни ввода не нужно.
+function demoPose(entity, t, outPosition, outQuaternion) {
+  const w = t * 0.35;
+  if (entity === HEAD) {
+    outPosition.set(
+      Math.sin(w) * 1.15,
+      1.6 + Math.sin(t * 0.9) * 0.05,
+      -1.2 + Math.cos(w * 0.8) * 0.95
+    );
+    _euler.set(-0.08 * Math.sin(t * 0.9), -w * 0.9, 0);
+  } else {
+    const side = entity === LEFT ? -1 : 1;
+    const k = entity === LEFT ? 0 : 0.7;
+    outPosition.set(
+      side * (0.34 + 0.1 * Math.sin(t * 0.8 + k)),
+      1.16 + 0.24 * Math.sin(t * 1.25 + k),
+      -0.64 + 0.34 * Math.cos(t * 0.95 + k)
+    );
+    _euler.set(0.5 * Math.sin(t * 1.25 + k), -side * 0.4, side * 0.25);
+  }
+  outQuaternion.setFromEuler(_euler);
+}
+
+// --- опыт -------------------------------------------------------------------
+
+class EchoRoom extends xb.Script {
+  init() {
+    this.clock = 0;        // собственные часы: не зависят от подскоков dt
+    this.recAcc = 0;       // аккумулятор частоты записи
+    this.cardAcc = 0;      // аккумулятор обновления текста карточки
+    this.statAcc = 0;      // аккумулятор телеметрии
+    this.recording = !AUTOMATION;  // в демо история уже записана и заморожена
+    this.pausedAt = AUTOMATION ? DEMO_T : 0;
+    this.age = AUTOMATION ? CFG.demoAge : 0;  // сколько секунд назад смотрим
+    this.selected = AUTOMATION ? HEAD : -1;
+    this.hovered = -1;
+    this.cardDirty = true;
+    this.lastDist = 0;
+    this.flatActive = false;
+    this.flatReady = false;
+    this.cursorSeen = false;
+    this.cursorX = 0.5;
+    this.cursorY = 0.5;
+    this.keys = new Set();
+    this.arGain = 1;
+    this.mode = 'FLAT';
+
+    this.tracks = [new PoseTrack(CAPACITY), new PoseTrack(CAPACITY), new PoseTrack(CAPACITY)];
+    this.tracked = [false, false, false];
+    this.livePose = [0, 1, 2].map(() => ({ p: new THREE.Vector3(), q: new THREE.Quaternion() }));
+
+    this.buildStage();
+    this.buildMarkers();
+    this.buildHud();
+    this.buildCard();
+    this.bindFlatInput();
+
+    // Демо: сразу пишем 60 с траектории, чтобы призракам было куда вставать.
+    if (AUTOMATION) {
+      for (let i = 0; i < CAPACITY; i++) {
+        const t = (i + 1) * INTERVAL;
+        for (let e = 0; e < 3; e++) {
+          demoPose(e, t, _p, _q);
+          this.tracks[e].push(t, _p, _q);
+        }
+      }
+      this.ui.slider.value = -CFG.demoAge;
+      this.ui.pause.label = 'RESUME';
+      this.select(HEAD);
+    }
+
+    // В alpha-blend (телефон) тонкие слои вымываются — призракам добавляем плотности.
+    const xr = xb.core?.renderer?.xr;
+    const syncAr = () => { this.arGain = isPassthrough() ? 1.35 : 1; };
+    xr?.addEventListener('sessionstart', syncAr);
+    xr?.addEventListener('sessionend', syncAr);
+  }
+
+  // Пол-подложка захвата: в VR/десктопе даёт точку опоры призракам, в AR-проходе
+  // прячется — перекрывала бы реальный пол.
+  buildStage() {
+    this.stageMat = new THREE.MeshBasicMaterial({
+      color: 0x24486b, transparent: true, opacity: 0.5,
+      side: THREE.DoubleSide, depthWrite: false,
+    });
+    this.stage = new THREE.Mesh(
+      new THREE.RingGeometry(CFG.stageR - 0.03, CFG.stageR, 96, 1),
+      this.stageMat
+    );
+    this.stage.rotation.x = -Math.PI / 2;
+    this.stage.position.y = 0.005;
+    this.add(this.stage);
+    hideInPassthrough([this.stage]);
+  }
+
+  // Призрак — полупрозрачная пара сфера+кольцо; живой маркер — та же пара
+  // аддитивным материалом (glowBlending: иначе телефонный AR гасит камеру).
+  buildMarkers() {
+    this.geos = [CFG.headR, CFG.handR, CFG.handR].map((r) => ({
+      sphere: new THREE.SphereGeometry(r, 20, 14),
+      ring: new THREE.TorusGeometry(r * CFG.ringK, r * 0.09, 8, 28),
+    }));
+    this.ghostMats = [];
+    this.liveMats = [];
+    this.ghosts = [];
+    this.lives = [];
+    for (let e = 0; e < 3; e++) {
+      const ghostMat = new THREE.MeshBasicMaterial({
+        color: COLOR[e], transparent: true, opacity: 0.34,
+        depthWrite: false, side: THREE.DoubleSide,
+      });
+      const liveMat = glowBlending(new THREE.MeshBasicMaterial({
+        color: COLOR[e], transparent: true, opacity: 0.85,
+        depthWrite: false, side: THREE.DoubleSide,
+      }));
+      this.ghostMats.push(ghostMat);
+      this.liveMats.push(liveMat);
+
+      const ghost = new THREE.Group();
+      ghost.add(new THREE.Mesh(this.geos[e].sphere, ghostMat));
+      ghost.add(new THREE.Mesh(this.geos[e].ring, ghostMat));
+      ghost.userData.entity = e;
+      ghost.xb = { pointerEvents: 'auto' };  // призрак — цель луча: его и выбирают
+      ghost.visible = false;
+      this.add(ghost);
+      this.ghosts.push(ghost);
+
+      const live = new THREE.Group();
+      live.add(new THREE.Mesh(this.geos[e].sphere, liveMat));
+      live.add(new THREE.Mesh(this.geos[e].ring, liveMat));
+      // Живое кольцо головы охватывает зрачки: пропускаем луч сквозь него,
+      // иначе оно перехватывало бы выбор призраков.
+      live.xb = { pointerEvents: 'none' };
+      live.visible = false;
+      this.add(live);
+      this.lives.push(live);
+    }
+  }
+
+  // HUD — нативный UIOverlay (view-space): канон телефонного AR, работает и на
+  // плоском десктопе до входа в сессию.
+  buildHud() {
+    this.ui = {
+      stat: new xb.UIText({
+        text: 'запись идёт…',
+        style: { fontSize: 13, opacity: 0.8, textAlign: 'center', lineHeight: 1.4 },
+      }),
+      sliderLabel: new xb.UIText({
+        text: 'NOW',
+        style: { fontSize: 15, fontWeight: 'bold', textAlign: 'center' },
+      }),
+    };
+    this.ui.slider = new xb.UISlider({
+      ariaLabel: 'время назад, секунды',
+      min: -CFG.seconds, max: 0, step: CFG.step, value: 0,
+      style: { width: '100%', height: 40 },
+      onInput: (v) => { this.age = -v; this.cardDirty = true; },
+    });
+    this.ui.now = new xb.UIButton({
+      label: 'NOW', icon: 'schedule', style: { flexGrow: 1 },
+      onClick: () => {
+        this.ui.slider.value = 0;
+        this.age = 0;
+        this.cardDirty = true;
+      },
+    });
+    this.ui.pause = new xb.UIButton({
+      label: 'PAUSE', icon: 'pause', style: { flexGrow: 1 },
+      onClick: () => this.toggleRecording(),
+    });
+    this.ui.clear = new xb.UIButton({
+      label: 'CLEAR', icon: 'delete_sweep', style: { flexGrow: 1 },
+      onClick: () => this.clearHistory(),
+    });
+    this.ui.overlay = new xb.UIOverlay({
+      style: {
+        width: 620,
+        position: 'absolute',
+        left: '50%',
+        bottom: 24,
+        transform: { translateX: '-50%' },
+      },
+      children: [
+        new xb.UIText({
+          text: 'ECHO//ROOM',
+          style: { fontSize: 28, fontWeight: 'bold', textAlign: 'center' },
+        }),
+        this.ui.stat,
+        this.ui.sliderLabel,
+        this.ui.slider,
+        new xb.UIPanel({
+          style: { width: '100%', flexDirection: 'row', gap: 12 },
+          children: [this.ui.now, this.ui.pause, this.ui.clear],
+        }),
+      ],
+    });
+    this.add(this.ui.overlay);
+  }
+
+  // Карточка выбранного момента. Живёт в мире (метры), поэтому её позицию каждый
+  // кадр ставим к призраку; FaceCamera держит лицом к пользователю.
+  buildCard() {
+    this.cardTitle = new xb.UIText({
+      text: 'ECHO',
+      style: { fontSize: 20, fontWeight: 'bold', textAlign: 'center' },
+    });
+    this.cardEntity = new xb.UIText({
+      text: '—',
+      style: { fontSize: 15, fontWeight: 'bold', textAlign: 'center' },
+    });
+    this.cardAge = new xb.UIText({
+      text: 'AGE —',
+      style: { fontSize: 16, textAlign: 'center' },
+    });
+    this.cardDist = new xb.UIText({
+      text: 'Δ —',
+      style: { fontSize: 16, textAlign: 'center' },
+    });
+    this.card = new xb.UICard({
+      size: { width: 0.38, height: 'auto' },
+      pointerEvents: 'none',  // карточка не должна перехватывать луч у призрака
+      style: { flexDirection: 'column', gap: 6, padding: 16 },
+      children: [this.cardTitle, this.cardEntity, this.cardAge, this.cardDist],
+    });
+    this.card.add(new xb.FaceCamera({ mode: 'spherical', smoothing: 0.25 }));
+    this.card.visible = false;
+    this.add(this.card);
+  }
+
+  // flat-поток: без сессии и без симулятора камеру двигаем сами — она остаётся
+  // источником правды для записи.
+  bindFlatInput() {
+    // pointermove, а не mousemove: на телефоне до входа в AR взгляд ведёт палец.
+    this.onPointerMove = (event) => {
+      this.cursorX = event.clientX / Math.max(1, window.innerWidth);
+      this.cursorY = event.clientY / Math.max(1, window.innerHeight);
+      this.cursorSeen = true;
+    };
+    this.onKeyDown = (event) => {
+      if (!this.flatActive) return;
+      this.keys.add(event.code);
+    };
+    this.onKeyUp = (event) => this.keys.delete(event.code);
+    window.addEventListener('pointermove', this.onPointerMove);
+    window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
+  }
+
+  // --- состояние ------------------------------------------------------------
+
+  toggleRecording() {
+    this.recording = !this.recording;
+    if (!this.recording) this.pausedAt = this.clock;
+    this.recAcc = 0;
+    this.ui.pause.label = this.recording ? 'PAUSE' : 'RESUME';
+    this.ui.pause.icon = this.recording ? 'pause' : 'play_arrow';
+  }
+
+  clearHistory() {
+    for (const track of this.tracks) track.clear();
+    this.selected = -1;
+    this.lastDist = 0;
+    this.card.visible = false;
+    this.recAcc = 0;
+    this.cardDirty = true;
+    // Смотреть некуда — возвращаем слайдер на «сейчас».
+    this.ui.slider.value = 0;
+    this.age = 0;
+  }
+
+  select(entity) {
+    this.selected = entity;
+    this.cardDirty = true;
+    this.cardTitle.text = NAME[entity];
+    this.cardTitle.style.color = '#' + COLOR[entity].toString(16).padStart(6, '0');
+    this.cardEntity.text = 'выбранный момент';
+  }
+
+  // --- позы -----------------------------------------------------------------
+
+  // Живые позы: голова всегда, кисти — только пока движок считает их
+  // подключёнными (в flat-режиме кистей нет, и это честно видно в HUD).
+  readLivePoses() {
+    if (AUTOMATION) {
+      for (let e = 0; e < 3; e++) {
+        demoPose(e, DEMO_T, this.livePose[e].p, this.livePose[e].q);
+        this.tracked[e] = true;
+      }
+      return;
+    }
+    const camera = xb.camera;
+    camera.getWorldPosition(this.livePose[HEAD].p);
+    camera.getWorldQuaternion(this.livePose[HEAD].q);
+    this.tracked[HEAD] = true;
+
+    const input = xb.core?.input;
+    for (let h = 0; h < 2; h++) {
+      const entity = LEFT + h;
+      const controller = h === 0 ? input?.leftController : input?.rightController;
+      const on = Boolean(controller && controller.userData?.connected);
+      this.tracked[entity] = on;
+      if (!on) continue;
+      controller.getWorldPosition(this.livePose[entity].p);
+      controller.getWorldQuaternion(this.livePose[entity].q);
+    }
+  }
+
+  pushSample(time) {
+    for (let e = 0; e < 3; e++) {
+      if (AUTOMATION) {
+        demoPose(e, time, _p, _q);
+        this.tracks[e].push(time, _p, _q);
+      } else if (this.tracked[e]) {
+        this.tracks[e].push(time, this.livePose[e].p, this.livePose[e].q);
+      }
+    }
+  }
+
+  get liveTime() { return this.recording ? this.clock : this.pausedAt; }
+
+  // --- кадр -----------------------------------------------------------------
+
+  update() {
+    const dt = Math.min(xb.getDeltaTime(), 0.05);
+    this.clock += dt;
+
+    this.mode = AUTOMATION ? 'DEMO'
+      : xb.core?.renderer?.xr?.isPresenting ? 'XR'
+        : xb.core?.simulatorRunning ? 'SIM' : 'FLAT';
+    this.updateFlatCamera(dt);
+    this.readLivePoses();
+
+    if (this.recording) {
+      this.recAcc += dt;
+      while (this.recAcc >= INTERVAL) {
+        this.recAcc -= INTERVAL;
+        this.pushSample(this.clock - this.recAcc);
+      }
+    }
+
+    this.updateLiveMarkers();
+    this.updateGhosts();
+    this.updateCard(dt);
+    this.updateTelemetry(dt);
+  }
+
+  updateLiveMarkers() {
+    for (let e = 0; e < 3; e++) {
+      const live = this.lives[e];
+      const on = this.tracked[e];
+      live.visible = on;
+      if (!on) continue;
+      live.position.copy(this.livePose[e].p);
+      live.quaternion.copy(this.livePose[e].q);
+      if (e === HEAD) {
+        // Живой ретикль головы выносим вперёд по взгляду и уменьшаем: кольцо
+        // лежит ровно в плоскости глаз, то есть ближе near-плоскости камеры
+        // (0.01 м), и поэтому не рисуется вообще.
+        _fwd.set(0, 0, -1).applyQuaternion(this.livePose[HEAD].q)
+          .multiplyScalar(CFG.liveAhead);
+        live.position.add(_fwd);
+        live.scale.setScalar(CFG.liveHeadScale);
+      }
+    }
+  }
+
+  // Призраки: поза ровно на момент (liveTime − возраст), между сэмплами —
+  // интерполяция. Возраст 0 = «сейчас», там призрак уступает живому маркеру.
+  updateGhosts() {
+    const live = this.liveTime;
+    const age = this.age;
+    for (let e = 0; e < 3; e++) {
+      const ghost = this.ghosts[e];
+      const track = this.tracks[e];
+      const show = track.count > 0 && age > CFG.ghostMinAge;
+      ghost.visible = show;
+      if (!show) {
+        if (this.hovered === e) this.hovered = -1;
+        continue;
+      }
+      const t = clamp(live - age, track.oldestTime, track.newestTime);
+      track.sample(t, _p, _q);
+      ghost.position.set(_p.x, _p.y, _p.z);
+      ghost.quaternion.set(_q.x, _q.y, _q.z, _q.w);
+    }
+    // Подсветку наведения ставим здесь же: иначе кадр затирал бы её.
+    const gain = this.arGain;
+    for (let e = 0; e < 3; e++) {
+      this.ghostMats[e].opacity = (e === this.hovered ? 0.62 : 0.34) * gain;
+    }
+  }
+
+  updateCard(dt) {
+    const e = this.selected;
+    if (e < 0) { this.card.visible = false; return; }
+    const track = this.tracks[e];
+    const t = clamp(this.liveTime - this.age, track.oldestTime, track.newestTime);
+    const age = this.liveTime - t;
+    const show = track.count > 0 && age > CFG.ghostMinAge;
+    this.card.visible = show;
+    if (!show) { this.cardDirty = true; return; }
+
+    track.sample(t, _p, _q);
+    this.card.position.set(_p.x, _p.y + CFG.cardLift, _p.z);
+
+    this.cardAcc += dt;
+    if (!this.cardDirty && this.cardAcc < 1 / CFG.cardHz) return;
+    this.cardAcc = 0;
+    this.cardDirty = false;
+    const dist = _p.distanceTo(this.livePose[e].p);
+    this.lastDist = dist;
+    this.cardAge.text = `AGE ${age.toFixed(2)} s`;
+    this.cardDist.text = `Δ ${dist.toFixed(2)} m · ${NAME[e]}`;
+  }
+
+  updateTelemetry(dt) {
+    this.statAcc += dt;
+    if (this.statAcc < 1 / CFG.statHz) return;
+    this.statAcc = 0;
+
+    const head = this.tracks[HEAD];
+    const span = head.count ? Math.max(0, this.liveTime - head.oldestTime) : 0;
+    const samples = head.count;
+    const hands = (this.tracked[LEFT] ? 1 : 0) + (this.tracked[RIGHT] ? 1 : 0);
+    let ghosts = 0;
+    for (const ghost of this.ghosts) if (ghost.visible) ghosts++;
+    let picked = 'none';
+    if (this.selected >= 0 && this.card.visible) {
+      const track = this.tracks[this.selected];
+      const t = clamp(this.liveTime - this.age, track.oldestTime, track.newestTime);
+      picked = `${NAME[this.selected]} −${(this.liveTime - t).toFixed(2)} s Δ${this.lastDist.toFixed(2)} m`;
+    }
+    const rec = AUTOMATION ? 'PAUSED' : this.recording ? 'ON' : 'PAUSED';
+    this.ui.stat.text =
+      `${this.mode} · rec ${rec} · буфер ${span.toFixed(1)}/${CFG.seconds} s · ` +
+      `сэмплов ${samples} · кисти ${hands}/2 · призраков ${ghosts} · момент ${picked}`;
+    this.ui.sliderLabel.text = this.age <= CFG.ghostMinAge
+      ? 'NOW · живой маркер'
+      : `−${this.age.toFixed(1)} s · призраки`;
+
+    if (DEBUG && this.selected >= 0 && this.card.visible) {
+      const report = xb.ui.validate(this.card);
+      if (!report.ok) console.table(report.issues);
+    }
+  }
+
+  // flat-режим: движок держит камеру на месте, поэтому взгляд и шаг — наши.
+  updateFlatCamera(dt) {
+    const xr = xb.core?.renderer?.xr;
+    const flat = !AUTOMATION && !xr?.isPresenting && !xb.core?.simulatorRunning;
+    this.flatActive = flat;
+    if (!flat) {
+      this.flatReady = false;
+      this.keys.clear();
+      return;
+    }
+
+    const camera = xb.camera;
+    if (!this.flatReady) {
+      // Без сессии камера остаётся на уровне пола — поднимаем её сами, иначе
+      // запись шла бы из-под ног.
+      camera.position.set(0, CFG.eyeHeight, 0);
+      this.flatReady = true;
+    }
+
+    // Взгляд от курсора, но не во время нажатия: иначе перетаскивание слайдера
+    // крутило бы сцену.
+    if (this.cursorSeen && !xb.user?.isSelecting?.()) {
+      _euler.set(
+        clamp(-(this.cursorY - 0.5) * CFG.lookPitch, -CFG.lookPitchMax, CFG.lookPitchMax),
+        -(this.cursorX - 0.5) * CFG.lookYaw,
+        0
+      );
+      camera.quaternion.setFromEuler(_euler);
+    }
+
+    const keys = this.keys;
+    const walk = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) -
+      (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
+    const strafe = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) -
+      (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
+    if (!walk && !strafe) {
+      camera.position.y = CFG.eyeHeight;
+      return;
+    }
+    _fwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    _fwd.y = 0;
+    _fwd.normalize();
+    _side.set(1, 0, 0).applyQuaternion(camera.quaternion);
+    _side.y = 0;
+    _side.normalize();
+    camera.position
+      .addScaledVector(_fwd, walk * CFG.moveSpeed * dt)
+      .addScaledVector(_side, strafe * CFG.moveSpeed * dt);
+    camera.position.y = CFG.eyeHeight;
+    const radius = Math.hypot(camera.position.x, camera.position.z);
+    if (radius > CFG.moveRadius) {
+      const k = CFG.moveRadius / radius;
+      camera.position.x *= k;
+      camera.position.z *= k;
+    }
+  }
+
+  // --- взаимодействие -------------------------------------------------------
+
+  // Выбор доходит сюда всплытием от детей: UI-цели (слайдер, кнопки) отсеиваем,
+  // реагируем только на призраков.
+  onObjectSelectStart(event) {
+    const entity = this.entityOf(event.target) ?? this.entityOf(event.surface);
+    if (entity === undefined) return;
+    this.select(entity);
+    event.stopPropagation();
+  }
+
+  onHoverEnter(event) {
+    const entity = this.entityOf(event.target) ?? this.entityOf(event.surface);
+    if (entity === undefined) return;
+    this.hovered = entity;
+    event.stopPropagation();
+  }
+
+  onHoverExit(event) {
+    const entity = this.entityOf(event.target) ?? this.entityOf(event.surface);
+    if (entity === undefined) return;
+    if (this.hovered === entity) this.hovered = -1;
+    event.stopPropagation();
+  }
+
+  entityOf(object) {
+    let node = object;
+    while (node) {
+      if (node.userData && node.userData.entity !== undefined) return node.userData.entity;
+      node = node.parent;
+    }
+    return undefined;
+  }
+
+  dispose() {
+    window.removeEventListener('pointermove', this.onPointerMove);
+    window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('keyup', this.onKeyUp);
+    for (const ghost of this.ghosts) this.remove(ghost);
+    for (const live of this.lives) this.remove(live);
+    for (const geo of this.geos) { geo.sphere.dispose(); geo.ring.dispose(); }
+    for (const material of this.ghostMats) material.dispose();
+    for (const material of this.liveMats) material.dispose();
+    this.stage.geometry.dispose();
+    this.stageMat.dispose();
+    this.remove(this.stage);
+    for (const track of this.tracks) track.clear();
+    this.remove(this.card);
+    this.remove(this.ui.overlay);
+  }
+}
+
+const options = new xb.Options();
+options.enableReticles();
+// Тяжёлых required-фич не просим: кисти приходят подключёнными контроллерами, а
+// installXrGuards остаётся страховкой от сборок, которые отвергают сессию с
+// required depth-sensing/hand-tracking/local-floor.
+// Режим симулятора — User, как по умолчанию у движка и как в ?xrAutomation=1:
+// только он подключает MouseController, а мышь на десктопе — единственный
+// источник выбора (слайдер и призраки). Цена честная и видна в HUD: ладонных
+// контроллеров симулятор в этом режиме не публикует, поэтому на десктопе
+// записывается одна голова, а кисти — в XR.
+options.simulator.defaultMode = xb.SimulatorMode.USER;
+// Пресет ?xrAutomation=1 тянет за собой устройство-камеру. Опыту она не нужна
+// (passthrough-видео мы не показываем), а демо должно идти без разрешений.
+if (AUTOMATION) options.deviceCamera.enabled = false;
+options.xrButton.showEnterSimulatorButton = true;
+options.setAppTitle('ECHO//ROOM');
+options.setAppDescription('Прошлое движения можно перемотать: голова и кисти пишутся в кольцо на 60 с.');
+
+installXrGuards();
+if (AUTOMATION) document.body.classList.add('automation');
+
+document.addEventListener('DOMContentLoaded', () => {
+  xb.add(new EchoRoom());
+  xb.init(options);
+  watchXrButton([
+    'Вход — кнопка по центру: позы головы и кистей начнут писаться',
+    'Слайдер — время назад до 60 с: призраки встают туда, где ты был тогда',
+    'Select по призраку — карточка с возрастом момента и дистанцией',
+    'PAUSE — заморозить запись, CLEAR — стереть историю',
+    'Десктоп без симулятора: мышь — взгляд, WASD — шаг',
+  ]);
+});
+</script>
+</body>
+</html>

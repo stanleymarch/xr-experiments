@@ -1,0 +1,1008 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>CITY//ORBIT — xrblocks</title>
+<link rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
+<script>window.litDisableBundleWarning = true;</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+    "three/": "https://cdn.jsdelivr.net/npm/three@0.184.0/",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/",
+    "@pmndrs/uikit": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit@1.0.64/dist/index.min.js",
+    "@pmndrs/uikit-pub-sub": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit-pub-sub@1.0.64/dist/index.min.js",
+    "@pmndrs/msdfonts": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.64/dist/index.min.js",
+    "@preact/signals-core": "https://cdn.jsdelivr.net/npm/@preact/signals-core@1.14.0/dist/signals-core.mjs",
+    "yoga-layout/load": "https://cdn.jsdelivr.net/npm/yoga-layout@3.2.1/dist/src/load.js",
+    "lit": "https://esm.sh/lit@3.3.1",
+    "lit/": "https://esm.sh/lit@3.3.1/",
+    "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/xrblocks.js",
+    "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/addons/"
+  }
+}
+</script>
+<style>
+  /* Поверх официального xr.css: только телефонная эргономика и режимы.
+     Официальный слой уже рисует полноэкранный entry-экран с заголовком,
+     описанием и кнопкой входа по центру. */
+  #back { position:fixed; top:10px; left:10px; z-index:40; color:#54d6ff;
+    font:600 13px/1 system-ui,sans-serif; text-decoration:none;
+    background:rgba(7,10,18,.72); border:1px solid #1c2942; border-radius:10px;
+    padding:6px 12px; }
+  /* Подсказки управления внутри официального entry-экрана. */
+  #XRButtonWrapper .app-hints { margin:0; padding:0 20px; list-style:none;
+    display:grid; gap:6px; max-width:480px; }
+  #XRButtonWrapper .app-hints li { font:400 13px/1.45 system-ui,sans-serif;
+    color:#9fb2d2; }
+  /* На телефоне вторая кнопка (симулятор — десктоп-режим) не нужна. */
+  @media (pointer:coarse) {
+    #XRButtonWrapper .XRButton ~ .XRButton { display:none; }
+  }
+  /* В сессии: кнопка END XR компактной пилюлей у верхнего края. */
+  #XRButtonWrapper.in-session { top:calc(10px + env(safe-area-inset-top));
+    left:auto; right:12px; width:auto; height:auto; justify-items:end;
+    align-items:end; }
+  #XRButtonWrapper.in-session > *:not(.XRButton) { display:none; }
+  #XRButtonWrapper.in-session .XRButton { min-height:0; padding:9px 16px;
+    font-size:12px; border-radius:999px; }
+  body:has(#XRButtonWrapper.in-session) #back { display:none; }
+  body.automation #back, body.automation #XRButtonWrapper { display:none !important; }
+</style>
+</head>
+<body>
+<a id="back" href="../../">← все опыты</a>
+<script type="module">
+// CITY//ORBIT — свежая реализация по официальному пути XR Blocks.
+//
+// ИДЕЯ: город вокруг тебя. Геопозиция → один запрос Overpass API (OSM, без
+// ключа) берёт здания в радиусе 400 м → каждый полигон сжимается в
+// ориентированный прямоугольник → весь район становится ОДНИМ объектом:
+// один InstancedMesh, который можно перенести, повернуть за кольцо и
+// увеличить вторым источником — от макета на столе до улиц вокруг тебя.
+// Нет сети, нет разрешений, нет данных — детерминированный синтетический
+// квартал (DEMO), так что опыт остаётся полным в любом окружении.
+//
+// Откуда взято (не выдумано):
+//   02_object_interaction — object.xb.manipulation, роли handle, хуки объекта;
+//   03_spatial_placement  — постановка по ретикулу (placeOnSurface) с
+//     проекцией самого ретикула на depth-меш;
+//   01_spatial_ui         — UIOverlay как view-space HUD (без своего follow).
+//
+// Инлайненные device-контракты (причины — в XR-BLOCKS.md корня; дословно из
+// проверенного пилота):
+//   glowBlending — premultiplied-alpha телефонного AR: аддитив копит альфу
+//     канваса, и композитор гасит камеру под «свечением»;
+//   installXrGuards — телефонный Chrome отклоняет сессию с required
+//     depth-sensing/hand-tracking/local-floor; повторный запрос без них;
+//   isPassthrough/hideInPassthrough — 'alpha-blend' = телефон: рисованная
+//     плита под городом в AR прячется (её нельзя путать с реальным полом),
+//     а свечение колец остаётся — аддитив в premultiplied корректен.
+
+import * as THREE from 'three';
+import * as xb from 'xrblocks';
+
+const PARAMS = new URLSearchParams(window.location.search);
+const AUTOMATION = PARAMS.has('xrAutomation');
+const DEBUG = PARAMS.has('debug');
+
+// --- контракты --------------------------------------------------------------
+
+function glowBlending(material) {
+  material.blending = THREE.CustomBlending;
+  material.blendSrc = THREE.SrcAlphaFactor;
+  material.blendDst = THREE.OneFactor;
+  material.blendSrcAlpha = THREE.ZeroFactor;
+  material.blendDstAlpha = THREE.OneFactor;
+  return material;
+}
+
+// Телефонный AR-passthrough: Quest отдаёт 'additive', телефоны 'alpha-blend'.
+function isPassthrough() {
+  const session = xb.core?.renderer?.xr?.getSession?.();
+  return Boolean(session) && session.environmentBlendMode === 'alpha-blend';
+}
+
+function hideInPassthrough(objects) {
+  const xr = xb.core?.renderer?.xr;
+  if (!xr) return;
+  const sync = () => {
+    const ar = isPassthrough();
+    for (const object of objects) if (object) object.visible = !ar;
+  };
+  xr.addEventListener('sessionstart', sync);
+  xr.addEventListener('sessionend', sync);
+}
+
+function installXrGuards() {
+  const xr = navigator.xr;
+  if (!xr || xr.__downgradeGuard) return;
+  xr.__downgradeGuard = true;
+  const orig = xr.requestSession.bind(xr);
+  xr.requestSession = (mode, init) =>
+    orig(mode, init).catch((err) => {
+      const required = (init && init.requiredFeatures) || [];
+      const heavy = required.filter(
+        (f) => f === 'depth-sensing' || f === 'hand-tracking' || f === 'local-floor'
+      );
+      if (!heavy.length) throw err;
+      init.requiredFeatures = required.filter((f) => !heavy.includes(f));
+      return orig(mode, init);
+    });
+}
+
+// Класс .in-session на #XRButtonWrapper (кнопка стала END XR) + подсказки
+// внутрь официального entry-экрана. Wrapper появляется внутри xb.init().
+function watchXrButton(hints = []) {
+  const sync = (w) => {
+    const btn = w.querySelector('button');
+    if (btn) w.classList.toggle('in-session', /end/i.test(btn.textContent));
+  };
+  const attach = () => {
+    const w = document.getElementById('XRButtonWrapper');
+    if (!w) return false;
+    if (hints.length && !w.querySelector('.app-hints')) {
+      const list = document.createElement('ul');
+      list.className = 'app-hints';
+      for (const hint of hints) {
+        const item = document.createElement('li');
+        item.textContent = hint;
+        list.append(item);
+      }
+      w.append(list);
+    }
+    sync(w);
+    new MutationObserver(() => sync(w)).observe(w, {
+      childList: true, characterData: true, subtree: true,
+    });
+    return true;
+  };
+  if (attach()) return;
+  const io = new MutationObserver(() => { if (attach()) io.disconnect(); });
+  io.observe(document.body, { childList: true, subtree: false });
+}
+
+// --- числа и детерминизм ----------------------------------------------------
+
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+// Детерминированный ПСЧ: синтетический квартал обязан быть одинаковым в каждом
+// прогоне (в т.ч. в автоматизации) — иначе прогон нечем сравнивать.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// --- OSM: геопозиция, запрос, полигоны --------------------------------------
+
+const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+const OVERPASS_TIMEOUT = 14000;      // мс: после этого — DEMO, без ожидания вечно
+const RADIUS = 400;                  // м — что считаем «своим районом»
+const MAX_RECORDS = 1600;            // потолок инстансов: один draw call, но не больше
+const DEFAULT_SITE = {lat: 59.9343, lon: 30.3351};
+
+const M_PER_DEG_LAT = 110574;
+const mPerDegLon = (lat) => 111320 * Math.cos((lat * Math.PI) / 180);
+
+// Просим геометрию сразу (`out geom`): без второго раунда за узлами. Лимит —
+// 800 элементов: центр города в 400 м легко даёт больше, дальше уже не читаемо.
+function overpassQuery(lat, lon) {
+  return '[out:json][timeout:25];\n(\n' +
+    `  way["building"](around:${RADIUS},${lat},${lon});\n` +
+    `  relation["building"](around:${RADIUS},${lat},${lon});\n` +
+    ');\n' +
+    'out geom qt 800;';
+}
+
+async function fetchOverpass(lat, lon, signal) {
+  const r = await fetch(OVERPASS_URL, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'},
+    body: 'data=' + encodeURIComponent(overpassQuery(lat, lon)),
+    signal,
+  });
+  if (!r.ok) throw new Error(`overpass ${r.status}`);
+  return r.json();
+}
+
+// Плоская местная система: x — восток, z — юг (север = −z, «вперёд» в three).
+// На 400 м кривизна Земли не важнее ширины улицы, поэтому проекция линейная.
+function project(lat, lon, site) {
+  return {
+    x: (lon - site.lon) * mPerDegLon(site.lat),
+    z: -(lat - site.lat) * M_PER_DEG_LAT,
+  };
+}
+
+// Ориентированный прямоугольник полигона: самое длинное ребро задаёт ось, вдоль
+// неё и поперёк берутся габариты. Форма плана теряется (Г-образный дом станет
+// прямоугольником), но город читается кварталами — и всё это один instanced
+// draw call вместо тысячи экструзий.
+function obbFromPoints(points) {
+  let longest = 0, angle = 0;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    const q = points[(i + 1) % points.length];
+    const dx = q.x - p.x, dz = q.z - p.z;
+    const len = Math.hypot(dx, dz);
+    if (len > longest) { longest = len; angle = Math.atan2(dz, dx); }
+  }
+  const c = Math.cos(angle), s = Math.sin(angle);
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of points) {
+    const lx = p.x * c + p.z * s;
+    const lz = -p.x * s + p.z * c;
+    if (lx < minX) minX = lx;
+    if (lx > maxX) maxX = lx;
+    if (lz < minZ) minZ = lz;
+    if (lz > maxZ) maxZ = lz;
+  }
+  const lcx = (minX + maxX) / 2, lcz = (minZ + maxZ) / 2;
+  return {
+    cx: lcx * c - lcz * s,
+    cz: lcx * s + lcz * c,
+    w: maxX - minX,
+    d: maxZ - minZ,
+    rot: -angle,      // rotation.y в three крутит +X к −Z
+    area: (maxX - minX) * (maxZ - minZ),
+  };
+}
+
+function rectPoints(cx, cz, w, d, rot) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  return [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]]
+    .map(([lx, lz]) => ({x: cx + lx * c - lz * s, z: cz + lx * s + lz * c}));
+}
+
+// Высота: тег height → building:levels → фолбэк. Фолбэк детерминирован по
+// индексу, чтобы один и тот же район выглядел одинаково между прогонами.
+function heightFromTags(tags, fallback) {
+  const h = parseFloat(String(tags?.height ?? '').replace(',', '.'));
+  if (Number.isFinite(h) && h >= 2 && h <= 700) return h;
+  const levels = parseFloat(String(tags?.['building:levels'] ?? '').replace(',', '.'));
+  if (Number.isFinite(levels) && levels >= 1 && levels <= 200) return levels * 3.2 + 1;
+  return fallback;
+}
+
+const fallbackHeight = (i) =>
+  8 + (((Math.imul(i + 1, 2654435761) >>> 8) % 1000) / 1000) * 22;
+
+function buildingFromRing(ring, tags, site, index) {
+  if (!Array.isArray(ring) || ring.length < 4) return null;
+  const pts = [];
+  for (const p of ring) {
+    if (!Number.isFinite(p?.lat) || !Number.isFinite(p?.lon)) return null;
+    pts.push(project(p.lat, p.lon, site));
+  }
+  // OSM-кольцо замкнуто повтором первой точки — для габаритов он лишний.
+  const last = pts[pts.length - 1];
+  if (Math.hypot(last.x - pts[0].x, last.z - pts[0].z) < 0.01) pts.pop();
+  if (pts.length < 3) return null;
+  const obb = obbFromPoints(pts);
+  if (obb.area < 16) return null;                        // будки, гаражи, навесы
+  if (Math.hypot(obb.cx, obb.cz) > RADIUS * 1.3) return null;
+  return {...obb, h: heightFromTags(tags, fallbackHeight(index)), index};
+}
+
+function recordsFromOverpass(json, site) {
+  const out = [];
+  const els = Array.isArray(json?.elements) ? json.elements : [];
+  for (const el of els) {
+    const rings = [];
+    if (el.type === 'way' && Array.isArray(el.geometry)) {
+      rings.push(el.geometry);
+    } else if (el.type === 'relation' && Array.isArray(el.members)) {
+      // У мультиполигона берём только внешние контуры: внутренние дворы
+      // вырезать нечем, а лишний прямоугольник во дворе читается хуже пропуска.
+      for (const m of el.members) {
+        if (m.role === 'inner' || !Array.isArray(m.geometry)) continue;
+        rings.push(m.geometry);
+      }
+    }
+    for (const ring of rings) {
+      const rec = buildingFromRing(ring, el.tags, site, out.length);
+      if (rec) out.push(rec);
+      if (out.length >= MAX_RECORDS) return out;
+    }
+  }
+  return out;
+}
+
+// --- синтетический квартал --------------------------------------------------
+
+// Сетка как в живом центре: кварталы 62 м, улицы 15 м, высоты растут к центру
+// («даунтаун»), редкая башня. Это не «заглушка», а полноценный демо-город —
+// он же нужен офлайну, он же используется в автоматизации.
+function demoQuarter(seed = 20260925) {
+  const rnd = mulberry32(seed);
+  const out = [];
+  const CELL = 62, ROAD = 15, BLOCK = CELL - ROAD, HALF = 5;
+  for (let gx = -HALF; gx <= HALF; gx++) {
+    for (let gz = -HALF; gz <= HALF; gz++) {
+      const bx = gx * CELL, bz = gz * CELL;
+      const dist = Math.hypot(bx, bz);
+      if (dist > RADIUS - BLOCK * 0.5) continue;
+      const cols = rnd() < 0.5 ? 2 : 3;
+      const rows = rnd() < 0.5 ? 2 : 3;
+      const cw = BLOCK / cols, ch = BLOCK / rows;
+      for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+          if (rnd() < 0.28) continue;                    // дворы и проходы
+          const w = cw * (0.62 + rnd() * 0.3);
+          const d = ch * (0.62 + rnd() * 0.3);
+          const cx = bx - BLOCK / 2 + cw * (i + 0.5) + (rnd() - 0.5) * 3;
+          const cz = bz - BLOCK / 2 + ch * (j + 0.5) + (rnd() - 0.5) * 3;
+          const t = 1 - Math.min(1, dist / RADIUS);
+          const tower = rnd() < 0.04 ? 1.8 : 1;
+          const h = (9 + 42 * Math.pow(t, 2.1) + rnd() * 11) * tower;
+          const obb = obbFromPoints(rectPoints(cx, cz, w, d, 0));
+          out.push({...obb, h: Math.round(h * 10) / 10, index: out.length});
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// --- геометрия опыта --------------------------------------------------------
+
+const BASE_SCALE = 0.0018;        // 400 м радиуса → 72 см: город-макет на столе
+const SCALE_MIN = 0.0006;         // ×0.33 — модель в кулаке
+const SCALE_MAX = 0.25;           // ×139 — 100 м радиуса: кварталы вокруг тебя
+const ORBIT_R = 430;              // кольцо вращения, м города
+const PAD_IN = 470, PAD_OUT = 620;// полоса переноса, м города
+
+const C = {
+  low: new THREE.Color(0x1c3a5e),
+  high: new THREE.Color(0xc9f4ff),
+  plate: new THREE.Color(0x0a1522),
+  orbit: new THREE.Color(0x6fe3ff),
+  pad: new THREE.Color(0x8f7bff),
+  marker: new THREE.Color(0xffc46b),
+};
+
+const HINT = {
+  loading: 'запрос зданий в радиусе 400 м…',
+  ready: 'тянуть — перенос · кольцо — вращение · удержание на полосе — поставить заново',
+  grounding: 'ставлю на поверхность под ретикулом…',
+  noSurface: 'ретикул не на поверхности — город перед тобой, наведи на стол и повтори',
+};
+
+class CityOrbit extends xb.Script {
+  init() {
+    this.site = {...DEFAULT_SITE};
+    this.mode = 'demo';              // 'live' — OSM, 'demo' — синтетика
+    this.reason = 'синтетический квартал';
+    this.status = 'ГОТОВЛЮ ГОРОД';
+    this.records = [];
+    this.ready = false;
+    this.inSession = false;
+    this.placeAt = null;
+    this.hMin = 0;
+    this.hMax = 0;
+    this.hot = {orbit: 0, pad: 0, body: 0};
+    this.hotTarget = {orbit: 0, pad: 0, body: 0};
+    this.t = 0;
+    this._fp = 0;
+    this.abort = null;
+    this.abortTimer = 0;
+    this._dummy = new THREE.Object3D();
+    this._color = new THREE.Color();
+    this._p = new THREE.Vector3();
+    this._d = new THREE.Vector3();
+    this._pos = new THREE.Vector3();
+    this._quat = new THREE.Quaternion();
+
+    // Свет: холодный купол города + солнце сбоку, чтобы объём читался в VR.
+    this.add(new THREE.HemisphereLight(0xdcebff, 0x16233a, 2.7));
+    const sun = new THREE.DirectionalLight(0xfff1d6, 1.8);
+    sun.position.set(0.5, 0.95, 0.6);
+    this.add(sun);
+    const fill = new THREE.DirectionalLight(0x76a4ff, 0.75);
+    fill.position.set(-0.7, 0.3, -0.8);
+    this.add(fill);
+
+    // Город — ОДИН объект со всей манипуляцией. Оба основных действия
+    // (перенос и вращение) без handle неразрешимы: ManipulationManager требует
+    // ровно одно основное действие, поэтому перенос задан handle-ролью тела, а
+    // вращение — ролью кольца; масштаб приходит вторым источником.
+    this.cityRoot = new THREE.Group();
+    this.cityRoot.name = 'city';
+    this.cityRoot.scale.setScalar(BASE_SCALE);
+    this.cityRoot.xb = {
+      manipulation: {
+        actions: {
+          translate: {faceCamera: false},
+          rotate: {axis: 'y', space: 'world'},
+          scale: {minScale: SCALE_MIN, maxScale: SCALE_MAX},
+        },
+        handle: {action: xb.ManipulationAction.Translate},
+      },
+    };
+    this.plate = this.buildPlate();
+    this.orbitRing = this.buildOrbitRing();
+    this.marker = this.buildMarker();
+    this.north = this.buildNorth();
+    this.cityRoot.add(this.plate, this.orbitRing, this.marker, this.north);
+
+    // Полоса переноса — отдельная ветка сцены: манипуляция перехватывает
+    // длинный выбор, поэтому удержание работает только вне тела города.
+    this.padGroup = new THREE.Group();
+    this.padGroup.name = 'relocate-pad';
+    this.padGroup.add(this.buildPad());
+
+    this.model = new THREE.Group();
+    this.model.name = 'city-model';
+    this.model.visible = false;      // до данных показывать нечего
+    this.model.add(this.cityRoot, this.padGroup);
+    this.add(this.model);
+
+    // Рисованная плита в телефоне = фальшивый пол: в alpha-blend прячем.
+    hideInPassthrough([this.plate]);
+
+    this.buildHud();
+    this.start();
+  }
+
+  // --- части города ---------------------------------------------------------
+
+  buildPlate() {
+    const geo = new THREE.CircleGeometry(RADIUS + 6, 72).rotateX(-Math.PI / 2);
+    this.plateMat = new THREE.MeshStandardMaterial({
+      color: C.plate, roughness: 0.92, metalness: 0, transparent: true, opacity: 0.88,
+    });
+    const plate = new THREE.Mesh(geo, this.plateMat);
+    plate.name = 'city-plate';
+    return plate;
+  }
+
+  // Кольцо вокруг города — ручка вращения: взял за него, крутишь весь город.
+  buildOrbitRing() {
+    const geo = new THREE.TorusGeometry(ORBIT_R, 9, 10, 96).rotateX(-Math.PI / 2);
+    this.orbitMat = glowBlending(new THREE.MeshBasicMaterial({
+      color: C.orbit, transparent: true, opacity: 0.5, depthWrite: false,
+    }));
+    const ring = new THREE.Mesh(geo, this.orbitMat);
+    ring.name = 'city-orbit-ring';
+    ring.position.y = 4;
+    ring.xb = {manipulationHandle: {action: xb.ManipulationAction.Rotate}};
+    return ring;
+  }
+
+  // Полоса переноса. Имена с 'helper' — не косметика: официальный поиск
+  // поверхности пропускает по имени вспомогательную геометрию, иначе наша же
+  // полоса перекрывала бы постановку города.
+  buildPad() {
+    const group = new THREE.Group();
+    this.padBandMat = glowBlending(new THREE.MeshBasicMaterial({
+      color: C.pad, transparent: true, opacity: 0.2, depthWrite: false,
+      side: THREE.DoubleSide,
+    }));
+    const band = new THREE.Mesh(
+      new THREE.RingGeometry(PAD_IN, PAD_OUT, 96, 1).rotateX(-Math.PI / 2),
+      this.padBandMat
+    );
+    band.name = 'relocate-band-helper';
+    band.position.y = 0.3;
+    this.padRimMat = glowBlending(new THREE.MeshBasicMaterial({
+      color: C.marker, transparent: true, opacity: 0.4, depthWrite: false,
+    }));
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(PAD_OUT - 8, 5, 8, 96).rotateX(-Math.PI / 2),
+      this.padRimMat
+    );
+    rim.name = 'relocate-rim-helper';
+    rim.position.y = 2.2;
+    this.padBand = band;
+    this.padRim = rim;
+    group.add(band, rim);
+    return group;
+  }
+
+  // «Ты здесь»: центр города — точка пользователя.
+  buildMarker() {
+    this.markerMat = glowBlending(new THREE.MeshBasicMaterial({
+      color: C.marker, transparent: true, opacity: 0.85, depthWrite: false,
+    }));
+    const group = new THREE.Group();
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 70, 8), this.markerMat);
+    mast.position.y = 35;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(12, 16, 12), this.markerMat);
+    head.position.y = 76;
+    const halo = new THREE.Mesh(
+      new THREE.RingGeometry(22, 30, 32).rotateX(-Math.PI / 2),
+      this.markerMat
+    );
+    halo.position.y = 1.5;
+    group.add(mast, head, halo);
+    group.name = 'you-are-here';
+    return group;
+  }
+
+  // Север: конус у края плиты, острие — на −z (север карты).
+  buildNorth() {
+    this.northMat = glowBlending(new THREE.MeshBasicMaterial({
+      color: C.marker, transparent: true, opacity: 0.55, depthWrite: false,
+    }));
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(16, 46, 12), this.northMat);
+    cone.rotation.x = -Math.PI / 2;
+    cone.position.set(0, 24, -(RADIUS + 34));
+    cone.name = 'north';
+    return cone;
+  }
+
+  // --- HUD: нативный UIOverlay (view-space) ---------------------------------
+
+  buildHud() {
+    this.ui = {
+      mode: new xb.UIText({
+        text: 'CITY//ORBIT',
+        style: {fontSize: 14, color: '#9fb2d2', textAlign: 'center', lineHeight: 1.4},
+      }),
+      stat: new xb.UIText({
+        text: ' ',
+        style: {fontSize: 13, color: '#cfe0ff', opacity: 0.9, textAlign: 'center', lineHeight: 1.4},
+      }),
+      hint: new xb.UIText({
+        text: HINT.loading,
+        style: {fontSize: 12, color: '#8fa4c4', opacity: 0.85, textAlign: 'center', lineHeight: 1.35},
+      }),
+    };
+    this.ui.relocate = new xb.UIButton({
+      label: 'RELOCATE', icon: 'my_location', style: {flexGrow: 1},
+      onClick: () => this.relocate(),
+    });
+    this.ui.reset = new xb.UIButton({
+      label: 'RESET', icon: 'zoom_out_map', style: {flexGrow: 1},
+      onClick: () => this.resetScale(),
+    });
+    this.ui.overlay = new xb.UIOverlay({
+      style: {
+        width: 620,
+        position: 'absolute',
+        left: '50%',
+        bottom: 24,
+        transform: {translateX: '-50%'},
+      },
+      children: [
+        new xb.UIText({
+          text: 'CITY//ORBIT',
+          style: {fontSize: 28, fontWeight: 'bold', textAlign: 'center'},
+        }),
+        this.ui.mode,
+        this.ui.stat,
+        this.ui.hint,
+        new xb.UIPanel({
+          style: {width: '100%', flexDirection: 'row', gap: 12},
+          children: [this.ui.relocate, this.ui.reset],
+        }),
+      ],
+    });
+    this.add(this.ui.overlay);
+    this.renderMode();
+  }
+
+  setHint(text) { this.ui.hint.text = text; }
+
+  renderMode() {
+    const mode = this.ui.mode;
+    if (!this.ready) {
+      mode.text = this.status;
+      mode.style.color = '#9fb2d2';
+      return;
+    }
+    if (this.mode === 'live') {
+      mode.text = `LIVE OSM · ${this.site.lat.toFixed(4)}, ${this.site.lon.toFixed(4)}`;
+      mode.style.color = '#7ef0b0';
+    } else {
+      mode.text = `DEMO · ${this.reason}`;
+      mode.style.color = '#ffc46b';
+    }
+  }
+
+  renderStat() {
+    if (!this.ready || !this.records.length) { this.ui.stat.text = ' '; return; }
+    const zoom = this.cityRoot.scale.x / BASE_SCALE;
+    this.ui.stat.text =
+      `зданий ${this.records.length} · высота ${Math.round(this.hMin)}–${Math.round(this.hMax)} м · ` +
+      `радиус ${RADIUS} м · масштаб ×${zoom < 0.1 ? zoom.toFixed(3) : zoom.toFixed(2)}`;
+  }
+
+  // --- данные ---------------------------------------------------------------
+
+  start() {
+    if (AUTOMATION) {
+      // Автоматизация: ни сети, ни разрешений, ни диалогов — только город.
+      this.reason = 'синтетика (xrAutomation)';
+      this.setHint(HINT.loading);
+      this.install(demoQuarter(), 'demo');
+      return;
+    }
+    this.locate();
+  }
+
+  locate() {
+    if (!navigator.geolocation) {
+      this.reason = 'нет геолокации';
+      this.install(demoQuarter(), 'demo');
+      return;
+    }
+    this.status = 'ГЕОПОЗИЦИЯ…';
+    this.renderMode();
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        this.site = {
+          lat: +p.coords.latitude.toFixed(5),
+          lon: +p.coords.longitude.toFixed(5),
+        };
+        this.load();
+      },
+      () => {
+        // Отказ в доступе — не ошибка опыта: координаты по умолчанию.
+        this.reason = 'геопозиция недоступна, координаты по умолчанию';
+        this.install(demoQuarter(), 'demo');
+      },
+      {timeout: 6000, maximumAge: 600000}
+    );
+  }
+
+  async load() {
+    const {lat, lon} = this.site;
+    this.status = `OVERPASS · ${lat.toFixed(4)}, ${lon.toFixed(4)} …`;
+    this.renderMode();
+    this.abort = new AbortController();
+    this.abortTimer = setTimeout(() => this.abort.abort(), OVERPASS_TIMEOUT);
+    try {
+      const json = await fetchOverpass(lat, lon, this.abort.signal);
+      const records = recordsFromOverpass(json, this.site);
+      if (!records.length) throw new Error('в радиусе нет зданий');
+      this.install(records, 'live');
+    } catch (e) {
+      // OSM не ответил — молча в синтетику: опыт обязан остаться целым.
+      if (this.abort && this.abort.signal.aborted) this.reason = 'OSM не ответил за 14 с';
+      else this.reason = `OSM: ${e.message}`;
+      this.install(demoQuarter(), 'demo');
+    } finally {
+      clearTimeout(this.abortTimer);
+      this.abortTimer = 0;
+      this.abort = null;
+    }
+  }
+
+  // Полигоны → один InstancedMesh. Цвет по высоте: низ тёмный, верх светлый —
+  // по макету сразу видно, где даунтаун, где окраина.
+  install(records, mode) {
+    this.disposeCity();
+    this.records = records;
+    this.mode = mode;
+    if (mode === 'live') this.reason = '';
+    if (!records.length) return;
+
+    const geo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xffffff, roughness: 0.68, metalness: 0.06,
+    });
+    const mesh = new THREE.InstancedMesh(geo, mat, records.length);
+    const dummy = this._dummy;
+    const color = this._color;
+    let hMin = Infinity, hMax = 0;
+    for (let i = 0; i < records.length; i++) {
+      const b = records[i];
+      dummy.position.set(b.cx, 0, b.cz);
+      dummy.rotation.set(0, b.rot, 0);
+      dummy.scale.set(Math.max(b.w, 2), b.h, Math.max(b.d, 2));
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+      const k = Math.pow(clamp((b.h - 6) / 64, 0, 1), 0.75);
+      color.copy(C.low).lerp(C.high, k);
+      color.offsetHSL(0, 0, (((b.index * 37) % 11) - 5) / 120);
+      mesh.setColorAt(i, color);
+      if (b.h < hMin) hMin = b.h;
+      if (b.h > hMax) hMax = b.h;
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    // Город — один объект, его габарит при масштабировании огромен: отсечение
+    // по одной сфере всё равно не сработает, а лишний расчёт мешает.
+    mesh.frustumCulled = false;
+    mesh.name = 'buildings';
+    this.buildings = mesh;
+    this.cityRoot.add(mesh);
+
+    this.hMin = hMin;
+    this.hMax = hMax;
+    this.cityRoot.scale.setScalar(BASE_SCALE);
+    this.syncPad();
+    this.ready = true;
+    this.model.visible = true;
+    this.renderMode();
+    this.renderStat();
+    this.setHint(this.inSession ? HINT.grounding : HINT.ready);
+    this.requestPlacement(this.inSession ? 0 : 1);
+  }
+
+  disposeCity() {
+    const mesh = this.buildings;
+    if (!mesh) return;
+    this.cityRoot.remove(mesh);
+    // InstancedMesh.dispose() освобождает instanceMatrix/instanceColor —
+    // geometry.dispose() до них не достаёт.
+    mesh.dispose();
+    mesh.geometry.dispose();
+    mesh.material.dispose();
+    this.buildings = null;
+  }
+
+  // --- постановка на поверхность --------------------------------------------
+
+  requestPlacement(delayFrames = 0) { this.placeAt = performance.now() + delayFrames * 20; }
+
+  // Кнопка и удержание делают одно и то же: поставить город заново.
+  relocate() {
+    if (!this.ready) return;
+    this.requestPlacement(0);
+  }
+
+  resetScale() {
+    if (!this.ready) return;
+    this.cityRoot.scale.setScalar(BASE_SCALE);
+    this.syncPad();
+    this.renderStat();
+    this.requestPlacement(0);
+  }
+
+  ground() {
+    if (!this.ready) return;
+    if (!this.inSession) {
+      // Плоский десктоп: ни плоскостей, ни глубины — ставим сразу, без
+      // ожидания таймаута, иначе город на секунду висит в голове пользователя.
+      this.placeInFront();
+      this.syncPad();
+      this.setHint(HINT.ready);
+      this.renderStat();
+      return;
+    }
+    this.setHint(HINT.grounding);
+    let ok = false;
+    try {
+      ok = this.placeOnReticle();
+    } catch (e) {
+      ok = false;
+    }
+    if (!ok) this.placeInFront();
+    this.syncPad();
+    this.setHint(ok ? HINT.ready : HINT.noSurface);
+    this.renderStat();
+  }
+
+  // Ретикул пользователя уже нашёл поверхность — город встаёт туда: это
+  // официальный placeOnSurface из 03_spatial_placement. Обратный вариант,
+  // placeOnHorizontalSurface, здесь не годится: он обходит сцену через
+  // Box3.setFromObject и падает на мешах uikit, из которых собран наш же HUD.
+  // Берём первый луч, попавший в горизонтальную плоскость: стена или потолок
+  // для города — не место.
+  placeOnReticle() {
+    const controllers = xb.core?.user?.controllers || [];
+    if (!controllers.length) return false;
+    this._pos.copy(this.cityRoot.position);
+    this._quat.copy(this.cityRoot.quaternion);
+    for (const controller of controllers) {
+      if (!xb.world.placeOnSurface(this.cityRoot, controller)) continue;
+      const up = this._d.set(0, 1, 0).applyQuaternion(this.cityRoot.quaternion).y;
+      if (up > 0.85) return true;
+      this.cityRoot.position.copy(this._pos);
+      this.cityRoot.quaternion.copy(this._quat);
+    }
+    return false;
+  }
+
+  // Фолбэк: перед пользователем, чуть ниже глаз. Нужен и на плоском десктопе,
+  // где нет ни плоскостей, ни глубины, — а камера там встаёт на свою высоту
+  // только через несколько кадров, поэтому у ещё низкой камеры берём
+  // абсолютную высоту стола: иначе город оказался бы под краем экрана.
+  placeInFront() {
+    const camera = xb.core?.camera;
+    if (!camera) return;
+    camera.getWorldPosition(this._p);
+    camera.getWorldDirection(this._d);
+    this._d.y = 0;
+    if (this._d.lengthSq() < 1e-6) this._d.set(0, 0, -1);
+    this._d.normalize();
+    const reach = 1.25;
+    const eye = this._p.y;
+    this.cityRoot.position.set(
+      this._p.x + this._d.x * reach,
+      eye > 1 ? eye - 0.45 : 1.05,
+      this._p.z + this._d.z * reach
+    );
+    // Север (локальный −z) смотрит от пользователя: карта читается как карта.
+    this.cityRoot.rotation.set(0, Math.atan2(-this._d.x, -this._d.z), 0);
+  }
+
+  // Полоса живёт одной позой с городом: копируем ежекадрово, это три присваивания.
+  syncPad() {
+    const pad = this.padGroup;
+    if (!pad) return;
+    pad.position.copy(this.cityRoot.position);
+    pad.quaternion.copy(this.cityRoot.quaternion);
+    pad.scale.copy(this.cityRoot.scale);
+  }
+
+  // --- взаимодействие -------------------------------------------------------
+
+  onSimulatorStarted() {
+    this.inSession = true;
+    if (this.ready) this.requestPlacement(0);
+  }
+
+  onXRSessionStarted() {
+    this.inSession = true;
+    if (this.ready) this.requestPlacement(0);
+  }
+
+  onXRSessionEnded() { this.inSession = false; }
+
+  onObjectLongSelect(event) {
+    // Сюда попадает только то, что манипуляция не перехватила, — полоса
+    // переноса. Удержание = «поставь город заново» (то же, что кнопка).
+    if (this.ready) {
+      this.setHint('ставлю город заново…');
+      this.relocate();
+    }
+    event.stopPropagation();
+  }
+
+  onObjectSelectStart(event) {
+    const surface = event.surface;
+    if (surface === this.padBand || surface === this.padRim) {
+      this.hotTarget.pad = 1;
+      this.setHint('удержание — поставить город на поверхность');
+    } else if (surface === this.orbitRing) {
+      this.hotTarget.orbit = 1;
+    } else {
+      this.hotTarget.body = 1;
+    }
+    event.stopPropagation();
+  }
+
+  onObjectSelectEnd() {
+    this.hotTarget.pad = 0;
+    this.hotTarget.orbit = 0;
+    this.hotTarget.body = 0;
+  }
+
+  onHoverEnter(event) {
+    const surface = event.surface;
+    if (surface === this.orbitRing) this.hotTarget.orbit = 1;
+    else if (surface === this.padBand || surface === this.padRim) this.hotTarget.pad = 1;
+    else this.hotTarget.body = 1;
+    event.stopPropagation();
+  }
+
+  onHoverExit() {
+    this.hotTarget.orbit = 0;
+    this.hotTarget.pad = 0;
+    this.hotTarget.body = 0;
+  }
+
+  onObjectManipulate(event) {
+    if (event.phase === 'start') {
+      const what = event.action === xb.ManipulationAction.Rotate ? 'вращение'
+        : event.action === xb.ManipulationAction.Scale ? 'масштаб' : 'перенос';
+      this.setHint(`${what} · второй источник — масштаб · удлинение на полосе — постановка`);
+    } else if (event.phase === 'end' || event.phase === 'cancel') {
+      this.setHint(HINT.ready);
+      this.renderStat();
+    }
+    event.stopPropagation();
+  }
+
+  // --- кадр -----------------------------------------------------------------
+
+  update() {
+    const dt = Math.min(xb.getDeltaTime(), 0.05);
+    this.t += dt;
+
+    if (this.placeAt !== null && performance.now() >= this.placeAt) {
+      this.placeAt = null;
+      this.ground();
+    }
+
+    this.syncPad();
+    this.stepFeedback(dt);
+
+    this._fp += dt;
+    if (this._fp >= 0.4) {
+      this._fp = 0;
+      this.renderStat();
+    }
+  }
+
+  stepFeedback(dt) {
+    const k = Math.min(1, dt * 6);
+    for (const key of ['orbit', 'pad', 'body']) {
+      this.hot[key] += (this.hotTarget[key] - this.hot[key]) * k;
+    }
+    const pulse = 0.5 + 0.5 * Math.sin(this.t * 2.4);
+    this.orbitMat.opacity = 0.34 + 0.3 * this.hot.orbit + 0.08 * pulse;
+    this.padBandMat.opacity = 0.16 + 0.3 * this.hot.pad + 0.05 * pulse;
+    this.padRimMat.opacity = 0.34 + 0.45 * this.hot.pad + 0.1 * pulse;
+    this.northMat.opacity = 0.45 + 0.2 * pulse;
+    this.markerMat.opacity = 0.7 + 0.3 * pulse;
+    this.plateMat.opacity = 0.86 + 0.12 * this.hot.body;
+    const beat = 1 + 0.06 * pulse;
+    this.marker.scale.setScalar(beat);
+  }
+
+  // --- уборка ---------------------------------------------------------------
+
+  dispose() {
+    if (this.abortTimer) clearTimeout(this.abortTimer);
+    if (this.abort) this.abort.abort();
+    this.abortTimer = 0;
+    this.abort = null;
+    this.placeAt = null;
+    this.disposeCity();
+
+    // Геометрии и материалы частей города — наши; сам UIOverlay принадлежит
+    // UI-подсистеме XR Blocks и убирается ею, чужие меши не трогаем.
+    const drop = (object) => {
+      if (!object) return;
+      object.traverse?.((child) => {
+        child.geometry?.dispose();
+        if (!child.material) return;
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (const m of materials) {
+          m.map?.dispose();
+          m.dispose();
+        }
+      });
+    };
+    for (const part of [this.plate, this.orbitRing, this.marker, this.north, this.padGroup]) {
+      drop(part);
+    }
+    this.records = [];
+    this.ready = false;
+  }
+}
+
+const options = new xb.Options();
+options.enableReticles();
+// Плоскости — поверхность для города; depth — реальные препятствия под
+// ретикулом. Где сенсоров нет (телефон), installXrGuards повторяет запрос
+// сессии без них, и город просто встаёт туда, где видит пользователь.
+options.enablePlaneDetection();
+options.enableDepth();
+options.reticles.projectOnDepthMesh = true;
+options.interaction.longSelectDuration = 0.9;
+// Десктопный симулятор: мышь — луч контроллера (как в 02_object_interaction),
+// иначе город нельзя ни взять, ни повернуть мышью.
+options.simulator.defaultMode = xb.SimulatorMode.CONTROLLER;
+options.world.planes.showDebugVisualizations = DEBUG;
+options.xrButton.showEnterSimulatorButton = true;
+options.setAppTitle('CITY//ORBIT');
+options.setAppDescription('Твой район из OpenStreetMap — город одним объектом: возьми, поверни, увеличь до улиц.');
+
+installXrGuards();
+if (AUTOMATION) document.body.classList.add('automation');
+
+document.addEventListener('DOMContentLoaded', () => {
+  xb.add(new CityOrbit());
+  xb.init(options);
+  watchXrButton([
+    'Вход — кнопка по центру: город соберётся перед тобой',
+    'Тянуть город — перенос, кольцо вокруг — вращение',
+    'Второй источник (вторая рука или второй курсор) — масштаб: от макета до улиц',
+    'Наведи ретикул на стол или пол и нажми RELOCATE (или удержи полосу) — город встанет туда',
+  ]);
+});
+</script>
+</body>
+</html>

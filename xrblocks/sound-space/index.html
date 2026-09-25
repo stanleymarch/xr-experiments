@@ -1,0 +1,1144 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>SOUND//SPACE — xrblocks</title>
+<link rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
+<script>window.litDisableBundleWarning = true;</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+    "three/": "https://cdn.jsdelivr.net/npm/three@0.184.0/",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/",
+    "@pmndrs/uikit": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit@1.0.64/dist/index.min.js",
+    "@pmndrs/uikit-pub-sub": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit-pub-sub@1.0.64/dist/index.min.js",
+    "@pmndrs/msdfonts": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.64/dist/index.min.js",
+    "@preact/signals-core": "https://cdn.jsdelivr.net/npm/@preact/signals-core@1.14.0/dist/signals-core.mjs",
+    "yoga-layout/load": "https://cdn.jsdelivr.net/npm/yoga-layout@3.2.1/dist/src/load.js",
+    "lit": "https://esm.sh/lit@3.3.1",
+    "lit/": "https://esm.sh/lit@3.3.1/",
+    "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/xrblocks.js",
+    "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.1/build/addons/"
+  }
+}
+</script>
+<style>
+  /* Поверх официального xr.css: только телефонная эргономика и режимы.
+     Официальный слой уже рисует полноэкранный entry-экран с заголовком,
+     описанием и кнопкой входа по центру. */
+  #back { position:fixed; top:10px; left:10px; z-index:40; color:#54d6ff;
+    font:600 13px/1 system-ui,sans-serif; text-decoration:none;
+    background:rgba(7,10,18,.72); border:1px solid #1c2942; border-radius:10px;
+    padding:6px 12px; }
+  /* Подсказки управления внутри официального entry-экрана. */
+  #XRButtonWrapper .app-hints { margin:0; padding:0 20px; list-style:none;
+    display:grid; gap:6px; max-width:480px; }
+  #XRButtonWrapper .app-hints li { font:400 13px/1.45 system-ui,sans-serif;
+    color:#9fb2d2; }
+  /* На телефоне вторая кнопка (симулятор — десктоп-режим) не нужна. */
+  @media (pointer:coarse) {
+    #XRButtonWrapper .XRButton ~ .XRButton { display:none; }
+  }
+  /* В сессии: кнопка END XR компактной пилюлей у верхнего края. */
+  #XRButtonWrapper.in-session { top:calc(10px + env(safe-area-inset-top));
+    left:auto; right:12px; width:auto; height:auto; justify-items:end;
+    align-items:end; }
+  #XRButtonWrapper.in-session > *:not(.XRButton) { display:none; }
+  #XRButtonWrapper.in-session .XRButton { min-height:0; padding:9px 16px;
+    font-size:12px; border-radius:999px; }
+  body:has(#XRButtonWrapper.in-session) #back { display:none; }
+  body.automation #back, body.automation #XRButtonWrapper { display:none !important; }
+</style>
+</head>
+<body>
+<a id="back" href="../../">← все опыты</a>
+<script type="module">
+// SOUND//SPACE — свежая реализация по официальному пути XR Blocks.
+//
+// ИДЕЯ: звук комнаты становится формой. Один сигнал говорит на трёх языках:
+//   28 колонн по кругу — спектр: высота и яркость колонны = энергия полосы,
+//   гало из бусин      — та же энергия, развёрнутая в волну вокруг головы,
+//   волна удара        — удар низа уходит от гало расходящимся кольцом.
+// Порядок источников: микрофон (только после жеста LISTEN) → синтетический
+// осциллятор-тон (DEMO TONE, слышимый) → численная модель того же тона
+// (SYNTH DEMO). Последняя не требует AudioContext вовсе, поэтому кольцо живёт
+// сразу при загрузке, в автоматике и при отказе в микрофоне: отказ — это
+// деградация, а не ошибка.
+// CAPTURE замораживает текущий спектр в предмет: его можно взять лучом или
+// рукой, перенести, раскрутить за обод и растянуть двумя руками. CLEAR убирает
+// снимки.
+//
+// ВОПЛОЩЕНИЕ — официальные механизмы, а не выдумка:
+//   Web Audio: AnalyserNode (fftSize 1024) → полосы по логарифмической сетке
+//     (у линейного FFT басы иначе сжимаются в первые три полосы);
+//   анимация целиком в update(); InstancedMesh + инстанс-атрибуты для полос;
+//   предметы-снимки — обычные Object3D с object.xb.manipulation (обод несёт
+//     manipulationHandle:{action:'rotate'}), без своего менеджера и без
+//     второго рейкаста; фазы start/end приходят в onObjectManipulate;
+//   HUD — нативный UIOverlay (view-space), как в официальных образцах.
+//
+// Инлайненные device-контракты (причины — в XR-BLOCKS.md корня):
+//   glowBlending — premultiplied-alpha телефонного AR (аддитив копит альфу
+//     канваса — композитор гасит камеру под «свечением»);
+//   installXrGuards — телефонный Chrome отклоняет сессию с required
+//     hand-tracking; повторный запрос без него — руки остаются опциональными;
+//   isPassthrough/hideInPassthrough — 'alpha-blend' = телефон; тёмный пол
+//     (VR-декорация) в AR прячется, световое кольцо и колонны остаются.
+
+import * as THREE from 'three';
+import * as xb from 'xrblocks';
+
+const AUTOMATION = new URLSearchParams(window.location.search).has('xrAutomation');
+const DEBUG = new URLSearchParams(window.location.search).has('debug');
+
+// --- контракты --------------------------------------------------------------
+
+function glowBlending(material) {
+  material.blending = THREE.CustomBlending;
+  material.blendSrc = THREE.SrcAlphaFactor;
+  material.blendDst = THREE.OneFactor;
+  material.blendSrcAlpha = THREE.ZeroFactor;
+  material.blendDstAlpha = THREE.OneFactor;
+  return material;
+}
+
+// Телефонный AR-passthrough: Quest отдаёт 'additive', телефоны 'alpha-blend'.
+function isPassthrough() {
+  const session = xb.core?.renderer?.xr?.getSession?.();
+  return Boolean(session) && session.environmentBlendMode === 'alpha-blend';
+}
+
+function hideInPassthrough(objects) {
+  const xr = xb.core?.renderer?.xr;
+  if (!xr) return;
+  const sync = () => {
+    const ar = isPassthrough();
+    for (const object of objects) if (object) object.visible = !ar;
+  };
+  xr.addEventListener('sessionstart', sync);
+  xr.addEventListener('sessionend', sync);
+}
+
+function installXrGuards() {
+  const xr = navigator.xr;
+  if (!xr || xr.__downgradeGuard) return;
+  xr.__downgradeGuard = true;
+  const orig = xr.requestSession.bind(xr);
+  xr.requestSession = (mode, init) =>
+    orig(mode, init).catch((err) => {
+      const required = (init && init.requiredFeatures) || [];
+      const heavy = required.filter(
+        (f) => f === 'depth-sensing' || f === 'hand-tracking' || f === 'local-floor'
+      );
+      if (!heavy.length) throw err;
+      init.requiredFeatures = required.filter((f) => !heavy.includes(f));
+      return orig(mode, init);
+    });
+}
+
+// Класс .in-session на #XRButtonWrapper (кнопка стала END XR) + подсказки
+// внутрь официального entry-экрана. Wrapper появляется внутри xb.init().
+function watchXrButton(hints = []) {
+  const sync = (w) => {
+    const btn = w.querySelector('button');
+    if (btn) w.classList.toggle('in-session', /end/i.test(btn.textContent));
+  };
+  const attach = () => {
+    const w = document.getElementById('XRButtonWrapper');
+    if (!w) return false;
+    if (hints.length && !w.querySelector('.app-hints')) {
+      const list = document.createElement('ul');
+      list.className = 'app-hints';
+      for (const hint of hints) {
+        const item = document.createElement('li');
+        item.textContent = hint;
+        list.append(item);
+      }
+      w.append(list);
+    }
+    sync(w);
+    new MutationObserver(() => sync(w)).observe(w, {
+      childList: true, characterData: true, subtree: true,
+    });
+    return true;
+  };
+  if (attach()) return;
+  const io = new MutationObserver(() => { if (attach()) io.disconnect(); });
+  io.observe(document.body, { childList: true, subtree: false });
+}
+
+// --- конфигурация -----------------------------------------------------------
+
+const CFG = {
+  bands: 28,          // полос спектра = колонн в кольце
+  beads: 72,          // бусин волнового кольца
+  radius: 1.12,       // радиус кольца колонн, м
+  plinthY: 0.90,      // основание колонн: световая «стойка» на уровне груди
+  colMax: 1.25,       // максимальная высота колонны, м
+  halo: 1.66,         // радиус гало бусин — чуть шире колонн, чтобы не спорить
+  haloY: 1.52,        // высота гало: линия глаз, главная видимая часть
+  fft: 1024,
+  binLow: 2,          // нижняя граница полос, бины
+  binHigh: 220,       // верхняя граница полос: ~10 кГц при fft 1024
+  attackTau: 0.022,   // сглаживание: атака почти мгновенная,
+  releaseTau: 0.30,   //   спад медленный — колонна «догорает», а не мигает
+  noiseGate: 0.05,    // шумовой порог сырого бина
+  minDb: -90,
+  maxDb: -12,
+  toneGain: 0.05,     // DEMO TONE намеренно тихий: это фон, а не концерт
+  rippleTime: 0.9,    // с, за которое волна удара уходит от гало
+  maxForms: 10,
+  formDist: 0.78,
+  gain: {min: 0.4, max: 5, step: 0.1, def: 1.6},
+};
+
+const B = CFG.bands;
+const NB = CFG.beads;
+const TAU = Math.PI * 2;
+// Сетка полос одинакова для микрофона и для численной модели: бины FFT
+// линейны по частоте, поэтому рост номера бина по геометрии = рост частоты
+// по логарифму.
+const EDGE = bandEdges(B);
+// Частоты центров полос для синтетической модели (48 кГц, fft 1024).
+const BIN_HZ = 48000 / CFG.fft;
+const BAND_HZ = new Float32Array(B);
+for (let k = 0; k < B; k++) BAND_HZ[k] = ((EDGE[k] + EDGE[k + 1]) / 2) * BIN_HZ;
+
+// Низ — янтарь, верх — синева. Цвет закреплён за полосой, яркость носит
+// энергия: кольцо читается как спектр, а не как случайная гирлянда.
+const PALETTE = [];
+for (let k = 0; k < B; k++) {
+  const t = B - 1 > 0 ? k / (B - 1) : 0;
+  PALETTE.push(new THREE.Color().setHSL(0.02 + 0.66 * t, 0.86, 0.55));
+}
+const BEAD_COLOR = new THREE.Color(0x9fd4ff);
+const WHITE = new THREE.Color(0xffffff);
+// Партиалы синтетики: три расстроенных тона, каждый со своим дыханием.
+const SYNTH = [
+  {f: 98, a: 1.0, rate: 0.31, vib: 0.7, phase: 0.0},
+  {f: 196.6, a: 0.62, rate: 0.53, vib: 1.1, phase: 1.9},
+  {f: 294.9, a: 0.34, rate: 0.79, vib: 1.3, phase: 3.1},
+  {f: 588.2, a: 0.16, rate: 0.47, vib: 2.3, phase: 4.4},
+];
+// Веер снимков: каждый следующий вбок и чуть дальше, чтобы не слипались.
+const SPREAD = [0, 0.30, -0.30, 0.60, -0.60, 0.90, -0.90, 1.20, -1.20, 1.45];
+const AXIS_Y = new THREE.Vector3(0, 1, 0);
+const AXIS_Z = new THREE.Vector3(0, 0, 1);
+
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const ease = (dt, tau) => 1 - Math.exp(-dt / tau);
+
+function bandEdges(bands) {
+  const e = new Float32Array(bands + 1);
+  e[0] = CFG.binLow;
+  const span = CFG.binHigh / CFG.binLow;
+  for (let i = 1; i <= bands; i++) {
+    const raw = Math.round(CFG.binLow * Math.pow(span, i / bands));
+    e[i] = Math.max(e[i - 1] + 1, raw);
+  }
+  e[bands] = Math.min(e[bands], CFG.binHigh);
+  return e;
+}
+
+// Ангулярная раскладка: полоса 0 — прямо перед пользователем.
+const RING_ANGLE = new Float32Array(B);
+const RING_QUAT = [];
+const RING_SIN = new Float32Array(B);
+const RING_COS = new Float32Array(B);
+for (let k = 0; k < B; k++) {
+  const a = Math.PI + (k / B) * TAU;
+  RING_ANGLE[k] = a;
+  RING_SIN[k] = Math.sin(a);
+  RING_COS[k] = Math.cos(a);
+  RING_QUAT.push(new THREE.Quaternion().setFromAxisAngle(AXIS_Y, a));
+}
+
+const GLOW_VERT = /* glsl */`
+  attribute vec3 aColor;
+  attribute float aGlow;
+  varying vec3 vColor;
+  varying float vGlow;
+  varying float vT;
+  void main() {
+    vColor = aColor;
+    vGlow = aGlow;
+    // Локальные 0…1 вдоль геометрии: у колонны это «от пола к вершине».
+    vT = clamp(position.y, 0.0, 1.0);
+    gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+  }`;
+const GLOW_FRAG = /* glsl */`
+  uniform float uIntensity;
+  uniform float uBoost;
+  varying vec3 vColor;
+  varying float vGlow;
+  varying float vT;
+  void main() {
+    // Гаснет к основанию и разгорается к вершине: колонна читается как рост.
+    float edge = 0.22 + 0.78 * vT;
+    gl_FragColor = vec4(vColor * (0.45 + 1.15 * vT) * uBoost, vGlow * edge * uIntensity);
+  }`;
+
+function makeGlowMaterial() {
+  return glowBlending(new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    uniforms: {uIntensity: {value: 1}, uBoost: {value: 1}},
+    vertexShader: GLOW_VERT,
+    fragmentShader: GLOW_FRAG,
+  }));
+}
+
+// --- опыт -------------------------------------------------------------------
+
+class SoundSpace extends xb.Script {
+  init() {
+    this.t = 0;
+    this.frames = 0;
+    this.mode = 'demo';     // 'mic' | 'demo'
+    this.reason = '';       // имя ошибки браузера, из-за которой демо
+    this.ctx = null;
+    this.analyser = null;
+    this.freq = null;
+    this.time = null;
+    this.mic = null;        // {stream, src}
+    this.tone = null;       // {master, parts}
+    this.gain = CFG.gain.def;
+    this.raw = new Float32Array(B);
+    this.lev = new Float32Array(B);
+    this.beadPhase = new Float32Array(B);
+    for (let k = 0; k < B; k++) this.beadPhase[k] = k * 2.399;
+    this.level = 0;
+    this.rms = 0;
+    this.beat = 0;
+    this.beatFired = false;
+    this.bassSlow = 0;
+    this.lastBeat = -9;
+    this.peakBand = 0;
+    this.forms = [];
+    this.spawnIndex = 0;
+    this.live = false;
+    this.busy = false;
+    this._uiClock = 0;
+
+    // Мелкие временные объекты: ноль аллокаций в кадре.
+    this._p = new THREE.Vector3();
+    this._p2 = new THREE.Vector3();
+    this._look = new THREE.Vector3();
+    this._scale = new THREE.Vector3();
+    this._dir = new THREE.Vector3();
+    this._quat = new THREE.Quaternion();
+    this._mat = new THREE.Matrix4();
+    this._sky = new THREE.Quaternion();
+    this._color = new THREE.Color();
+
+    this.buildSpace();
+    this.buildRing();
+    this.buildBeads();
+    this.buildRipple();
+    this.buildSharedFormGeometry();
+    this.buildHud();
+
+    // Фальшивый пол — декорация VR: в телефонном AR он висел бы поверх камеры.
+    hideInPassthrough([this.floorPlate]);
+
+    if (AUTOMATION) {
+      // Детерминированный прогон: ни микрофона, ни камеры, ни сети. Численная
+      // модель и фиксированный шаг времени делают кадр повторяемым.
+      this.reason = '';
+      this.ui.stat.text = 'AUTOMATION · SYNTH DEMO';
+    }
+  }
+
+  // --- геометрия сцены -------------------------------------------------------
+
+  buildSpace() {
+    // Тёмный пол — только для VR: в телефонном AR он висел бы поверх камеры.
+    this.floorPlate = new THREE.Mesh(
+      new THREE.CircleGeometry(2.6, 48),
+      new THREE.MeshBasicMaterial({
+        color: 0x0b1424, transparent: true, opacity: 0.5, depthWrite: false,
+      })
+    );
+    this.floorPlate.rotation.x = -Math.PI / 2;
+    this.floorPlate.position.y = 0.001;
+    this.floorPlate.xb = {pointerEvents: 'none'};
+    this.add(this.floorPlate);
+
+    // Стойка колонн: тонкое световое кольцо на уровне груди. Даёт колоннам
+    // основание и остаётся видимой в AR — это свет, а не поддельный пол.
+    this.plinth = new THREE.Mesh(
+      new THREE.TorusGeometry(CFG.radius, 0.008, 6, 96),
+      glowBlending(new THREE.MeshBasicMaterial({color: 0x3f8fb8, transparent: true, opacity: 0.6, depthWrite: false}))
+    );
+    this.plinth.rotation.x = -Math.PI / 2;
+    this.plinth.position.y = CFG.plinthY;
+    this.plinth.xb = {pointerEvents: 'none'};
+    this.add(this.plinth);
+  }
+
+  // Колонны спектра: одна инстанс-сетка, цвет и яркость — инстанс-атрибуты.
+  buildRing() {
+    const geo = new THREE.BoxGeometry(0.055, 1, 0.014);
+    geo.translate(0, 0.5, 0);   // растёт от основания: масштаб Y = высота
+    this.ringColor = new Float32Array(B * 3);
+    this.ringGlow = new Float32Array(B);
+    geo.setAttribute('aColor', new THREE.InstancedBufferAttribute(this.ringColor, 3)
+      .setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aGlow', new THREE.InstancedBufferAttribute(this.ringGlow, 1)
+      .setUsage(THREE.DynamicDrawUsage));
+    this.glowMat = makeGlowMaterial();
+    const mesh = new THREE.InstancedMesh(geo, this.glowMat, B);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    this.add(mesh);
+    this.ring = {mesh, geo, count: B, colorAttr: geo.attributes.aColor, glowAttr: geo.attributes.aGlow};
+    for (let k = 0; k < B; k++) {
+      this._mat.compose(
+        this._p.set(RING_SIN[k] * CFG.radius, 0.02, RING_COS[k] * CFG.radius),
+        RING_QUAT[k],
+        this._scale.set(1, 0.07, 1)
+      );
+      mesh.setMatrixAt(k, this._mat);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  // Бусины: та же энергия, но развёрнутая в волну по окружности — сумма
+  // гармоник, амплитуды которых равны полосам. Кольцо «дышит» тем же звуком.
+  buildBeads() {
+    const geo = new THREE.BoxGeometry(0.055, 0.055, 0.055);
+    this.beadColor = new Float32Array(NB * 3);
+    this.beadGlow = new Float32Array(NB);
+    geo.setAttribute('aColor', new THREE.InstancedBufferAttribute(this.beadColor, 3)
+      .setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aGlow', new THREE.InstancedBufferAttribute(this.beadGlow, 1)
+      .setUsage(THREE.DynamicDrawUsage));
+    const mesh = new THREE.InstancedMesh(geo, this.glowMat, NB);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    this.add(mesh);
+    this.beads = {mesh, geo, count: NB, colorAttr: geo.attributes.aColor, glowAttr: geo.attributes.aGlow};
+  }
+
+  // Волна удара: одна тороидальная линия, уходящая от гало наружу. Удар низа
+  // виден как расходящееся кольцо, а не как мигание яркости.
+  buildRipple() {
+    this.rippleMat = glowBlending(new THREE.MeshBasicMaterial({
+      color: 0xffd08a, transparent: true, opacity: 0, depthWrite: false,
+    }));
+    this.ripple = new THREE.Mesh(new THREE.TorusGeometry(1, 0.012, 6, 110), this.rippleMat);
+    this.ripple.rotation.x = -Math.PI / 2;
+    this.ripple.position.y = CFG.haloY;
+    this.ripple.xb = {pointerEvents: 'none'};
+    this.rippleAge = 1;
+    this.add(this.ripple);
+  }
+
+  // Плита, обод и спицы всех снимков одинаковы по форме — геометрия общая,
+  // своя у каждого снимка только замороженная раскраска.
+  buildSharedFormGeometry() {
+    this.formGeo = {
+      plate: new THREE.CircleGeometry(0.24, 40),
+      rim: new THREE.TorusGeometry(0.255, 0.016, 10, 44),
+      spike: (() => {
+        const g = new THREE.BoxGeometry(0.02, 1, 0.018);
+        g.translate(0, 0.5, 0);
+        return g;
+      })(),
+    };
+    this.formPlateMat = new THREE.MeshBasicMaterial({
+      color: 0x0a1526, transparent: true, opacity: 0.78,
+      side: THREE.DoubleSide, depthWrite: false,
+    });
+  }
+
+  // --- HUD -------------------------------------------------------------------
+
+  buildHud() {
+    this.ui = {
+      stat: new xb.UIText({
+        text: 'инициализация…',
+        style: {fontSize: 13, opacity: 0.85, textAlign: 'center', lineHeight: 1.45},
+      }),
+      sensLabel: new xb.UIText({
+        text: `SENS ×${this.gain.toFixed(1)}`,
+        style: {fontSize: 15, fontWeight: 'bold', textAlign: 'center'},
+      }),
+    };
+    this.ui.sens = new xb.UISlider({
+      ariaLabel: 'чувствительность спектра',
+      min: CFG.gain.min, max: CFG.gain.max, step: CFG.gain.step, value: this.gain,
+      style: {width: '100%', height: 40},
+      onInput: (v) => {
+        this.gain = v;
+        this.ui.sensLabel.text = `SENS ×${v.toFixed(1)}`;
+      },
+    });
+    this.ui.listen = new xb.UIButton({
+      label: 'LISTEN', icon: 'mic', style: {flexGrow: 1},
+      onClick: () => void this.listen(),
+    });
+    this.ui.capture = new xb.UIButton({
+      label: 'CAPTURE', icon: 'photo_camera', style: {flexGrow: 1},
+      onClick: () => this.capture(),
+    });
+    this.ui.clear = new xb.UIButton({
+      label: 'CLEAR', icon: 'delete', disabled: true, style: {flexGrow: 1},
+      onClick: () => this.clearForms(),
+    });
+    this.ui.overlay = new xb.UIOverlay({
+      style: {
+        width: 660,
+        position: 'absolute',
+        left: '50%',
+        bottom: 24,
+        transform: {translateX: '-50%'},
+      },
+      children: [
+        new xb.UIText({
+          text: 'SOUND//SPACE',
+          style: {fontSize: 28, fontWeight: 'bold', textAlign: 'center'},
+        }),
+        this.ui.stat,
+        this.ui.sensLabel,
+        this.ui.sens,
+        new xb.UIPanel({
+          style: {width: '100%', flexDirection: 'row', gap: 12},
+          children: [this.ui.listen, this.ui.capture, this.ui.clear],
+        }),
+      ],
+    });
+    this.add(this.ui.overlay);
+  }
+
+  syncUi() {
+    const micLive = this.mode === 'mic';
+    this.ui.listen.label = micLive ? 'MIC OFF' : 'LISTEN';
+    this.ui.listen.icon = micLive ? 'mic_off' : 'mic';
+    this.ui.clear.disabled = this.forms.length === 0;
+  }
+
+  // --- звук: контекст, микрофон, демо-тон ------------------------------------
+
+  ensureContext() {
+    if (this.ctx) return this.ctx;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    try {
+      this.ctx = new AC();
+    } catch {
+      return null;
+    }
+    const analyser = this.ctx.createAnalyser();
+    analyser.fftSize = CFG.fft;
+    analyser.smoothingTimeConstant = 0.62;
+    analyser.minDecibels = CFG.minDb;
+    analyser.maxDecibels = CFG.maxDb;
+    this.analyser = analyser;
+    this.freq = new Uint8Array(analyser.frequencyBinCount);
+    this.time = new Uint8Array(analyser.fftSize);
+    return this.ctx;
+  }
+
+  // LISTEN: микрофон строго по жесту. Отказ — не ошибка, а деградация к
+  // синтетике; повторное нажатие возвращает демо-тон. Флаг занятости не даёт
+  // двойному нажатию завести второй поток микрофона (первый остался бы жить).
+  async listen() {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      await this.switchSource();
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  async switchSource() {
+    if (this.mode === 'mic') {
+      this.stopMic();
+      this.mode = 'demo';
+      this.reason = '';
+      this.startTone();
+      this.syncUi();
+      this.ui.stat.text = 'ДЕМО-ТОН · микрофон выключен';
+      return;
+    }
+    this.ui.stat.text = 'ЗАПРОС МИКРОФОНА…';
+    try {
+      await this.startMic();
+      this.mode = 'mic';
+      this.reason = '';
+      this.muteTone();
+    } catch (err) {
+      this.stopMic();
+      this.mode = 'demo';
+      this.reason = err && err.name ? String(err.name) : String(err);
+      this.startTone();
+    }
+    this.syncUi();
+  }
+
+  async startMic() {
+    const md = navigator.mediaDevices;
+    if (!md || typeof md.getUserMedia !== 'function') {
+      const err = new Error('среда без getUserMedia');
+      err.name = 'Unsupported';
+      throw err;
+    }
+    const stream = await md.getUserMedia({
+      audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: false},
+    });
+    let ctx;
+    try {
+      ctx = this.ensureContext();
+      if (!ctx) {
+        const err = new Error('нет AudioContext');
+        err.name = 'Unsupported';
+        throw err;
+      }
+      await ctx.resume();
+    } catch (err) {
+      for (const track of stream.getTracks()) track.stop();
+      throw err;
+    }
+    const src = ctx.createMediaStreamSource(stream);
+    // В destination не подключаем: это была бы акустическая петля.
+    src.connect(this.analyser);
+    this.mic = {stream, src};
+  }
+
+  stopMic() {
+    if (!this.mic) return;
+    this.mic.src.disconnect();
+    for (const track of this.mic.stream.getTracks()) track.stop();
+    this.mic = null;
+  }
+
+  // DEMO TONE: настоящий синтез из трёх расстроенных осцилляторов с медленными
+  // LFO — слышно то же, что нарисовано. Граф создаётся один раз, дальше только
+  // громкость мастера, поэтому нет ни таймеров, ни щелчков.
+  startTone() {
+    const ctx = this.ensureContext();
+    if (!ctx) return false;
+    if (!this.tone) {
+      const master = ctx.createGain();
+      master.gain.value = 0;
+      const parts = [];
+      const spec = [[98, 'sawtooth', 0.5], [196.6, 'sine', 0.34], [294.9, 'triangle', 0.22]];
+      for (let i = 0; i < spec.length; i++) {
+        const [f, type, amp] = spec[i];
+        const osc = ctx.createOscillator();
+        osc.type = type;
+        osc.frequency.value = f;
+        const gain = ctx.createGain();
+        gain.gain.value = amp;
+        const lfo = ctx.createOscillator();
+        lfo.frequency.value = 0.13 + i * 0.09;
+        const depth = ctx.createGain();
+        depth.gain.value = amp * 0.75;   // громкость партиалы не уходит в минус
+        lfo.connect(depth);
+        depth.connect(gain.gain);
+        osc.connect(gain);
+        gain.connect(master);
+        osc.start();
+        lfo.start();
+        parts.push(osc, lfo);
+      }
+      master.connect(this.analyser);
+      master.connect(ctx.destination);
+      this.tone = {master, parts};
+    }
+    this.tone.master.gain.setTargetAtTime(CFG.toneGain, ctx.currentTime, 0.3);
+    return true;
+  }
+
+  muteTone() {
+    if (!this.tone || !this.ctx) return;
+    this.tone.master.gain.setTargetAtTime(0, this.ctx.currentTime, 0.12);
+  }
+
+  teardownAudio() {
+    this.stopMic();
+    if (this.tone) {
+      for (const node of this.tone.parts) {
+        try { node.stop(); } catch { /* уже остановлен */ }
+      }
+      this.tone.master.disconnect();
+      this.tone = null;
+    }
+    if (this.analyser) {
+      this.analyser.disconnect();
+      this.analyser = null;
+    }
+    this.freq = null;
+    this.time = null;
+    if (this.ctx) {
+      const ctx = this.ctx;
+      this.ctx = null;
+      void ctx.close().catch(() => {});
+    }
+  }
+
+  // --- кадр звука ------------------------------------------------------------
+
+  // Реальные байты FFT → полосы. Пик важнее среднего: узкий тон должен поднимать
+  // свою колонну, а не размазываться по соседям.
+  sampleBands() {
+    const freq = this.freq;
+    for (let k = 0; k < B; k++) {
+      const a = EDGE[k];
+      const b = EDGE[k + 1];
+      let peak = 0;
+      let sum = 0;
+      for (let i = a; i < b; i++) {
+        const v = freq[i];
+        if (v > peak) peak = v;
+        sum += v;
+      }
+      const n = b - a > 0 ? b - a : 1;
+      const raw = (0.62 * peak + 0.38 * (sum / n)) / 255;
+      this.raw[k] = Math.max(0, (raw - CFG.noiseGate) / (1 - CFG.noiseGate)) * this.gain;
+    }
+  }
+
+  // Численная модель DEMO TONE: те же партиалы и та же ползущая форманта,
+  // посчитанные как сумма гауссиан по частотам полос. Ни AudioContext, ни прав.
+  synthFrame(t) {
+    for (let k = 0; k < B; k++) {
+      const fc = BAND_HZ[k];
+      let v = 0;
+      for (let p = 0; p < SYNTH.length; p++) {
+        const q = SYNTH[p];
+        const f = q.f * (1 + 0.004 * Math.sin(t * q.vib + q.phase));
+        const amp = q.a * (0.5 + 0.5 * Math.sin(t * q.rate + q.phase));
+        const d = (fc - f) / (0.3 * q.f);
+        v += amp * Math.exp(-d * d);
+      }
+      const fs = 240 * Math.pow(2, 1.7 * Math.sin(t * 0.21));
+      const df = Math.log2(Math.max(fc, 1) / fs) / 0.16;
+      v += 0.6 * Math.exp(-df * df);
+      this.raw[k] = Math.max(0, v) * this.gain * 0.85;
+    }
+  }
+
+  // Сглаживание асимметричное: атака быстрая, спад долгий. Из сглаженных полос
+  // выводится всё остальное — уровень, пик, удар.
+  smoothBands(dt) {
+    const ka = ease(dt, CFG.attackTau);
+    const kr = ease(dt, CFG.releaseTau);
+    let sum = 0;
+    let peak = 0;
+    let peakBand = 0;
+    for (let k = 0; k < B; k++) {
+      const target = Math.min(this.raw[k], 1);
+      const v = this.lev[k] + (target - this.lev[k]) * (target > this.lev[k] ? ka : kr);
+      this.lev[k] = v;
+      sum += v;
+      if (v > peak) {
+        peak = v;
+        peakBand = k;
+      }
+    }
+    this.level = sum / B;
+    this.peakBand = peakBand;
+
+    const bass = (this.lev[0] + this.lev[1] + this.lev[2] + this.lev[3]) * 0.25;
+    this.bassSlow += (bass - this.bassSlow) * ease(dt, 1.1);
+    if (bass > 0.12 && bass > this.bassSlow * 1.32 && this.t - this.lastBeat > 0.25) {
+      this.beat = 1;
+      this.beatFired = true;
+      this.lastBeat = this.t;
+    }
+    this.beat = Math.max(0, this.beat - dt * 3.2);
+  }
+
+  frameAudio(dt) {
+    const running = Boolean(this.ctx) && this.ctx.state === 'running';
+    this.live = running && Boolean(this.analyser);
+    if (this.live) {
+      this.analyser.getByteFrequencyData(this.freq);
+      this.sampleBands();
+      this.analyser.getByteTimeDomainData(this.time);
+      let sq = 0;
+      for (let i = 0; i < this.time.length; i++) {
+        const v = (this.time[i] - 128) / 128;
+        sq += v * v;
+      }
+      this.rms = Math.sqrt(sq / this.time.length);
+      this.smoothBands(dt);
+    } else {
+      // Нет запущенного контекста (до жеста, в автоматике, после отказа) —
+      // сигнал считает модель, поэтому картинка никогда не замирает.
+      this.synthFrame(this.t);
+      this.smoothBands(dt);
+      this.rms = this.level * 1.1;
+    }
+  }
+
+  // --- анимация --------------------------------------------------------------
+
+  driveRing() {
+    const R = this.ring;
+    const c = this._color;
+    const y0 = CFG.plinthY + this.beat * 0.03;
+    for (let k = 0; k < B; k++) {
+      const l = this.lev[k];
+      const h = 0.07 + CFG.colMax * Math.pow(l, 1.25);
+      const wide = 0.75 + 0.5 * l;
+      this._mat.compose(
+        this._p.set(RING_SIN[k] * CFG.radius, y0, RING_COS[k] * CFG.radius),
+        RING_QUAT[k],
+        this._scale.set(wide, h, 1)
+      );
+      R.mesh.setMatrixAt(k, this._mat);
+      c.copy(PALETTE[k]).multiplyScalar(0.3 + 1.05 * l);
+      const o = k * 3;
+      this.ringColor[o] = c.r;
+      this.ringColor[o + 1] = c.g;
+      this.ringColor[o + 2] = c.b;
+      this.ringGlow[k] = 0.2 + 0.8 * l;
+    }
+    R.mesh.instanceMatrix.needsUpdate = true;
+    R.colorAttr.needsUpdate = true;
+    R.glowAttr.needsUpdate = true;
+  }
+
+  driveBeads() {
+    const mesh = this.beads.mesh;
+    let sum = 0.35;
+    for (let k = 0; k < B; k++) sum += this.lev[k];
+    const spin = this.t * 0.05;
+    const c = this._color;
+    for (let i = 0; i < NB; i++) {
+      let v = 0;
+      for (let k = 0; k < B; k++) {
+        const l = this.lev[k];
+        if (l < 0.01) continue;
+        v += l * Math.sin(TAU * (k + 1) * (i / NB) + this.beadPhase[k] + this.t * (0.5 + 0.03 * k));
+      }
+      const w = v / sum;
+      const a = Math.PI + (i / NB) * TAU + spin;
+      const scale = 0.45 + 1.1 * Math.abs(w);
+      // Гало не расходится по радиусу, а изгибается по высоте: волна читается
+      // как живая лента вокруг пользователя, а не как дрожь в глубину.
+      this._mat.compose(
+        this._p.set(Math.sin(a) * CFG.halo, CFG.haloY + w * 0.22, Math.cos(a) * CFG.halo),
+        this._quat.identity(),
+        this._scale.set(scale, scale, scale)
+      );
+      mesh.setMatrixAt(i, this._mat);
+      const bright = 0.25 + 0.95 * Math.min(1, Math.abs(w) * 1.6);
+      c.copy(BEAD_COLOR).multiplyScalar(bright);
+      const o = i * 3;
+      this.beadColor[o] = c.r;
+      this.beadColor[o + 1] = c.g;
+      this.beadColor[o + 2] = c.b;
+      this.beadGlow[i] = 0.2 + 0.8 * bright;
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    this.beads.colorAttr.needsUpdate = true;
+    this.beads.glowAttr.needsUpdate = true;
+  }
+
+  driveRipple(dt) {
+    if (this.beatFired) {
+      this.rippleAge = 0;
+      this.beatFired = false;
+    }
+    if (this.rippleAge >= 1) {
+      this.rippleMat.opacity = 0;
+      return;
+    }
+    this.rippleAge = Math.min(1, this.rippleAge + dt / CFG.rippleTime);
+    const r = CFG.halo * 0.72 + (CFG.halo + 0.6) * this.rippleAge;
+    this.ripple.scale.set(r, r, 1);
+    this.rippleMat.opacity = 0.55 * (1 - this.rippleAge) * (0.5 + 0.5 * this.beat);
+    this._color.copy(PALETTE[this.peakBand]).lerp(WHITE, 0.45);
+    this.rippleMat.color.copy(this._color);
+  }
+
+  // Обратная связь снимков: наведение и захват видны на ободе и на свечении
+  // спиц. Состояние живёт на самом предмете, а не в общем слоте — два
+  // предмета можно держать одновременно.
+  updateForms(dt) {
+    const k = ease(dt, 0.12);
+    for (const form of this.forms) {
+      const u = form.userData;
+      const target = u.grab > 0 ? 1 : u.hover > 0 ? 0.62 : 0;
+      u.glow += (target - u.glow) * k;
+      u.rimMat.opacity = 0.34 + 0.6 * u.glow;
+      u.spikeMat.uniforms.uBoost.value = 1 + 0.55 * u.glow;
+      const s = 1 + 0.05 * u.glow;
+      u.rim.scale.setScalar(s);
+    }
+  }
+
+  update() {
+    // В автоматике шаг фиксирован: кадр прогона повторяем до бита.
+    const dt = AUTOMATION ? 1 / 60 : Math.min(xb.getDeltaTime(), 0.05);
+    this.t += dt;
+    this.frames++;
+
+    this.frameAudio(dt);
+    this.driveRing();
+    this.driveBeads();
+    this.driveRipple(dt);
+    this.updateForms(dt);
+
+    if (AUTOMATION && this.frames === 90 && this.forms.length === 0) {
+      // Прогон без жеста всё равно показывает главный результат: снимок в руке.
+      this.capture();
+    }
+
+    this._uiClock += dt;
+    if (this._uiClock > 0.2) {
+      this._uiClock = 0;
+      this.ui.stat.text = this.statusLine();
+    }
+  }
+
+  statusLine() {
+    let on = 0;
+    for (let k = 0; k < B; k++) if (this.lev[k] > 0.08) on++;
+    const running = Boolean(this.ctx) && this.ctx.state === 'running';
+    let src;
+    if (this.mode === 'mic' && running) src = 'MIC LIVE';
+    else if (this.mode === 'mic') src = 'MIC SUSPENDED → SYNTH';
+    else if (running && this.tone) src = 'DEMO TONE';
+    else src = 'SYNTH DEMO';
+    const peakHz = this.bandHz(this.peakBand);
+    const peak = peakHz >= 1000 ? `${(peakHz / 1000).toFixed(1)}kHz` : `${Math.round(peakHz)}Hz`;
+    let line =
+      `${src} · LEVEL ${Math.round(this.level * 100)}% (rms ${Math.round(this.rms * 100)}%) · ` +
+      `PEAK ${peak} · BANDS ${on}/${B} · FORMS ${this.forms.length}`;
+    if (this.reason) line += ` · микрофон не дали (${this.reason}) → синтетика`;
+    if (DEBUG) {
+      line += ` · ctx ${this.ctx ? this.ctx.state : 'нет'} · bins ${this.freq ? this.freq.length : 0}` +
+        ` · sens ×${this.gain.toFixed(1)} · ${this.live ? 'analyser' : 'model'}`;
+    }
+    return line;
+  }
+
+  bandHz(band) {
+    const binHz = this.ctx ? this.ctx.sampleRate / CFG.fft : BIN_HZ;
+    return ((EDGE[band] + EDGE[band + 1]) / 2) * binHz;
+  }
+
+  // --- снимки спектра --------------------------------------------------------
+
+  capture() {
+    if (this.forms.length >= CFG.maxForms) this.dropOldest();
+    const form = this.buildForm();
+    this.placeForm(form);
+    this.add(form);
+    this.forms.push(form);
+    this.spawnIndex++;
+    this.syncUi();
+  }
+
+  buildForm() {
+    const form = new THREE.Group();
+    form.name = 'spectrum-snapshot';
+    form.userData = {
+      isForm: true, hover: 0, grab: 0, glow: 0,
+      spikeMat: null, rim: null, rimMat: null,
+    };
+
+    // Плита — тёмная подложка: снимок читается как предмет, а не как свечение.
+    const plate = new THREE.Mesh(this.formGeo.plate, this.formPlateMat);
+    plate.position.z = -0.006;
+    plate.renderOrder = -1;
+    form.add(plate);
+
+    // Спицы — замороженный спектр: длина = уровень полосы в момент снимка,
+    // цвет = палитра той же полосы. Дальше снимок не реагирует: это снимок.
+    const geo = this.formGeo.spike.clone();
+    const color = new Float32Array(B * 3);
+    const glow = new Float32Array(B);
+    geo.setAttribute('aColor', new THREE.InstancedBufferAttribute(color, 3));
+    geo.setAttribute('aGlow', new THREE.InstancedBufferAttribute(glow, 1));
+    const spikeMat = makeGlowMaterial();
+    const spikes = new THREE.InstancedMesh(geo, spikeMat, B);
+    spikes.frustumCulled = false;
+    for (let k = 0; k < B; k++) {
+      const l = this.lev[k];
+      const a = (k / B) * TAU - Math.PI / 2;   // полоса 0 — вверх, дальше по кругу
+      const len = 0.05 + 0.21 * l;
+      this._quat.setFromAxisAngle(AXIS_Z, a);
+      this._mat.compose(this._p.set(0, 0, 0), this._quat, this._scale.set(1, len, 1));
+      spikes.setMatrixAt(k, this._mat);
+      this._color.copy(PALETTE[k]).multiplyScalar(0.35 + 1.0 * l);
+      color[k * 3] = this._color.r;
+      color[k * 3 + 1] = this._color.g;
+      color[k * 3 + 2] = this._color.b;
+      glow[k] = 0.25 + 0.75 * l;
+    }
+    spikes.instanceMatrix.needsUpdate = true;
+    form.add(spikes);
+
+    // Обод — ручка вращения: у поверхности своя роль, поэтому у него
+    // manipulationHandle, а не второй набор событий.
+    const rimMat = glowBlending(new THREE.MeshBasicMaterial({
+      color: 0x8fd8ff, transparent: true, opacity: 0.34, depthWrite: false,
+    }));
+    const rim = new THREE.Mesh(this.formGeo.rim, rimMat);
+    rim.xb = {manipulationHandle: {action: 'rotate'}};
+    form.add(rim);
+
+    // Тело тянется (и доворачивается к камере), два источника — масштаб:
+    // translate+rotate+scale требуют явной ручки, иначе луч не выбрал бы
+    // действие и манипуляция не включилась бы вовсе.
+    form.xb = {
+      manipulation: {
+        actions: {
+          translate: {faceCamera: true},
+          rotate: {axis: 'z', space: 'local'},
+          scale: {minScale: 0.35, maxScale: 2.4},
+        },
+        handle: {action: 'translate'},
+      },
+    };
+
+    form.userData.spikeMat = spikeMat;
+    form.userData.rim = rim;
+    form.userData.rimMat = rimMat;
+    form.userData.geo = geo;
+    return form;
+  }
+
+  placeForm(form) {
+    const spread = SPREAD[this.spawnIndex % SPREAD.length];
+    const dist = CFG.formDist + 0.05 * Math.floor((this.spawnIndex % 6) / 2);
+    const cam = xb.core?.camera;
+    if (!cam) {
+      form.position.set(Math.sin(spread) * dist, 1.35, -Math.cos(spread) * dist);
+      form.rotation.y = spread;
+      return;
+    }
+    cam.getWorldQuaternion(this._sky);
+    this._dir.set(0, 0, -1).applyQuaternion(this._sky);
+    this._dir.y = 0;
+    if (this._dir.lengthSq() < 1e-6) this._dir.set(0, 0, -1);
+    this._dir.normalize();
+    const yaw = Math.atan2(this._dir.x, this._dir.z) + spread;
+    const y = clamp(cam.position.y - 0.16, 0.45, 2.1);
+    this._p2.set(
+      cam.position.x + Math.sin(yaw) * dist,
+      y,
+      cam.position.z + Math.cos(yaw) * dist
+    );
+    form.position.copy(this._p2);
+    // Разворот лицом к пользователю: плита и спицы смотрят на него.
+    form.lookAt(this._look.set(cam.position.x, y, cam.position.z));
+  }
+
+  clearForms() {
+    for (const form of this.forms) {
+      this.remove(form);
+      this.disposeForm(form);
+    }
+    this.forms.length = 0;
+    this.spawnIndex = 0;
+    this.syncUi();
+  }
+
+  dropOldest() {
+    const form = this.forms.shift();
+    if (!form) return;
+    this.remove(form);
+    this.disposeForm(form);
+  }
+
+  disposeForm(form) {
+    const u = form.userData;
+    u.geo.dispose();
+    u.spikeMat.dispose();
+    u.rimMat.dispose();
+  }
+
+  // --- события ---------------------------------------------------------------
+
+  onHoverEnter(event) {
+    const form = event.target;
+    if (form?.userData?.isForm) form.userData.hover = 1;
+  }
+
+  onHoverExit(event) {
+    const form = event.target;
+    if (form?.userData?.isForm) form.userData.hover = 0;
+  }
+
+  onObjectManipulate(event) {
+    const form = event.owner;
+    if (!form?.userData?.isForm) return;
+    if (event.phase === 'start') form.userData.grab = 1;
+    else if (event.phase === 'end' || event.phase === 'cancel') form.userData.grab = 0;
+  }
+
+  onKeyDown(event) {
+    // Клавиатура — тот же набор действий для плоского десктопа.
+    if (event.code === 'KeyL') void this.listen();
+    else if (event.code === 'KeyC') this.capture();
+    else if (event.code === 'KeyX') this.clearForms();
+  }
+
+  // --- освобождение ----------------------------------------------------------
+
+  dispose() {
+    this.teardownAudio();
+    this.clearForms();
+    for (const part of ['ring', 'beads']) {
+      const layer = this[part];
+      if (!layer) continue;
+      this.remove(layer.mesh);
+      layer.geo.dispose();
+    }
+    if (this.glowMat) this.glowMat.dispose();
+    for (const mesh of [this.floorPlate, this.plinth, this.ripple]) {
+      this.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+    }
+    this.formGeo.plate.dispose();
+    this.formGeo.rim.dispose();
+    this.formGeo.spike.dispose();
+    this.formPlateMat.dispose();
+  }
+}
+
+const options = new xb.Options();
+options.enableReticles();
+// Руки — основной способ взять снимок в XR; на телефоне installXrGuards
+// повторяет запрос сессии без required hand-tracking.
+options.enableHands();
+options.xrButton.showEnterSimulatorButton = true;
+options.setAppTitle('SOUND//SPACE');
+options.setAppDescription('Звук комнаты становится формой: микрофон → спектр → кольцо света, снимок спектра можно взять в руки.');
+if (AUTOMATION) {
+  // Прогон не должен просить ни микрофон, ни камеру: его кормит численная
+  // модель осцилляторов. Единственное разрешение в опыте — у жеста LISTEN.
+  options.permissions.microphone = false;
+  options.permissions.camera = false;
+  options.deviceCamera.enabled = false;
+}
+
+installXrGuards();
+if (AUTOMATION) document.body.classList.add('automation');
+
+document.addEventListener('DOMContentLoaded', () => {
+  xb.add(new SoundSpace());
+  xb.init(options);
+  watchXrButton([
+    'LISTEN — микрофон комнаты (жест: браузер спросит разрешение); отказ → синтетика',
+    'CAPTURE замораживает текущий спектр в предмет, CLEAR убирает снимки',
+    'Снимок: луч или рука — перенос, обод — вращение, две руки — масштаб',
+    'Колонны по кругу — 28 полос спектра, бусины — та же энергия волной',
+    'Клавиши: L — микрофон, C — снимок, X — очистить',
+  ]);
+});
+</script>
+</body>
+</html>

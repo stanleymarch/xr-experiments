@@ -1,0 +1,6 @@
+{
+  "title": "CITY//ORBIT",
+  "description": "Your city around you: geolocation pulls nearby OpenStreetMap buildings into a manipulable district — drag to move, ring to rotate, two hands to scale, place it on any real surface.",
+  "description_ru": "Твой город вокруг: геолокация собирает здания OpenStreetMap в манипулируемый квартал — тащи, вращай кольцом, масштабируй двумя руками, ставь на любую поверхность.",
+  "tags": ["osm", "overpass", "geolocation", "manipulation", "instancing"]
+}

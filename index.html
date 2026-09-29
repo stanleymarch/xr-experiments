@@ -182,6 +182,12 @@
           </div>
         </a>`;
     };
+    // Секции каталога: порядок ключей = порядок на странице. Заголовки
+    // берутся из I18N, чтобы переключение RU/EN пересобирало и секции.
+    const SECTIONS = () => ({
+      xrblocks: { title: t('sec_xrblocks_title'), note: t('sec_xrblocks_note') },
+      '8thwall': { title: t('sec_8thwall_title'), note: t('sec_8thwall_note') },
+    });
     function render() {
       const root = document.getElementById('root');
       if (!ENTRIES.length) { root.innerHTML = `<p class="empty">${t('empty')}</p>`; return; }
@@ -205,11 +211,11 @@
       try {
         const res = await fetch('manifest.json');
         ENTRIES = await res.json();
+        applyLang();
       } catch (err) {
+        console.error('gallery:', err);
         document.getElementById('root').innerHTML = `<p class="empty">${t('err')}</p>`;
-        return;
       }
-      applyLang();
     })();
   </script>
 </body>

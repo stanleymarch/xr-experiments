@@ -206,11 +206,11 @@ $designerGlmFallback = if ($zaiGlm) { With-Effort $zaiGlm "high" } else { $null 
 
 $chains = @{
   default  = Unique-Fallbacks $default  @($luna, $deepseek, $muse, $sol)
-  task     = Unique-Fallbacks $task     @($deepseek, $luna, $zaiGlm, $sol)
-  smol     = Unique-Fallbacks $smol     @($deepseek, $luna, $zaiGlm)
-  tiny     = Unique-Fallbacks $tiny     @($deepseek, $luna, $zaiGlm)
-  memory   = Unique-Fallbacks $memory   @($deepseek, $luna, $zaiGlm)
-  commit   = Unique-Fallbacks $commit   @($deepseek, $luna, $zaiGlm)
+  task     = Unique-Fallbacks $task     @($luna, $zaiGlm, $deepseek, $sol)
+  smol     = Unique-Fallbacks $smol     @($luna, $zaiGlm, $deepseek)
+  tiny     = Unique-Fallbacks $tiny     @($luna, $zaiGlm, $deepseek)
+  memory   = Unique-Fallbacks $memory   @($luna, $zaiGlm, $deepseek)
+  commit   = Unique-Fallbacks $commit   @($luna, $zaiGlm, $deepseek)
   plan     = Unique-Fallbacks $plan     @($planGlmFallback, $deepseek, $muse, $luna)
   slow     = Unique-Fallbacks $slow     @($planGlmFallback, $deepseek, $muse, $luna)
   advisor  = Unique-Fallbacks $advisor  @($advisorGlmFallback, $deepseek, $muse, $luna)
@@ -243,6 +243,8 @@ $visionFallbackBlock = if ($vision) { "    vision:$NL$(Yaml-List $chains.vision)
 $designerFallbackBlock = if ($designer) { "    designer:$NL$(Yaml-List $chains.designer)" } else { "" }
 
 $config = @"
+modelRoleStorage: project
+
 modelRoles:
   default: $(Yaml-Quoted $default)
   task: $(Yaml-Quoted $task)
@@ -260,9 +262,6 @@ retry:
   enabled: true
   maxRetries: 4
   modelFallback: true
-  usageAwareFallback: true
-  usageReservePct: 5
-  usageReservePolicy: auto
   fallbackRevertPolicy: cooldown-expiry
   fallbackChains:
     default:
@@ -292,20 +291,21 @@ Set-Content -Path (Join-Path $ompDir "config.yml") -Value $config -Encoding UTF8
 $rules = @'
 # XR Experiments — non-negotiable project rules
 
-- This repository is migrating NEW work to Meta Immersive Web SDK (IWSDK).
-- Root 'AGENTS.md', 'XR-BLOCKS.md', 'xrblocks/', and '8thwall/' describe LEGACY implementations. They are concept/reference material only for new experiences unless the user explicitly asks to repair legacy code.
-- Do not port XR Blocks or 8th Wall architecture into new IWSDK apps. Preserve ideas, interaction goals, data sources, and useful art direction only.
-- New IWSDK apps live under 'apps/<experience>/' and are independent applications in the same Git repository.
-- Use the official scoped packages only: '@iwsdk/create' and '@iwsdk/cli'. Never substitute an unscoped similarly named package.
-- For greenfield MR apps that interact with the physical room, scaffold with the official creator using AR target + physics + scene understanding + environment raycast + TypeScript + Codex AI tools.
-- CLI-first: use 'npx @iwsdk/cli ...' for reference lookup, runtime control, IWER XR emulation, screenshots, console logs, scene/ECS inspection, and verification. MCP is optional, not a dependency.
-- Never invent IWSDK APIs from memory. Query the local IWSDK reference corpus first ('reference search', 'reference api', 'reference examples') and inspect generated/current code.
-- Before declaring a feature complete: build it, run the IWSDK managed runtime, enter IWER XR, exercise the important interaction path, inspect console logs, and capture screenshots. Hardware-only capabilities must be explicitly marked as requiring Quest/phone validation.
-- Quest 3 MR is the primary target. Android WebXR AR is secondary and must degrade by capability detection, never by fake user-agent assumptions.
-- Do not introduce shared framework/packages until the same abstraction has at least two real consumers.
-- No pay-as-you-go model/API routing for coding-agent work. Use only the project model roles and their configured subscription fallbacks. Never ask to add credits or silently switch to a metered API provider.
-- Contributor models may inspect PUBLIC project source and app-only screenshots. Never expose '.env', secrets, tokens, SSH material, private URLs, personal files, or full-desktop screenshots to contributor models.
-- The 'designer' agent is for milestone spatial/game/visual critique, not routine coding. The 'iwsdk-reviewer' is for technical correctness. The 'iwsdk-builder' is the normal implementation worker.
+- New Meta/Android XR work uses Meta Immersive Web SDK (IWSDK) under 'apps/'.
+- Google XR Blocks is dead. Never restore, inspect through Git history, copy, or use its implementation unless the user explicitly asks to recover history.
+- Preserve XR Blocks concepts only through 'MIGRATION.md'. Every IWSDK implementation is greenfield.
+- '8thwall/' is NOT legacy. It is active supported iPhone/iPad WebAR code. Never delete, mass-migrate, or rewrite it merely because IWSDK is preferred elsewhere.
+- Quest 3 / supported Android WebXR => IWSDK. iPhone/iPad WebAR => existing 8th Wall implementation when needed.
+- A concept may have separate IWSDK and 8th Wall frontends. Share framework-neutral TypeScript logic only when there are two real consumers.
+- Existing 8th Wall experiences such as Battleship stay working. An IWSDK counterpart is a separate deliberate task, never an automatic migration.
+- Use official scoped packages '@iwsdk/create' and '@iwsdk/cli'.
+- CLI-first: use 'npx @iwsdk/cli ...' for reference lookup, managed runtime/IWER, screenshots, logs, scene/ECS inspection, and verification.
+- Never invent IWSDK APIs from memory. Query the local IWSDK reference corpus first.
+- Before declaring an IWSDK feature complete: build, run managed runtime, enter IWER XR, exercise the interaction, inspect logs/runtime state, and capture app-only screenshots.
+- Quest 3 MR is primary. Android WebXR AR is secondary and degrades by capability detection.
+- No PAYG coding-agent routing. Use configured subscription roles/fallbacks only.
+- Contributor models may inspect public project source and app-only screenshots, never secrets, tokens, SSH material, private URLs, personal files, or full-desktop screenshots.
+- 'designer' is for milestone spatial/game/visual critique. 'iwsdk-reviewer' is for technical correctness. 'iwsdk-builder' is the normal implementation worker.
 '@
 Set-Content -Path (Join-Path $ompDir "RULES.md") -Value $rules -Encoding UTF8
 
@@ -321,7 +321,9 @@ Target experiences:
 4. SOUND//SPACE
 5. ECHO//ROOM
 
-The old XR Blocks and 8th Wall directories are references for concept and art direction only.
+Google XR Blocks source is intentionally removed from the working tree. Use MIGRATION.md for concepts only; never inspect Git history to recover implementation details.
+
+The '8thwall/' directory is active supported code for iPhone/iPad WebAR. Preserve it. Do not automatically migrate it to IWSDK.
 
 When creating a new IWSDK app:
 1. Use the official '@iwsdk/create@latest'.
@@ -486,6 +488,45 @@ Get-ChildItem $source -Directory | Where-Object { $_.Name -like "iwsdk-*" } | Fo
 '@
 Set-Content -Path (Join-Path $repo "scripts\sync-iwsdk-skills.ps1") -Value $syncScript -Encoding UTF8
 
+Say "Removing Google XR Blocks implementation while preserving concepts only"
+$migration = @'
+# XR Blocks -> IWSDK greenfield concepts
+
+The former Google XR Blocks implementations were intentionally removed. Do not recover old source from Git history when implementing these.
+
+- WEATHER//ROOM — the physical room manifests local weather; Open-Meteo; wind, rain, cloudiness, temperature, pressure; -24h / NOW / +24h.
+- REALITY//FIELD — physical room geometry behaves as a force field for particles/fragments.
+- CITY//ORBIT — spatial/orbital city visualization from OSM/POIs with tabletop/360 interaction and hand scaling.
+- SOUND//SPACE — microphone/FFT sound visualization with frozen sound sculptures.
+- ECHO//ROOM — spatial memory / temporal debugger of recent interactions.
+
+All five are greenfield Meta IWSDK experiences under apps/. Preserve ideas, not XR Blocks code or architecture.
+
+8th Wall is intentionally excluded: 8thwall/ remains active iPhone/iPad WebAR code.
+'@
+Set-Content -Path (Join-Path $repo "MIGRATION.md") -Value $migration -Encoding UTF8
+
+if (Test-Path (Join-Path $repo "xrblocks")) { Remove-Item -Recurse -Force (Join-Path $repo "xrblocks") }
+if (Test-Path (Join-Path $repo "XR-BLOCKS.md")) { Remove-Item -Force (Join-Path $repo "XR-BLOCKS.md") }
+
+$xbSkills = Join-Path $repo ".agents\\skills"
+if (Test-Path $xbSkills) {
+  Get-ChildItem $xbSkills -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "xb-*" } | Remove-Item -Recurse -Force
+}
+
+$rootAgents = @'
+# XR Experiments
+
+This repository is an XR experimentation monorepo.
+
+- Meta IWSDK / Quest 3 / supported Android WebXR work lives in apps/.
+- 8thwall/ is active supported iPhone/iPad WebAR code. Preserve it; do not automatically migrate or delete it.
+- Google XR Blocks implementation has been intentionally removed. MIGRATION.md contains the only allowed conceptual reference for those experiments.
+- Never inspect Git history to recover XR Blocks implementation unless the user explicitly asks.
+- Project-specific OMP rules, agents, model routing and Meta IWSDK skills live in .omp/.
+'@
+Set-Content -Path (Join-Path $repo "AGENTS.md") -Value $rootAgents -Encoding UTF8
+
 Say "Validating project-local OMP settings"
 & omp config get modelRoles --json | Out-Host
 & omp config get retry.fallbackChains --json | Out-Host
@@ -497,7 +538,7 @@ if (-not $SkipScaffold) {
     Say "Scaffolding WEATHER//ROOM with official Meta @iwsdk/create"
     New-Item -ItemType Directory -Force -Path (Split-Path $appPath -Parent) | Out-Null
 
-    & npx --yes @iwsdk/create@latest $appPath --yes --target ar --physics --scene-understanding --environment-raycast --language ts --ai-tools codex --no-git --install
+    & npx --yes @iwsdk/create@latest $appPath --yes --target ar --physics --grabbing --scene-understanding --environment-raycast --language ts --ai-tools codex --no-git --install
     if ($LASTEXITCODE -ne 0) { throw "@iwsdk/create failed." }
   } else {
     Write-Host "apps/weather-room already exists; not overwriting it."
@@ -541,5 +582,5 @@ Write-Host "No PAYG provider was configured. Model selectors came from your loca
 if (-not $NoLaunch) {
   Say "Launching OMP with WEATHER//ROOM task"
   $prompt = Get-Content (Join-Path $promptsDir "weather-room.md") -Raw
-  & omp launch $prompt
+  & omp $prompt
 }

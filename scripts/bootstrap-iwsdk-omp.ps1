@@ -190,7 +190,11 @@ if (-not $deepseek) {
 }
 
 $muse = Pick-OmpModel "muse-spark" "opencode-go" @("*contributor*","muse-spark*")
-$kimi = Pick-OmpModel "kimi-k3" "opencode-go" @("kimi-k3*","*kimi*k3*")
+
+# DESIGNER is intentionally pinned, not auto-selected. OpenCode Go's canonical
+# current model id is opencode-go/kimi-k3. Do not silently replace the design
+# reviewer with Sol/GLM/Muse if catalog discovery behaves differently.
+$kimi = "opencode-go/kimi-k3"
 
 $museVision = Pick-OmpModel "muse-spark" "opencode-go" @("*contributor*","muse-spark*") -RequireImage
 $zaiVision = Pick-OmpModel "glm" "zai" @("glm-5.3-flash*","glm-5v-turbo*","*vision*") -RequireImage
@@ -203,7 +207,7 @@ $tinyBase = First-NonEmpty @($muse, $deepseek, $luna, $zaiGlm, $sol)
 $planBase = First-NonEmpty @($sol, $zaiGlm, $deepseek, $muse, $luna)
 $advisorBase = First-NonEmpty @($sol, $zaiGlm, $deepseek, $muse, $luna)
 $visionBase = First-NonEmpty @($museVision, $zaiVision, $deepseekVision, $kimiVision)
-$designerBase = First-NonEmpty @($kimi, $sol, $zaiGlm, $muse, $deepseek)
+$designerBase = $kimi
 
 if (-not $defaultBase -or -not $taskBase -or -not $planBase) {
   throw "Could not resolve enough models from OMP. Make sure Codex, Z.AI and/or OpenCode Go are logged in, then run 'omp models --kind all'."
@@ -219,7 +223,7 @@ $plan = if ($sol -and $planBase -eq $sol) { With-Effort $planBase "xhigh" } else
 $slow = $plan
 $advisor = if ($sol -and $advisorBase -eq $sol) { With-Effort $advisorBase "high" } elseif ($zaiGlm -and $advisorBase -eq $zaiGlm) { With-Effort $advisorBase "max" } else { $advisorBase }
 $vision = $visionBase
-$designer = $designerBase
+$designer = "opencode-go/kimi-k3"
 
 $planGlmFallback = if ($zaiGlm) { With-Effort $zaiGlm "max" } else { $null }
 $advisorGlmFallback = if ($zaiGlm) { With-Effort $zaiGlm "max" } else { $null }

@@ -4,6 +4,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+$BootstrapRevision = "orchestrator-v2"
+Write-Host "XR Experiments bootstrap: $BootstrapRevision" -ForegroundColor Green
 $NL = [Environment]::NewLine
 
 function Say([string]$Text) {

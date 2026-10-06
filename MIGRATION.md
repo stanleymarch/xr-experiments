@@ -1,45 +1,19 @@
-# Migration: Google XR Blocks -> Meta IWSDK
+# XR Blocks → Meta IWSDK migration
 
-Google XR Blocks implementation is retired. New versions are greenfield Meta Immersive Web SDK experiences under `apps/`.
+Google XR Blocks is retired from active development in this repository. New Meta/Android XR versions are greenfield IWSDK projects under `apps/`; the old XR Blocks implementation is intentionally not an implementation reference.
 
-This file preserves concepts only. Do not use it as an instruction to recover or port deleted XR Blocks implementation code from Git history.
+Retained concepts:
 
-## Concepts to preserve
+- **WEATHER//ROOM** — the physical room manifests local weather from Open-Meteo: rain, wind, cloudiness, temperature and pressure, with a `-24h / NOW / +24h` timeline.
+- **REALITY//FIELD** — detected physical room geometry behaves as a force field for particles/fragments.
+- **CITY//ORBIT** — OSM/POI spatial city visualization in tabletop/360 modes with hand scaling.
+- **SOUND//SPACE** — microphone/FFT-driven spatial sound visualization with frozen sound sculptures.
+- **ECHO//ROOM** — spatial memory / temporal debugger of recent interactions.
 
-### WEATHER//ROOM
+Migration rules:
 
-The user's physical room manifests local weather.
-
-Core data:
-- wind speed and direction;
-- precipitation;
-- cloud cover;
-- temperature;
-- surface pressure.
-
-Core interaction:
-- spatial timeline with `-24h`, `NOW`, and `+24h`.
-
-Primary new target: Quest 3 mixed reality via Meta IWSDK, with room-aware behavior where current capabilities permit.
-
-### REALITY//FIELD
-
-Physical room geometry behaves as a force field for spatial particles/fragments.
-
-### CITY//ORBIT
-
-OSM/POI-based spatial city visualization with orbital/360 and tabletop modes, including hand-driven scaling.
-
-### SOUND//SPACE
-
-Microphone/FFT-driven spatial sound visualization with the ability to freeze sound into persistent sculptures.
-
-### ECHO//ROOM
-
-A spatial memory / temporal debugger for recent interactions and traces in the room.
-
-## What is not being migrated here
-
-`8thwall/` remains active code for iPhone/iPad WebAR and is not part of the XR Blocks retirement.
-
-In particular, the existing 8th Wall sea-battle/Battleship stays in place. A future Meta/Android version is a separate implementation task; shared framework-neutral game logic should be extracted only when there are two real consumers.
+- preserve ideas, not XR Blocks source;
+- do not inspect Git history to recover old XR Blocks implementation unless explicitly requested;
+- remove XR Blocks implementation/support from the active working tree;
+- `8thwall/` remains active for iPhone/iPad WebAR and is outside this retirement;
+- the existing 8th Wall Battleship/Sea Battle stays working; any IWSDK counterpart is a separate deliberate task.

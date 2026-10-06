@@ -119,7 +119,29 @@ function Yaml-List([object[]]$Items, [int]$Indent = 6) {
 }
 
 Need git "Run this from inside the xr-experiments Git repository."
-Need node "Install a supported Node.js first (IWSDK 0.4.x: Node 20.19+, 22.12+, or 24.x)."
+
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Say "Node.js is missing; installing current LTS for Meta IWSDK"
+  if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+    throw "Node.js is missing and winget is unavailable. Install a supported Node.js LTS, then rerun this script."
+  }
+
+  & winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements
+  if ($LASTEXITCODE -ne 0) {
+    throw "Automatic Node.js LTS installation failed. Install Node.js LTS with winget, then rerun."
+  }
+
+  # winget/MSI updates the persistent PATH, but this PowerShell process keeps
+  # its old environment. Refresh it so bootstrap can continue immediately.
+  $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $env:Path = "$machinePath;$userPath"
+
+  if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    throw "Node.js installed successfully but is not visible in this process. Open a new terminal and rerun the bootstrap."
+  }
+}
+
 Need npm "Node/npm is required by Meta IWSDK."
 Need npx "npx is required by Meta IWSDK."
 Need omp "Install/update Oh My Pi first."

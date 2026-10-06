@@ -120,30 +120,54 @@ function Yaml-List([object[]]$Items, [int]$Indent = 6) {
 
 Need git "Run this from inside the xr-experiments Git repository."
 
+function Refresh-ProcessPath {
+  # A terminal opened before an MSI/winget install can have a stale PATH.
+  # Preserve session-only entries while importing the current persistent PATH.
+  $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $parts = @($machinePath, $userPath, $env:Path)
+
+  # Node's Windows MSI normally installs here. Add it explicitly as a recovery
+  # path because Windows PowerShell -NoProfile can otherwise miss a fresh install.
+  $nodeCandidates = @(
+    (Join-Path $env:ProgramFiles "nodejs"),
+    (if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} "nodejs" } else { $null }),
+    (if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "Programs\\nodejs" } else { $null })
+  )
+  foreach ($candidate in $nodeCandidates) {
+    if ($candidate -and (Test-Path (Join-Path $candidate "node.exe"))) {
+      $parts += $candidate
+    }
+  }
+
+  $env:Path = (@($parts) |
+    Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+    ForEach-Object { [string]$_ } |
+    Select-Object -Unique) -join ";"
+}
+
+# Refresh first: Node may already be installed but invisible to this child shell.
+Refresh-ProcessPath
+
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Say "Node.js is missing; installing current LTS for Meta IWSDK"
+  Say "Node.js is not visible; asking winget to ensure current LTS is installed"
   if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    throw "Node.js is missing and winget is unavailable. Install a supported Node.js LTS, then rerun this script."
+    throw "Node.js is not visible and winget is unavailable. Open a new terminal after installing Node.js LTS, then rerun."
   }
 
   & winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements
-  if ($LASTEXITCODE -ne 0) {
-    throw "Automatic Node.js LTS installation failed. Install Node.js LTS with winget, then rerun."
-  }
+  $wingetExit = $LASTEXITCODE
 
-  # winget/MSI updates the persistent PATH, but this PowerShell process keeps
-  # its old environment. Refresh it so bootstrap can continue immediately.
-  $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-  $env:Path = "$machinePath;$userPath"
-
+  # winget can return a non-zero code for 'already installed / no upgrade'.
+  # What matters is whether node.exe is actually available afterwards.
+  Refresh-ProcessPath
   if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    throw "Node.js installed successfully but is not visible in this process. Open a new terminal and rerun the bootstrap."
+    throw "Node.js is still not visible after winget (exit $wingetExit). Close this terminal, open a new one, and rerun the bootstrap."
   }
 }
 
-Need npm "Node/npm is required by Meta IWSDK."
-Need npx "npx is required by Meta IWSDK."
+Need npm "Node is visible, but npm is not. Close this terminal, open a new one, and rerun."
+Need npx "Node is visible, but npx is not. Close this terminal, open a new one, and rerun."
 Need omp "Install/update Oh My Pi first."
 
 $repo = (& git rev-parse --show-toplevel).Trim()

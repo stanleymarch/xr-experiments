@@ -159,7 +159,7 @@ $major = [int]$parts[0]
 $minor = [int]$parts[1]
 $nodeOk = (($major -eq 20 -and $minor -ge 19) -or ($major -eq 22 -and $minor -ge 12) -or ($major -eq 24))
 if (-not $nodeOk) {
-  throw "Node $nodeVersion is not in IWSDK 0.4.x supported ranges. Use Node >=20.19 <21, >=22.12 <23, or 24.x, then rerun this script."
+  throw "Node $nodeVersion is not in the supported IWSDK ranges. Use Node >=20.19 <21, >=22.12 <23, or 24.x, then rerun this script."
 }
 Write-Host "Node $nodeVersion OK"
 
@@ -288,6 +288,9 @@ retry:
   enabled: true
   maxRetries: 4
   modelFallback: true
+  usageAwareFallback: true
+  usageReservePct: 5
+  usageReservePolicy: auto
   fallbackRevertPolicy: cooldown-expiry
   fallbackChains:
     default:
@@ -356,7 +359,7 @@ When creating a new IWSDK app:
 2. Generate Codex AI-tool files so the canonical Meta IWSDK skills are emitted.
 3. Run 'npx @iwsdk/cli adapter sync'.
 4. Run 'npx @iwsdk/cli reference warmup' and verify 'reference status'.
-5. Copy/sync generated 'iwsdk-*' skills into repository '.omp/skills/' so OMP launched at repository root can autoload them.
+5. Copy/sync generated '.agents/skills/iwsdk-*' skills into repository '.omp/skills/' so OMP uses Meta's canonical skills through its highest-priority native project provider.
 6. Prefer the Meta CLI/reference corpus over web guesses.
 7. Use IWER and runtime inspection as part of development, not only after coding.
 
@@ -501,7 +504,7 @@ $source = Join-Path $app ".codex\skills"
 $dest = Join-Path $repo ".omp\skills"
 
 if (-not (Test-Path $source)) {
-  throw "No generated Codex skills found at $source. Scaffold the IWSDK app with --ai-tools codex."
+  throw "No generated Codex skills found at $source. Scaffold the IWSDK app with."
 }
 
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
@@ -561,6 +564,14 @@ $appPath = Join-Path $repo "apps\weather-room"
 
 if (-not $SkipScaffold) {
   if (-not (Test-Path $appPath)) {
+    Say "Checking installed @iwsdk/create CLI surface"
+    $createHelp = (& npx --yes @iwsdk/create@latest --help 2>&1 | Out-String)
+    foreach ($requiredFlag in @("--target", "--physics", "--grabbing", "--scene-understanding", "--environment-raycast", "--language", "--no-git", "--install")) {
+      if ($createHelp -notmatch [regex]::Escape($requiredFlag)) {
+        throw "Current @iwsdk/create does not expose required flag $requiredFlag. Bootstrap stopped before scaffolding; inspect 'npx @iwsdk/create@latest --help'."
+      }
+    }
+
     Say "Scaffolding WEATHER//ROOM with official Meta @iwsdk/create"
     New-Item -ItemType Directory -Force -Path (Split-Path $appPath -Parent) | Out-Null
 
@@ -573,7 +584,7 @@ if (-not $SkipScaffold) {
   if (Test-Path (Join-Path $appPath "package.json")) {
     Push-Location $appPath
     try {
-      Say "Syncing Meta IWSDK adapters"
+      Say "Verifying Meta IWSDK coding-tool adapters"
       & npx @iwsdk/cli adapter sync
       if ($LASTEXITCODE -ne 0) { Write-Warning "adapter sync returned non-zero; OMP can still use CLI-first workflow." }
 

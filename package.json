@@ -3,8 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "postinstall": "node scripts/install-xrblocks-skills.mjs",
-    "skills:sync": "node scripts/install-xrblocks-skills.mjs",
     "build": "node scripts/build-all.js",
     "serve:knockdown": "cd 8thwall/knockdown && webpack-dev-server --mode=development --config config/webpack.config.js --port 8091",
     "build:sea-battle": "cd 8thwall/sea-battle && webpack --config config/webpack.config.js",

@@ -630,10 +630,20 @@ if (-not $SkipScaffold) {
     }
 
     Say "Scaffolding WEATHER//ROOM with official Meta @iwsdk/create"
-    New-Item -ItemType Directory -Force -Path (Split-Path $appPath -Parent) | Out-Null
+    $appsDir = Split-Path $appPath -Parent
+    New-Item -ItemType Directory -Force -Path $appsDir | Out-Null
 
-    & npx --yes @iwsdk/create@latest $appPath --yes --target ar --physics --grabbing --scene-understanding --environment-raycast --language ts --no-git --install
-    if ($LASTEXITCODE -ne 0) { throw "@iwsdk/create failed." }
+    # @iwsdk/create 1.0.x validates its positional argument as a project
+    # directory name, not an arbitrary absolute Windows path. Run it from
+    # apps/ and pass the simple child name.
+    Push-Location $appsDir
+    try {
+      & npx --yes @iwsdk/create@latest "weather-room" --yes --target ar --physics --grabbing --scene-understanding --environment-raycast --language ts --no-git --install
+      if ($LASTEXITCODE -ne 0) { throw "@iwsdk/create failed." }
+    }
+    finally {
+      Pop-Location
+    }
   } else {
     Write-Host "apps/weather-room already exists; not overwriting it."
   }

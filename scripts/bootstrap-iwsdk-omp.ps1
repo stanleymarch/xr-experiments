@@ -500,28 +500,17 @@ Return prioritized findings with concrete fixes. Separate emulator-verifiable fi
 '@
 Set-Content -Path (Join-Path $agentsDir "iwsdk-reviewer.md") -Value $reviewerAgent -Encoding UTF8
 
-$weatherPrompt = @'
+$durableWeatherTask = Join-Path $repo "docs\tasks\weather-room.md"
+if (-not (Test-Path $durableWeatherTask)) {
+  throw "Missing durable task brief: docs/tasks/weather-room.md"
+}
+$weatherPrompt = @"
 orchestrate
 
-Read AGENTS.md and docs/tasks/weather-room.md completely, then execute that brief
-autonomously to a verified milestone.
-
-You are the lead orchestrator. Do not ask the PowerShell bootstrap to scaffold
-or choose Meta IWSDK flags for you. Inspect the actual current @iwsdk/create and
-@iwsdk/cli interfaces, generated Meta guidance, and local reference corpus
-yourself, then make the implementation decisions.
-
-Use subagents intentionally:
-- delegate routine implementation/debugging to iwsdk-builder;
-- after a coherent playable milestone, invoke designer for one Kimi K3
-  spatial/visual/game-feel review and implement high-value findings;
-- before completion, invoke iwsdk-reviewer/advisor for an independent Sol
-  technical review and fix blocking/high-confidence findings.
-
-Continue through repository cleanup, fresh IWSDK scaffolding, implementation,
-build/runtime/IWER testing, reviews, fixes and final verification. Preserve
-8thwall/ and unrelated user work. Do not push.
-'@
+Read and execute the complete task in docs/tasks/weather-room.md.
+Treat root AGENTS.md and MIGRATION.md as repository policy.
+You are the lead orchestrator: manage the repository migration, discover the current IWSDK CLI yourself, scaffold and implement WEATHER//ROOM, delegate bounded work/reviews, test in the managed runtime/IWER, fix failures, and continue until the acceptance criteria in the task brief are satisfied or a concrete external/hardware blocker remains.
+"@
 Set-Content -Path (Join-Path $promptsDir "weather-room.md") -Value $weatherPrompt -Encoding UTF8
 
 Say "Leaving repository migration and IWSDK scaffolding to the OMP lead"

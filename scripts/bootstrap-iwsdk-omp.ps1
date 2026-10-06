@@ -151,22 +151,53 @@ function Refresh-ProcessPath {
 # Refresh first: Node may already be installed but invisible to this child shell.
 Refresh-ProcessPath
 
+# A nested Windows PowerShell can inherit a stale PATH even when Node is already
+# installed. Recover common Node installation directories before touching winget.
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Say "Node.js is not visible; asking winget to ensure current LTS is installed"
+  $nodeCandidates = @(
+    (Join-Path $env:ProgramFiles "nodejs"),
+    $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} "nodejs" }),
+    $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "Programs\\nodejs" }),
+    $(if ($env:APPDATA) { Join-Path $env:APPDATA "npm" })
+  ) | Where-Object { $_ -and (Test-Path $_) }
+
+  foreach ($dir in $nodeCandidates) {
+    if ($env:Path -notlike "*$dir*") { $env:Path = "$dir;$env:Path" }
+  }
+}
+
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Say "Node.js is not visible; refreshing Windows PATH"
+  $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $env:Path = "$machinePath;$userPath;$env:Path"
+}
+
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Say "Node.js is genuinely missing; installing current LTS for Meta IWSDK"
   if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    throw "Node.js is not visible and winget is unavailable. Open a new terminal after installing Node.js LTS, then rerun."
+    throw "Node.js is missing and winget is unavailable. Install Node.js LTS, then rerun this script."
   }
 
   & winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements
   $wingetExit = $LASTEXITCODE
 
-  # winget can return a non-zero code for 'already installed / no upgrade'.
-  # What matters is whether node.exe is actually available afterwards.
-  Refresh-ProcessPath
+  # winget returns a non-zero code in some 'already installed/no upgrade'
+  # situations. Do not treat that message as fatal until Node discovery is
+  # retried against the persistent environment and standard install paths.
+  $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $env:Path = "$machinePath;$userPath;$env:Path"
+  $programFilesNode = Join-Path $env:ProgramFiles "nodejs"
+  if (Test-Path $programFilesNode) { $env:Path = "$programFilesNode;$env:Path" }
+
   if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    throw "Node.js is still not visible after winget (exit $wingetExit). Close this terminal, open a new one, and rerun the bootstrap."
+    throw "Node.js is still unavailable after winget (exit $wingetExit). Open a new terminal and rerun the bootstrap; if 'node --version' still fails there, repair the Node.js installation."
   }
 }
+
+$resolvedNode = (Get-Command node -ErrorAction Stop).Source
+Write-Host "Using Node: $resolvedNode ($(& node --version))"
 
 Need npm "Node is visible, but npm is not. Close this terminal, open a new one, and rerun."
 Need npx "Node is visible, but npx is not. Close this terminal, open a new one, and rerun."

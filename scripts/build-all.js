@@ -1,8 +1,5 @@
-// build-all.js — builds every app in 8thwall/ (8th Wall, webpack),
-// copies every no-build app in xrblocks/ (Google XR Blocks, plain static),
-// and assembles _site/, the static output that GitHub Pages serves.
-// Each 8th Wall app keeps its own webpack config; dependencies resolve
-// from the root node_modules.
+// build-all.js — builds active 8th Wall WebAR apps and assembles them into _site/.
+// Google XR Blocks is intentionally gone. New Meta IWSDK apps under apps/ build independently.
 
 const path = require('path')
 const fs = require('fs')
@@ -10,7 +7,6 @@ const webpack = require('webpack')
 
 const root = path.join(__dirname, '..')
 const wallDir = path.join(root, '8thwall')
-const xrblocksDir = path.join(root, 'xrblocks')
 const siteDir = path.join(root, '_site')
 
 const isDir = (p) => fs.existsSync(p) && fs.statSync(p).isDirectory()
@@ -22,16 +18,6 @@ function listWall() {
   if (!isDir(wallDir)) return []
   return fs.readdirSync(wallDir)
     .filter((d) => isDir(path.join(wallDir, d)))
-    .sort()
-}
-
-// A no-build XR Blocks experience is any folder in xrblocks/ with its own
-// index.html (shared assets like common/ are skipped).
-function listXrblocks() {
-  if (!isDir(xrblocksDir)) return []
-  return fs.readdirSync(xrblocksDir)
-    .filter((d) => isDir(path.join(xrblocksDir, d)))
-    .filter((d) => fs.existsSync(path.join(xrblocksDir, d, 'index.html')))
     .sort()
 }
 
@@ -85,29 +71,14 @@ function buildOne(name) {
   })
 }
 
-function assemble(wallNames, xrblockNames) {
+function assemble(wallNames) {
   fs.rmSync(siteDir, {recursive: true, force: true})
   fs.mkdirSync(path.join(siteDir, '8thwall'), {recursive: true})
-  fs.mkdirSync(path.join(siteDir, 'xrblocks'), {recursive: true})
 
   // Landing page lives at the repo root; copy it next to its manifest.
   fs.copyFileSync(path.join(root, 'index.html'), path.join(siteDir, 'index.html'))
 
   const manifest = []
-
-  // XR Blocks: plain static folders, no build step.
-  for (const name of xrblockNames) {
-    fs.cpSync(
-      path.join(xrblocksDir, name),
-      path.join(siteDir, 'xrblocks', name),
-      {recursive: true, filter: SITE_FILTER}
-    )
-    manifest.push({stack: 'xrblocks', name, path: `xrblocks/${name}/`, ...readMeta(xrblocksDir, name)})
-  }
-  // Shared assets for the XR Blocks experiences (styles, helpers).
-  if (isDir(path.join(xrblocksDir, 'common'))) {
-    fs.cpSync(path.join(xrblocksDir, 'common'), path.join(siteDir, 'xrblocks', 'common'), {recursive: true})
-  }
 
   // 8th Wall: webpack output from dist/.
   for (const name of wallNames) {
@@ -123,15 +94,13 @@ function assemble(wallNames, xrblockNames) {
 
 async function main() {
   const wallNames = listWall()
-  const xrblockNames = listXrblocks()
   if (wallNames.length === 0) console.warn('No apps found in 8thwall/ — nothing to build.')
-  if (xrblockNames.length === 0) console.warn('No experiences found in xrblocks/ — nothing to copy.')
   const rebuild = process.argv.includes('--rebuild-8thwall') || wallNames.some((name) => !isDir(path.join(wallDir, name, 'dist')))
   for (const name of rebuild ? wallNames : []) {
     console.log(`\n=== Building ${name} ===`)
     await buildOne(name)
   }
-  const manifest = assemble(wallNames, xrblockNames)
+  const manifest = assemble(wallNames)
   console.log(`\nAssembled ${manifest.length} experience(s) into _site/`)
 }
 

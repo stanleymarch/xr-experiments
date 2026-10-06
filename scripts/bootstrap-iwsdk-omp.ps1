@@ -129,11 +129,13 @@ function Refresh-ProcessPath {
 
   # Node's Windows MSI normally installs here. Add it explicitly as a recovery
   # path because Windows PowerShell -NoProfile can otherwise miss a fresh install.
-  $nodeCandidates = @(
-    (Join-Path $env:ProgramFiles "nodejs"),
-    (if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} "nodejs" } else { $null }),
-    (if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "Programs\\nodejs" } else { $null })
-  )
+  $nodeCandidates = @((Join-Path $env:ProgramFiles "nodejs"))
+  if (${env:ProgramFiles(x86)}) {
+    $nodeCandidates += Join-Path ${env:ProgramFiles(x86)} "nodejs"
+  }
+  if ($env:LOCALAPPDATA) {
+    $nodeCandidates += Join-Path $env:LOCALAPPDATA "Programs\\nodejs"
+  }
   foreach ($candidate in $nodeCandidates) {
     if ($candidate -and (Test-Path (Join-Path $candidate "node.exe"))) {
       $parts += $candidate

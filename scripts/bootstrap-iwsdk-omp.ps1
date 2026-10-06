@@ -524,32 +524,9 @@ build/runtime/IWER testing, reviews, fixes and final verification. Preserve
 '@
 Set-Content -Path (Join-Path $promptsDir "weather-room.md") -Value $weatherPrompt -Encoding UTF8
 
-$syncScript = @'
-param([Parameter(Mandatory=$true)][string]$AppPath)
-
-$ErrorActionPreference = "Stop"
-$repo = (& git rev-parse --show-toplevel).Trim()
-$app = Resolve-Path $AppPath
-$source = Join-Path $app ".agents\skills"
-$dest = Join-Path $repo ".omp\skills"
-
-if (-not (Test-Path $source)) {
-  throw "No generated IWSDK Agent Skills found at $source. Inspect the current @iwsdk/create output before changing this helper."
-}
-
-New-Item -ItemType Directory -Force -Path $dest | Out-Null
-Get-ChildItem $source -Directory | Where-Object { $_.Name -like "iwsdk-*" } | ForEach-Object {
-  $target = Join-Path $dest $_.Name
-  if (Test-Path $target) { Remove-Item -Recurse -Force $target }
-  Copy-Item -Recurse -Force $_.FullName $target
-  Write-Host "Synced skill: $($_.Name)"
-}
-'@
-Set-Content -Path (Join-Path $repo "scripts\sync-iwsdk-skills.ps1") -Value $syncScript -Encoding UTF8
-
 Say "Leaving repository migration and IWSDK scaffolding to the OMP lead"
 Write-Host "Bootstrap will not delete XR Blocks, modify root build files, or scaffold apps/weather-room."
-Write-Host "Those actions are specified in .omp/prompts/weather-room.md and must be performed adaptively by OMP."
+Write-Host "Those actions are specified in AGENTS.md + docs/tasks/weather-room.md and must be performed adaptively by OMP."
 
 Say "Validating project-local OMP settings"
 & omp config get modelRoles --json | Out-Host

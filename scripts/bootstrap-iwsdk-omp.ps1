@@ -575,7 +575,7 @@ if (-not $SkipScaffold) {
     Say "Scaffolding WEATHER//ROOM with official Meta @iwsdk/create"
     New-Item -ItemType Directory -Force -Path (Split-Path $appPath -Parent) | Out-Null
 
-    & npx --yes @iwsdk/create@latest $appPath --yes --target ar --physics --grabbing --scene-understanding --environment-raycast --language ts --ai-tools codex --no-git --install
+    & npx --yes @iwsdk/create@latest $appPath --yes --target ar --physics --grabbing --scene-understanding --environment-raycast --language ts --no-git --install
     if ($LASTEXITCODE -ne 0) { throw "@iwsdk/create failed." }
   } else {
     Write-Host "apps/weather-room already exists; not overwriting it."

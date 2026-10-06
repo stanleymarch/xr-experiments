@@ -1,427 +1,255 @@
-# WEATHER//ROOM — autonomous IWSDK migration and implementation brief
+# WEATHER//ROOM — autonomous implementation brief
 
-## Mission
+Run this task in OMP orchestration mode. The lead agent owns repository migration, current IWSDK CLI discovery, implementation, testing, review delegation, fixes and the final commit-ready state. Do not ask the user to manually run setup commands that the agent can inspect and execute itself.
 
-Build `WEATHER//ROOM` from scratch as a Meta Immersive Web SDK mixed-reality experience under `apps/weather-room/`.
+## Phase 0 — inspect before changing
 
-The experience turns the user's physical room into a spatial manifestation of local weather. It is not a weather dashboard placed in 3D: weather data must visibly and physically change the room.
+Read first:
 
-Primary target: Meta Quest 3 mixed reality.
+- root `AGENTS.md`
+- `MIGRATION.md`
+- `.omp/RULES.md` and `.omp/AGENTS.md` if present
+- root `package.json`, `scripts/`, `.gitignore`
+- active `8thwall/` structure and its root build dependencies
 
-Secondary target: supported Android browsers with real WebXR AR, with honest feature-based degradation.
+Run `git status` before edits. Preserve unrelated user changes.
 
-Development/fallback target: desktop + IWSDK managed runtime/IWER.
-
-This task also completes the repository cleanup from the retired Google XR Blocks implementation without breaking active 8th Wall WebAR projects.
-
----
-
-## 0. Operating mode
-
-Act as the lead engineer/orchestrator and continue to a working verified milestone without waiting for the user for routine implementation decisions.
-
-At the beginning:
-
-1. read root `AGENTS.md`;
-2. inspect `git status`;
-3. inspect the repository tree, root package scripts, GitHub Pages workflow and current `8thwall/` build assumptions;
-4. inspect the actual current Meta creator with its own `--help` and version output;
-5. do not assume flags or generated file locations from old IWSDK releases.
-
-Use subagents so exploration and bulk implementation do not bloat the main context.
-
-Do not push to GitHub.
-
----
-
-## 1. Repository migration
-
-### Remove retired XR Blocks implementation
-
-After recording the conceptual migration notes in `MIGRATION.md`, remove from the working tree:
-
-- `xrblocks/`;
-- `XR-BLOCKS.md`;
-- every `.agents/skills/xb-*` directory;
-- any remaining XR Blocks-only installer/sync script;
-- any XR Blocks-only dependency, postinstall hook, root build branch, manifest field or documentation reference that has no role after migration.
-
-Do not search Git history for deleted implementation details.
-
-If some of these have already been removed, verify that no stale references remain instead of recreating them.
-
-### Preserve active 8th Wall
-
-Do not delete, rename or migrate `8thwall/`.
-
-Keep its existing build scripts working.
-
-Treat `8thwall/sea-battle` as active iPhone/iPad WebAR. Do not move it into `apps/` during this task. A future Meta/Android Battleship may become a separate `apps/...` implementation and can later share framework-neutral game logic if there are genuinely two consumers.
-
-### Target repository shape
-
-The intended high-level shape after this task is approximately:
+Discover the current tool surface instead of assuming stale syntax:
 
 ```text
-xr-experiments/
-  apps/
-    weather-room/
-  8thwall/
-    ...
-    sea-battle/
-  docs/
-    tasks/
-      weather-room.md
-  scripts/
-    ...
-  .omp/
-    ...
-  AGENTS.md
-  MIGRATION.md
-  README.md
-  package.json
+node --version
+npm --version
+npx --yes @iwsdk/create@latest --help
 ```
 
-Do not create empty folders for future IWSDK experiments merely to make this tree look complete.
+After scaffolding, inspect the installed `@iwsdk/cli --help`, reference commands, runtime/IWER commands, generated project guidance and generated skills.
 
-### Documentation
+## Phase 1 — manage and migrate the repository
 
-Update `MIGRATION.md` so it preserves only these concepts:
+Desired architecture:
 
-- WEATHER//ROOM — physical room manifests local weather; Open-Meteo; wind, precipitation, cloudiness, temperature, pressure; timeline -24h / NOW / +24h.
-- REALITY//FIELD — physical room geometry acts as a force field for particles/fragments.
-- CITY//ORBIT — OSM/POI spatial-orbital city visualization, tabletop/360, hand scaling.
-- SOUND//SPACE — microphone/FFT spatial sound visualization and frozen sound sculptures.
-- ECHO//ROOM — spatial memory / temporal debugger of recent interactions.
+```text
+apps/
+  weather-room/       fresh Meta IWSDK app
+8thwall/              active iPhone/iPad WebAR; preserve
+.omp/                 project-local OMP config, agents, skills and prompts
+docs/tasks/            durable autonomous implementation briefs
+MIGRATION.md           concept-only XR Blocks migration record
+AGENTS.md              repository-wide operating rules
+```
 
-Update the README enough that a visitor understands the new split: IWSDK for Quest/Android, preserved 8th Wall for Apple WebAR, XR Blocks retired.
+Retire Google XR Blocks from the active working tree. Remove when present:
 
----
+- `xrblocks/`
+- `XR-BLOCKS.md`
+- stale `.agents/skills/xb-*`
+- `scripts/install-xrblocks-skills.mjs`
+- root package hooks/scripts/dependencies used only to install, sync or build XR Blocks
+- XR Blocks-only branches in `scripts/build-all.js` or equivalent root build logic
 
-## 2. Scaffold and learn the current IWSDK
+Before editing shared root files, inspect them and preserve every path still required by `8thwall/`. The root build must continue to build/assemble active 8th Wall projects.
 
-Pi owns scaffolding. The PowerShell bootstrap must not hardcode the creator flags for you.
+Do not delete, rename, mass-refactor or silently migrate `8thwall/`.
 
-Before creating `apps/weather-room`:
+The existing 8th Wall Sea Battle/Battleship must remain working. An IWSDK version for Quest/Android is a separate deliberate project, not part of Weather Room.
 
-1. run the current official Meta creator help/version;
-2. determine the correct current AR/MR starting point and applicable feature flags;
-3. create a fresh TypeScript app using the current official `@iwsdk/create`;
-4. do not initialize a nested Git repository;
-5. inspect all generated guidance, especially generated `AGENTS.md`, `.agents/skills/iwsdk-*`, project configuration and scripts;
-6. inspect the current local reference CLI and warm/sync its reference/adapter state using commands supported by the installed version;
-7. if root OMP cannot naturally discover nested Meta skills, sync only canonical generated `iwsdk-*` skills into root `.omp/skills/`.
+Do not inspect old XR Blocks source or Git history for implementation ideas. Preserve only the concepts documented in `MIGRATION.md`.
 
-Never copy old XR Blocks source into the new app.
+Do not create shared packages merely for neatness. Extract framework-neutral TypeScript only after at least two real consumers exist.
 
-Prefer IWSDK's native scene/config/ECS systems over manually rebuilding framework features.
+## Phase 2 — create WEATHER//ROOM from scratch
 
----
+Create `apps/weather-room` with the current official Meta creator.
 
-## 3. Product concept
+The agent must determine the valid invocation itself from the current `@iwsdk/create@latest --help`; do not hardcode assumptions from old IWSDK versions. Use TypeScript and an AR/MR starting point.
 
-### Core fantasy
+Enable current official IWSDK capabilities when they meaningfully support this experience:
 
-The user enters MR and their real room becomes a living weather instrument.
+- scene understanding / room surfaces
+- environment raycasts / real-world placement
+- grabbing / interaction
+- physics
 
-The room should answer a simple question without reading a dashboard: **what does the weather feel like now, and how is it changing?**
+After scaffolding:
 
-A successful build has at least one immediate spatial "wow" moment in passthrough.
+1. inspect generated `AGENTS.md`, `.agents/skills`, adapter files and `iwsdk.config.json`;
+2. run/update coding-tool adapter sync when supported;
+3. warm and inspect the local IWSDK reference corpus;
+4. sync generated Meta `iwsdk-*` skills into root `.omp/skills/` using `scripts/sync-iwsdk-skills.ps1`; repair that helper if Meta changed generated paths;
+5. use installed/local Meta references before writing IWSDK-specific APIs.
 
-Examples of the intended relationship between data and space:
+Never invent IWSDK symbols from memory when the installed reference can answer the question.
 
-- rain falls into the room and visually reacts to detected surfaces where supported;
-- wind direction and speed drive directional flow/ribbons/particles through the space;
-- cloud cover changes the density/height/opacity of a volumetric cloud layer rather than only a number;
-- temperature changes a clearly perceivable environmental quality such as particle energy/material response/thermal aura; do not rely on color alone;
-- pressure changes a distinct spatial quality such as air-density/compression/buoyancy behavior, not merely telemetry.
+## Product specification
 
-These are art-direction goals, not commands to invent unsupported SDK APIs. Choose technically robust implementations after checking current IWSDK capabilities.
+### Targets
 
-The result should feel atmospheric and spatial, not like generic particle effects surrounding a floating web panel.
+Primary: Meta Quest 3 mixed reality.
 
----
+Secondary: supported Android Chrome/WebXR AR with capability-based degradation.
 
-## 4. Weather data
+Desktop/IWER: development environment and useful non-hardware fallback. It is not evidence that Quest-only sensing, hand tracking, room meshes, occlusion or standalone performance work on hardware.
 
-Use Open-Meteo. No API secret should be required.
+### Core idea
 
-### Location
+The user's real room becomes a physical visualization of local/current weather. Weather should feel as if it occupies and reacts to the room, rather than appearing as a conventional floating weather dashboard.
 
-Preferred path:
+The experience should be understandable within seconds: entering the experience should produce a visible “the room has become today's weather” moment.
 
-- request browser geolocation intentionally and explain why it is needed;
-- use the coordinates only for obtaining weather unless the user explicitly opts into something else;
-- do not add a third-party geocoding dependency merely to display a city name.
+### Weather data
 
-Fallbacks:
+Use Open-Meteo.
 
-- permission denied/unavailable -> allow a deterministic demo mode and/or a simple manually configurable location;
-- desktop/IWER tests must be possible without granting real location permission.
+- Ask for geolocation through a browser-compatible permission flow.
+- If permission/location is unavailable, provide a sensible demo/fallback location and clearly identify fallback/demo data.
+- Fetch enough hourly data in one request for approximately 24 hours before NOW through 24 hours after NOW.
+- Normalize/cache the result. Never refetch every frame or on every timeline movement.
+- Handle loading, geolocation denial, network/offline failure, stale data and malformed/missing values visibly but unobtrusively.
 
-### Time window
+These dimensions must materially affect the scene:
 
-Fetch enough hourly data in one request/data refresh to resolve:
+- precipitation / rain
+- wind speed and, when available, direction
+- cloud cover
+- temperature
+- atmospheric pressure
 
-- approximately 24 hours before now;
-- NOW/current;
-- approximately 24 hours after now.
+### Timeline
 
-Do not refetch when the user switches the timeline state.
+Provide a comfortable spatial control spanning approximately:
 
-Use timestamps and the returned timezone correctly; choose the closest valid hourly sample when exact timestamps do not align.
+```text
+-24h  ←────────  NOW  ────────→  +24h
+```
 
-### Data fields
+Intermediate selection/scrubbing is preferred if practical.
 
-At minimum the experience must derive visible behavior from:
+Changing time must update all weather manifestations coherently from the cached hourly dataset. Provide an obvious way to return to NOW.
 
-- temperature;
-- precipitation/rain (and snow if present in the selected Open-Meteo response);
-- cloud cover;
-- surface pressure;
-- wind speed;
-- wind direction.
+Show concise time and key values, but do not let the experience collapse into a 2D weather application floating in XR.
 
-Choose current Open-Meteo field names from current docs/API behavior rather than blindly copying this brief.
+### Spatial mapping
 
-### Fetch behavior
+Rain:
+- occupies meaningful room volume;
+- intensity follows precipitation;
+- where room surfaces/colliders are genuinely available, precipitation or secondary splash/ripple effects should visibly react to real geometry instead of falling through everything.
 
-- one deliberate fetch on start/location acquisition;
-- refresh only on a sensible interval or explicit action, not per frame;
-- abort stale requests if location changes;
-- handle network/API failure visibly but unobtrusively;
-- cache enough state to survive timeline interaction;
-- no secrets in source.
+Wind:
+- affects rain/particles/cloud/fog movement;
+- communicates direction and intensity spatially;
+- should be understandable without reading a numerical value.
+
+Cloud cover:
+- influences atmosphere, sky-like volume, lighting/fog density or similar room-scale ambience;
+- must not obscure passthrough so heavily that the room becomes uncomfortable or unsafe.
 
-Add a deterministic `?demo=1` or equivalent development path with fixed synthetic samples that exercise calm, windy and rainy states. It must not depend on network or location permission.
+Temperature:
+- has a restrained but immediately legible spatial/material/ambient mapping;
+- do not communicate it only via tiny text;
+- avoid a simplistic full-screen red/blue tint as the sole representation.
 
----
+Pressure:
+- has a meaningful secondary spatial mapping, for example field density, vertical compression/expansion, particle buoyancy or another coherent physical metaphor;
+- do not merely paste pressure as a number into UI.
 
-## 5. Timeline interaction
+Document the mapping from all five weather variables to scene behavior in the app README or nearby project documentation.
 
-Provide a spatial timeline with three primary snap states:
+### Quest 3 interaction goals
 
-- `-24h`
-- `NOW`
-- `+24h`
+Use these only where the current browser/IWSDK actually supports them:
 
-The user must be able to change the selected state naturally with hands/controllers on Quest. A ray/pointer interaction is acceptable where direct manipulation is not appropriate.
+- passthrough MR
+- scene understanding / detected room surfaces
+- environment raycasts
+- depth/occlusion
+- collision or interaction with real surfaces
+- hands and controllers
+- spatial UI readable against real backgrounds
 
-Requirements:
+Capability-gate all hardware-specific behavior. Never fake support in code or documentation.
 
-- current selection is visually obvious;
-- switching states changes the whole weather simulation coherently;
-- values interpolate/transition rather than popping harshly when practical;
-- the timeline stays compact and readable in passthrough;
-- do not turn the experience into a large floating dashboard.
+### Android behavior
 
-Optional continuous scrubbing is allowed only if it does not compromise the three clear snap states or increase complexity significantly.
+- Enter camera AR only where `immersive-ar` is actually supported.
+- Use hit-test, anchors or depth only after capability detection.
+- Never assume Android exposes Quest-style scene understanding or room meshes.
+- Gracefully degrade to real-world placement + atmospheric visualization, or another explicit supported fallback.
+- If a browser/device cannot provide a requested capability, preserve the core weather visualization instead of failing the entire experience.
 
----
+### Interaction, comfort and performance
 
-## 6. Quest 3 MR behavior
+- First meaningful visual result should appear quickly.
+- Basic use must not require locomotion.
+- Controls should remain at comfortable view/reach distances.
+- Effects must not make passthrough unusable.
+- Keep particle counts and physics appropriate for standalone hardware.
+- Add clear reset/recenter/reload-weather actions where useful.
+- Hands/controllers should have clear interaction affordances and feedback where supported.
 
-Use current IWSDK/browser capabilities where actually supported.
+### Art and game-feel direction
 
-Investigate and use, when suitable:
+Treat Weather Room as a spatial installation/art experience, not a generic SaaS weather dashboard.
 
-- mixed-reality/passthrough session;
-- scene understanding / detected room surfaces;
-- environment raycasts / placement;
-- depth occlusion;
-- detected floors, walls, tables or other real surfaces;
-- physics/collision where it meaningfully improves rain/particles/objects;
-- hand input;
-- controller input;
-- spatial UI.
+- restrained, readable typography;
+- one strong spatial idea per weather variable instead of five unrelated gimmicks;
+- weather changes should produce a perceptible “room changed” moment;
+- the physical room should remain visible and relevant;
+- avoid generic neon/cyberpunk/AI-generated aesthetics without a concrete design reason;
+- prioritize atmosphere, spatial legibility and interaction feedback over decorative complexity.
 
-### Surface-aware weather
+## Phase 3 — autonomous implementation loop
 
-The preferred Quest experience should react to the physical room.
+The lead orchestrator owns the loop and does not stop at scaffold success:
 
-Examples:
+1. research current IWSDK references/skills;
+2. plan the smallest coherent vertical slice;
+3. delegate bounded implementation work to `iwsdk-builder`;
+4. integrate and inspect changes;
+5. build/typecheck;
+6. start/use IWSDK managed runtime/IWER;
+7. enter XR in IWER where applicable;
+8. exercise weather loading, timeline and primary interactions;
+9. inspect console plus scene/ECS/runtime state, not just whether Vite starts;
+10. capture app-only screenshots when supported;
+11. fix failures and repeat.
 
-- precipitation terminates/splashes/collects visually at detected horizontal surfaces;
-- wind flow bends around or is visually contextualized by room geometry where feasible;
-- cloud/fog layers respect scale and depth so they feel embedded in the room;
-- virtual elements can be occluded by real geometry when depth support is available.
+At the first coherent playable milestone, invoke `designer` once. The designer role is Kimi K3 primary. Give it app-only screenshots/runtime context and ask specifically for prioritized spatial composition, visual hierarchy, affordance, interaction/game-feel and atmosphere changes. Implement high-value findings.
 
-Do not fake scene understanding while labelling it as real sensing.
+Before completion, invoke `iwsdk-reviewer` / `@advisor` for an independent technical review of architecture, IWSDK API correctness, capability handling, runtime behavior and maintainability. Fix material findings and rerun verification.
 
-If a feature is unavailable in the current runtime, implement a clear fallback and record it in the final report.
+The lead remains responsible for integration. Reviewers do not own the task.
 
----
+## Phase 4 — acceptance criteria
 
-## 7. Android WebXR AR degradation
+Do not declare completion until all locally verifiable items are satisfied:
 
-The Android version is not expected to have Quest-equivalent room understanding.
+- active repository build/setup no longer depends on XR Blocks;
+- `8thwall/` still exists and its root build path has not been intentionally broken;
+- `apps/weather-room` is a fresh IWSDK project;
+- Weather Room build/typecheck succeeds;
+- Open-Meteo loading, permission, error and fallback paths exist;
+- the roughly `-24h / NOW / +24h` timeline changes the scene from cached hourly data;
+- precipitation, wind, cloud cover, temperature and pressure each have an intentional visible/spatial mapping;
+- capability detection/degradation is explicit;
+- no deprecated or guessed IWSDK API remains when local references disagree;
+- IWER/managed runtime has been exercised;
+- obvious console/runtime errors have been fixed;
+- designer findings were considered and high-value fixes applied;
+- technical reviewer findings were addressed;
+- app README explains how to run/test the project;
+- app README clearly distinguishes what was verified in IWER from what still requires physical Quest 3 and Android testing.
 
-When immersive AR is available:
+If a real hardware-only or external blocker remains, report it precisely instead of pretending it was verified.
 
-- use real camera passthrough;
-- provide a stable placement/anchor workflow using only capabilities actually exposed;
-- use hit-test/depth/anchors only when feature detection confirms support;
-- render a bounded weather volume around the chosen placement when whole-room geometry is unavailable.
+## Final report
 
-When immersive AR is unavailable:
+Return a concise factual report containing:
 
-- provide a meaningful desktop/3D fallback or a clear compatibility message;
-- never pretend a flat camera page has Quest scene understanding.
-
-Avoid UA-based assumptions.
-
----
-
-## 8. Visual and interaction direction
-
-Aim for a restrained experimental artwork rather than a commercial weather app.
-
-Guidelines:
-
-- passthrough should remain legible; do not cover the room with opaque effects;
-- use spatial depth and motion more than flat text;
-- keep telemetry secondary;
-- avoid tiny text and low-contrast floating labels;
-- avoid generic neon-tech HUD styling unless the scene concept specifically justifies it;
-- avoid excessive transparent particle overdraw on standalone Quest;
-- color must not be the only signal for important weather differences;
-- keep the first understandable interaction discoverable without a tutorial wall of text.
-
-A small status panel may show the selected time, temperature, wind, precipitation, cloud cover and pressure, but its purpose is explanation/debugging, not the core experience.
-
----
-
-## 9. Performance
-
-Design for standalone Quest constraints.
-
-- target stable headset frame pacing rather than maximum particle count;
-- use bounded particle pools;
-- avoid per-frame allocations in hot systems where practical;
-- cap expensive transparent effects;
-- reduce simulation complexity dynamically if needed;
-- do not claim a 72/80/90 Hz hardware result from IWER.
-
-The technical reviewer should explicitly flag likely standalone-Quest bottlenecks.
-
----
-
-## 10. Required states and failure handling
-
-The experience must have intentional behavior for:
-
-- initial loading;
-- awaiting geolocation;
-- geolocation denied;
-- network/Open-Meteo failure;
-- WebXR unavailable;
-- immersive AR available but advanced room/depth features unavailable;
-- demo mode;
-- valid live weather;
-- switching timeline states.
-
-No uncaught exception should strand the user on a blank scene.
-
----
-
-## 11. Development and review loop
-
-Use this loop until the milestone is coherent:
-
-1. inspect current Meta references/skills;
-2. delegate implementation chunks to `iwsdk-builder`;
-3. build/typecheck;
-4. run the current IWSDK managed runtime/IWER;
-5. enter simulated XR when supported;
-6. exercise timeline and weather transitions;
-7. inspect console/runtime/ECS state;
-8. capture **app-only** screenshots;
-9. fix failures;
-10. repeat.
-
-After a coherent playable milestone exists:
-
-- invoke `designer` (Kimi K3) once for spatial composition, affordances, atmosphere and game-feel critique;
-- implement the high-value findings;
-- invoke `iwsdk-reviewer` / advisor (Codex Sol) for independent technical review;
-- fix blocking and high-confidence findings;
-- rerun build/runtime tests.
-
-Use extra designer passes only if a substantial redesign creates a genuinely new visual milestone.
-
----
-
-## 12. Verification requirements
-
-Before completion, verify at least:
-
-- fresh install/build succeeds;
-- no stale XR Blocks dependency/import/reference remains except historical migration text;
-- existing 8th Wall root build still succeeds;
-- weather-room production build succeeds;
-- managed runtime starts;
-- IWER can load the experience;
-- demo mode works without network/geolocation;
-- timeline changes all mapped weather systems coherently;
-- no obvious console errors in the tested paths;
-- app-only screenshots show a readable coherent spatial composition;
-- Git diff contains no accidental deletion of 8th Wall or unrelated user work.
-
-If current Meta tooling provides runtime/ECS/scene inspection, use it.
-
-Do not mark as physically verified:
-
-- Quest room sensing;
-- real Quest depth occlusion;
-- Quest hand/controller comfort;
-- standalone Quest frame rate;
-- Android device-specific ARCore behavior
-
-unless those tests actually occurred on physical devices.
-
----
-
-## 13. Pages/build integration
-
-Inspect the existing GitHub Pages/root build before changing it.
-
-If the repository's public gallery is expected to expose the new app, add weather-room to the existing output **additively**:
-
-- preserve all active 8th Wall build outputs;
-- build weather-room using its own official build script;
-- copy/publish its production output under a stable path such as `apps/weather-room/` only if that matches the current deployment model;
-- verify base URLs/assets under the deployed subpath.
-
-Do not redesign the whole deployment system during this task.
-
----
-
-## 14. Definition of done
-
-The task is complete when:
-
-1. the repo has been safely cleaned of the retired XR Blocks implementation;
-2. active 8th Wall projects still build;
-3. `apps/weather-room` is a fresh current-IWSDK implementation;
-4. live Open-Meteo data and deterministic demo data both drive the spatial weather systems;
-5. -24h / NOW / +24h works;
-6. Quest-oriented room-aware features are implemented behind real capability checks;
-7. Android has an honest degraded AR path;
-8. IWER/runtime verification has been performed;
-9. Kimi design review and Sol technical review have been acted on;
-10. README/MIGRATION documentation matches the actual repository state.
-
-Finish by reporting:
-
-- what changed in the repository;
-- what was deleted and why;
-- what WEATHER//ROOM currently does;
-- exact tests/builds/runtime checks that passed;
-- designer findings and changes applied;
-- technical-review findings and changes applied;
-- what still requires a physical Quest 3 test;
-- what still requires a physical Android test;
-- any deployment caveats;
-- `git status` / commit summary.
-
-Do not claim completion merely because the code compiles.
+- repository changes made;
+- Weather Room functionality implemented;
+- commands/tests that actually passed;
+- what was verified in IWER;
+- what remains for physical Quest 3 validation;
+- Android capability caveats;
+- intentionally deferred work.

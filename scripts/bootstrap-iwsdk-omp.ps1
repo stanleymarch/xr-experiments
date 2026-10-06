@@ -1,6 +1,5 @@
 param(
-  [switch]$NoLaunch,
-  [switch]$SkipScaffold
+  [switch]$NoLaunch
 )
 
 $ErrorActionPreference = "Stop"
@@ -396,31 +395,66 @@ $rules = @'
 Set-Content -Path (Join-Path $ompDir "RULES.md") -Value $rules -Encoding UTF8
 
 $agentsContext = @'
-# OMP project context: Meta Immersive Web SDK migration
+# OMP project context: autonomous XR repository manager
 
-We are rebuilding the experimental XR experiences from scratch on Meta Immersive Web SDK.
+You are the lead engineer/orchestrator for this repository. The bootstrap only prepares OMP configuration and this brief. You own repository migration, current IWSDK CLI discovery, scaffolding, implementation, testing, review delegation, and the final commit-ready state.
 
-Target experiences:
-1. WEATHER//ROOM
-2. REALITY//FIELD
-3. CITY//ORBIT
-4. SOUND//SPACE
-5. ECHO//ROOM
+## Repository policy
 
-Google XR Blocks source is intentionally removed from the working tree. Use MIGRATION.md for concepts only; never inspect Git history to recover implementation details.
+Desired architecture:
 
-The '8thwall/' directory is active supported code for iPhone/iPad WebAR. Preserve it. Do not automatically migrate it to IWSDK.
+- apps/ — fresh Meta Immersive Web SDK experiences for Quest 3 and supported Android WebXR.
+- 8thwall/ — active iPhone/iPad WebAR implementations. Preserve them.
+- .omp/ — project-local OMP config, agents, prompts, and synced IWSDK skills.
+- MIGRATION.md — concepts preserved from former XR Blocks experiments.
+- AGENTS.md — concise repository-wide rules.
 
-When creating a new IWSDK app:
-1. Use the official '@iwsdk/create@latest'.
-2. Generate Codex AI-tool files so the canonical Meta IWSDK skills are emitted.
-3. Run 'npx @iwsdk/cli adapter sync'.
-4. Run 'npx @iwsdk/cli reference warmup' and verify 'reference status'.
-5. Copy/sync generated '.agents/skills/iwsdk-*' skills into repository '.omp/skills/' so OMP uses Meta's canonical skills through its highest-priority native project provider.
-6. Prefer the Meta CLI/reference corpus over web guesses.
-7. Use IWER and runtime inspection as part of development, not only after coding.
+Google XR Blocks is retired. Remove its working-tree implementation and support files, but preserve the concepts listed below. Do not inspect Git history to recover XR Blocks code.
 
-For WEATHER//ROOM the primary technical goal is: physical-room-aware weather in Quest 3 MR, with real scene surfaces, raycasts, physics where appropriate, depth occlusion where available, hand/controller interaction, Open-Meteo data, and capability-based Android AR degradation.
+Remove when present:
+- xrblocks/
+- XR-BLOCKS.md
+- .agents/skills/xb-*
+- obsolete XR Blocks-only install/sync hooks or build logic that remains anywhere else
+
+Do NOT remove or mass-migrate:
+- 8thwall/
+- existing working 8th Wall Battleship/Sea Battle
+- generic repo tooling still used by active projects
+
+Before deleting or editing shared root files, inspect them and preserve anything still required by 8thwall/.
+
+## IWSDK operating procedure
+
+For every new IWSDK app:
+1. Inspect the CURRENT installed/latest '@iwsdk/create --help' instead of assuming old flags.
+2. Scaffold with the official Meta creator using the current supported interface.
+3. Inspect the generated AGENTS.md, .agents/skills, adapter files and iwsdk.config.json.
+4. Run 'npx @iwsdk/cli adapter sync' if applicable.
+5. Warm/check the local reference corpus with 'npx @iwsdk/cli reference warmup' and 'reference status'.
+6. Sync generated '.agents/skills/iwsdk-*' into repository '.omp/skills/' using scripts/sync-iwsdk-skills.ps1, or update that helper if Meta changed the generated location.
+7. Use local Meta references/skills before relying on remembered IWSDK APIs.
+8. Build/typecheck and use the managed runtime/IWER. Inspect logs, scene/ECS/runtime state and app-only screenshots.
+9. Never claim Quest-only sensing, room geometry, depth, hand tracking or performance was physically verified unless tested on Quest hardware.
+
+## Concepts retained from XR Blocks
+
+1. WEATHER//ROOM — physical room manifests local weather; Open-Meteo; wind, rain, cloudiness, temperature, pressure; timeline -24h / NOW / +24h.
+2. REALITY//FIELD — room geometry behaves as a force field for particles/fragments.
+3. CITY//ORBIT — OSM/POI spatial/orbital city visualization; tabletop/360; hand scaling.
+4. SOUND//SPACE — microphone/FFT visualization; freeze sound sculptures.
+5. ECHO//ROOM — spatial memory / temporal debugger of recent interactions.
+
+All five future IWSDK implementations are greenfield. Preserve ideas, not old code.
+
+## Delegation policy
+
+- Normal implementation: delegate substantial bounded work to 'iwsdk-builder'.
+- Architecture/API/runtime correctness review: 'iwsdk-reviewer' using @advisor.
+- Spatial/game/visual milestone review: 'designer' using @designer (Kimi K3 primary).
+- Keep the lead/orchestrator responsible for sequencing, integration, verification and fixing review findings.
+- Do not spend reviewer/designer models on routine edits.
+- No PAYG providers.
 '@
 Set-Content -Path (Join-Path $ompDir "AGENTS.md") -Value $agentsContext -Encoding UTF8
 
@@ -507,47 +541,189 @@ Set-Content -Path (Join-Path $agentsDir "iwsdk-reviewer.md") -Value $reviewerAge
 $weatherPrompt = @'
 orchestrate
 
-Implement WEATHER//ROOM as a completely new Meta Immersive Web SDK mixed-reality experience in 'apps/weather-room'.
+Act as the autonomous lead for the xr-experiments repository and carry the task through to a clean, buildable, commit-ready state. Do not ask the user to manually run IWSDK setup commands that you can discover and execute yourself.
 
-The legacy 'xrblocks/weather-room' may be read only for the original idea, data mapping and art direction. Do not copy its code or architecture.
+# Phase 0 — inspect before changing
 
-Before implementation:
-- read the project '.omp/RULES.md' and '.omp/AGENTS.md';
-- use the installed Meta IWSDK skills;
-- query the local IWSDK reference corpus for APIs/patterns you will use;
-- inspect the current official scaffold.
+Read:
+- .omp/RULES.md
+- .omp/AGENTS.md
+- current root AGENTS.md, package.json, scripts/, .gitignore
+- active 8thwall/ structure and its root build dependencies
+
+Check git status first. Do not destroy unrelated user changes. If there are pre-existing edits you cannot safely distinguish from bootstrap output, preserve them and work around them.
+
+Inspect the CURRENT official Meta CLI rather than assuming syntax:
+- node --version
+- npm --version
+- npx --yes @iwsdk/create@latest --help
+- after scaffolding, inspect local @iwsdk/cli help/reference capabilities
+
+# Phase 1 — manage/migrate the repository
+
+Target layout:
+- apps/weather-room/ — new greenfield Meta IWSDK app
+- 8thwall/ — preserved active iPhone/iPad WebAR code
+- .omp/ — project-local OMP setup
+- MIGRATION.md — concept-only record of retired XR Blocks work
+- AGENTS.md — repo-wide architecture rules
+
+Retire Google XR Blocks from the WORKING TREE. Remove when present:
+- xrblocks/
+- XR-BLOCKS.md
+- .agents/skills/xb-*
+- scripts/install-xrblocks-skills.mjs
+- root package.json hooks/scripts/dependencies that exist only to install/sync/build XR Blocks
+- XR Blocks branches in scripts/build-all.js or equivalent root build logic
+
+Before editing shared root scripts/package.json, inspect them and preserve every path still required by 8thwall/. The root build must continue to build/assemble active 8th Wall projects. Do not move, delete, mass-refactor or silently migrate 8thwall/.
+
+Create/update MIGRATION.md with ONLY the concepts:
+- WEATHER//ROOM
+- REALITY//FIELD
+- CITY//ORBIT
+- SOUND//SPACE
+- ECHO//ROOM
+and state that all IWSDK versions are greenfield and Git history must not be used as implementation reference.
+
+Create/update root AGENTS.md so future agents know:
+- Quest 3 / supported Android WebXR => apps/ with Meta IWSDK
+- iPhone/iPad WebAR => active 8thwall/ implementations as needed
+- XR Blocks is retired
+- 8thwall/ is not legacy
+- Battleship/Sea Battle remains working; an IWSDK counterpart is a separate deliberate task
+- shared framework-neutral TypeScript should be extracted only when at least two real consumers justify it
+
+Do not commit unless the environment/user policy explicitly allows it, but leave a coherent diff ready to commit.
+
+# Phase 2 — create WEATHER//ROOM from scratch
+
+Create 'apps/weather-room' with the CURRENT official '@iwsdk/create@latest'. Determine the valid invocation yourself from '--help'. Do not assume deprecated flags such as '--ai-tools'. Use TypeScript and an AR/MR starting point. Enable current official IWSDK features needed for:
+- scene understanding / room surfaces where supported
+- environment raycasts / real-world placement where supported
+- grabbing/interaction
+- physics where it meaningfully supports the experience
+
+After scaffolding:
+- inspect generated AGENTS.md and '.agents/skills'
+- run/sync current coding-tool adapters as appropriate
+- warm and check the local IWSDK reference corpus
+- sync generated Meta 'iwsdk-*' skills into root '.omp/skills/' using scripts/sync-iwsdk-skills.ps1; repair that helper if Meta changed paths
+- use the installed reference corpus before writing IWSDK-specific APIs
+
+Do NOT read old XR Blocks source or Git history for implementation. WEATHER//ROOM is greenfield.
+
+# WEATHER//ROOM — product/experience specification
 
 Primary target: Meta Quest 3 mixed reality.
-Secondary target: supported Android WebXR AR with honest capability-based degradation.
-Desktop/IWER: development and meaningful fallback.
+Secondary target: supported Android Chrome/WebXR AR with capability-based degradation.
+Desktop/IWER: development environment and useful non-hardware fallback, not evidence of Quest sensor correctness.
 
-Concept:
-The real room becomes a physical embodiment of current/local weather using Open-Meteo. Wind, precipitation, cloud cover, temperature and pressure must visibly affect the spatial experience. Include a -24h / NOW / +24h timeline without refetching every frame.
+Core idea:
+The user's real room becomes a physical visualization of local/current weather. Weather should feel like it occupies and reacts to the room rather than being a floating dashboard.
 
-Quest goals where current IWSDK/browser capabilities permit:
-- scene understanding / real room surfaces;
-- environment raycasts;
-- depth occlusion;
-- physical interactions/collisions with detected real surfaces where justified;
-- hands and controllers;
-- spatial UI that remains legible in passthrough.
+Weather source:
+- Open-Meteo
+- obtain location with a browser-compatible flow only with user permission; provide a sane fallback/demo location when permission/location is unavailable
+- fetch enough hourly data in one request to support roughly -24h through +24h around NOW
+- cache/normalize fetched data; never refetch every frame
+- handle loading, denied location, offline/network failure and stale data visibly but unobtrusively
 
-Android goals:
-- real camera AR when WebXR AR is supported;
-- hit-test/placement/anchors/depth only when actually exposed;
-- graceful fallback rather than pretending Quest room understanding exists.
+Data dimensions that must materially affect the scene:
+- precipitation / rain
+- wind speed and preferably direction when available
+- cloud cover
+- temperature
+- atmospheric pressure
 
-Development contract:
-- delegate routine implementation to 'iwsdk-builder';
-- use 'iwsdk-reviewer' for an independent technical review before completion;
-- once a coherent playable milestone exists, invoke 'designer' once for spatial/game/visual critique, then implement the high-value fixes;
-- do not spend the designer model on routine coding;
-- build and test repeatedly using IWSDK CLI/IWER;
-- inspect console logs and runtime state;
-- capture app-only screenshots;
-- do not declare hardware-only behavior verified until physical Quest testing.
+Timeline:
+- spatial or comfortably reachable UI for -24h / NOW / +24h
+- scrubbing/selecting time updates all weather manifestations coherently
+- obvious way back to NOW
+- show concise time/weather values without turning the experience into a conventional 2D weather app
 
-Finish with a concise report of implemented functionality, what was verified in IWER, what still needs a Quest 3 smoke test, and Android capability dependencies.
+Spatial manifestations:
+- rain should occupy useful room volume and, where the platform exposes suitable room surfaces/colliders, visibly interact with real geometry rather than simply falling through everything
+- wind should affect particles/rain/cloud/fog motion and provide readable direction/intensity
+- cloud cover should change atmosphere/sky-like volume/light/fog density without obscuring passthrough dangerously
+- temperature should have a restrained but immediately legible spatial/material/ambient encoding; avoid relying only on tiny text or a simplistic red-blue full-screen tint
+- pressure should have a meaningful secondary spatial encoding (density, vertical compression/expansion, field behavior, etc.) rather than an arbitrary number pasted into UI
+- all mappings should be documented briefly in code/project docs so another contributor understands what each weather variable controls
+
+Quest 3 interaction goals, only where current browser/IWSDK capabilities actually support them:
+- passthrough MR
+- scene understanding / detected room surfaces
+- environment raycasts
+- occlusion/depth where available
+- collision/interaction with real surfaces where justified
+- hands and controllers
+- spatial UI readable against real-world backgrounds
+
+Android behavior:
+- enter real camera AR only where immersive-ar is genuinely supported
+- use hit-test/anchors/depth only after capability detection
+- do not pretend Quest room meshes/scene understanding exist on phones that do not expose them
+- gracefully reduce to placement + atmospheric visualization, or a clear supported fallback
+
+Interaction and comfort:
+- the first meaningful result should appear quickly
+- no locomotion requirement for the basic experience
+- controls must work at comfortable arm/reach distances
+- effects must not make passthrough unusable
+- avoid excessive particle counts on standalone hardware
+- provide clear reset/recenter/reload-weather actions where useful
+
+Art/game-feel direction:
+- installation/art-experience rather than generic SaaS weather dashboard
+- restrained readable typography
+- strong single spatial idea per weather variable, not five unrelated particle gimmicks
+- weather changes should produce a perceptible "room changed" moment
+- keep enough subtlety that the real room remains visible
+- avoid generic neon/cyberpunk/AI-generated visual language unless a concrete design reason emerges
+
+# Phase 3 — autonomous implementation loop
+
+The lead orchestrator owns the loop:
+
+1. Research current IWSDK references/skills and plan the smallest coherent vertical slice.
+2. Delegate bounded implementation work to 'iwsdk-builder'.
+3. Integrate and inspect the code yourself.
+4. Build/typecheck.
+5. Start/use IWSDK managed runtime/IWER.
+6. Enter XR in IWER where applicable and exercise the primary interaction/timeline.
+7. Inspect console/runtime/scene/ECS state, not just whether Vite starts.
+8. Capture app-only screenshots when the tooling supports it.
+9. Fix failures and repeat.
+10. At the first coherent playable/interactive milestone, invoke 'designer' once. Give it the app-only screenshots/runtime context and ask for prioritized spatial/game/visual changes. Implement the high-value fixes.
+11. Before completion invoke 'iwsdk-reviewer' for independent technical review. Fix material findings and rerun verification.
+
+Do not stop at scaffold/build success. Continue until there is a coherent working IWER-tested vertical slice or a concrete external/hardware blocker you cannot resolve locally.
+
+# Phase 4 — acceptance criteria
+
+Before calling the task complete:
+- repository no longer depends on XR Blocks for active builds/setup
+- 8thwall/ still exists and its root build path has not been intentionally broken
+- apps/weather-room is a fresh IWSDK project
+- npm build/typecheck for weather-room succeeds
+- Open-Meteo flow works with loading/error/fallback handling
+- -24h / NOW / +24h timeline changes the scene from cached hourly data
+- all five weather variables have intentional scene mappings
+- capability detection/degradation is explicit
+- no deprecated/guessed IWSDK API remains when local references disagree
+- IWER/runtime has been exercised, logs inspected, and obvious runtime errors fixed
+- technical reviewer findings have been addressed
+- designer milestone findings have been considered and high-value fixes applied
+- README or app-level notes explain how to run/test the project and which behavior still needs Quest 3 / Android physical-device verification
+
+Final response should be concise and factual:
+- repository changes made
+- WEATHER//ROOM features implemented
+- commands/tests that actually passed
+- what was verified in IWER
+- what remains for a physical Quest 3 test
+- Android capability caveats
+- any intentionally deferred work
 '@
 Set-Content -Path (Join-Path $promptsDir "weather-room.md") -Value $weatherPrompt -Encoding UTF8
 
@@ -557,11 +733,11 @@ param([Parameter(Mandatory=$true)][string]$AppPath)
 $ErrorActionPreference = "Stop"
 $repo = (& git rev-parse --show-toplevel).Trim()
 $app = Resolve-Path $AppPath
-$source = Join-Path $app ".codex\skills"
+$source = Join-Path $app ".agents\skills"
 $dest = Join-Path $repo ".omp\skills"
 
 if (-not (Test-Path $source)) {
-  throw "No generated Codex skills found at $source. Scaffold the IWSDK app with."
+  throw "No generated IWSDK Agent Skills found at $source. Inspect the current @iwsdk/create output before changing this helper."
 }
 
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
@@ -574,111 +750,20 @@ Get-ChildItem $source -Directory | Where-Object { $_.Name -like "iwsdk-*" } | Fo
 '@
 Set-Content -Path (Join-Path $repo "scripts\sync-iwsdk-skills.ps1") -Value $syncScript -Encoding UTF8
 
-Say "Removing Google XR Blocks implementation while preserving concepts only"
-$migration = @'
-# XR Blocks -> IWSDK greenfield concepts
-
-The former Google XR Blocks implementations were intentionally removed. Do not recover old source from Git history when implementing these.
-
-- WEATHER//ROOM — the physical room manifests local weather; Open-Meteo; wind, rain, cloudiness, temperature, pressure; -24h / NOW / +24h.
-- REALITY//FIELD — physical room geometry behaves as a force field for particles/fragments.
-- CITY//ORBIT — spatial/orbital city visualization from OSM/POIs with tabletop/360 interaction and hand scaling.
-- SOUND//SPACE — microphone/FFT sound visualization with frozen sound sculptures.
-- ECHO//ROOM — spatial memory / temporal debugger of recent interactions.
-
-All five are greenfield Meta IWSDK experiences under apps/. Preserve ideas, not XR Blocks code or architecture.
-
-8th Wall is intentionally excluded: 8thwall/ remains active iPhone/iPad WebAR code.
-'@
-Set-Content -Path (Join-Path $repo "MIGRATION.md") -Value $migration -Encoding UTF8
-
-if (Test-Path (Join-Path $repo "xrblocks")) { Remove-Item -Recurse -Force (Join-Path $repo "xrblocks") }
-if (Test-Path (Join-Path $repo "XR-BLOCKS.md")) { Remove-Item -Force (Join-Path $repo "XR-BLOCKS.md") }
-
-$xbSkills = Join-Path $repo ".agents\\skills"
-if (Test-Path $xbSkills) {
-  Get-ChildItem $xbSkills -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "xb-*" } | Remove-Item -Recurse -Force
-}
-
-$rootAgents = @'
-# XR Experiments
-
-This repository is an XR experimentation monorepo.
-
-- Meta IWSDK / Quest 3 / supported Android WebXR work lives in apps/.
-- 8thwall/ is active supported iPhone/iPad WebAR code. Preserve it; do not automatically migrate or delete it.
-- Google XR Blocks implementation has been intentionally removed. MIGRATION.md contains the only allowed conceptual reference for those experiments.
-- Never inspect Git history to recover XR Blocks implementation unless the user explicitly asks.
-- Project-specific OMP rules, agents, model routing and Meta IWSDK skills live in .omp/.
-'@
-Set-Content -Path (Join-Path $repo "AGENTS.md") -Value $rootAgents -Encoding UTF8
+Say "Leaving repository migration and IWSDK scaffolding to the OMP lead"
+Write-Host "Bootstrap will not delete XR Blocks, modify root build files, or scaffold apps/weather-room."
+Write-Host "Those actions are specified in .omp/prompts/weather-room.md and must be performed adaptively by OMP."
 
 Say "Validating project-local OMP settings"
 & omp config get modelRoles --json | Out-Host
 & omp config get retry.fallbackChains --json | Out-Host
-
-$appPath = Join-Path $repo "apps\weather-room"
-
-if (-not $SkipScaffold) {
-  if (-not (Test-Path $appPath)) {
-    Say "Checking installed @iwsdk/create CLI surface"
-    $createHelp = (& npx --yes @iwsdk/create@latest --help 2>&1 | Out-String)
-    foreach ($requiredFlag in @("--target", "--physics", "--grabbing", "--scene-understanding", "--environment-raycast", "--language", "--no-git", "--install")) {
-      if ($createHelp -notmatch [regex]::Escape($requiredFlag)) {
-        throw "Current @iwsdk/create does not expose required flag $requiredFlag. Bootstrap stopped before scaffolding; inspect 'npx @iwsdk/create@latest --help'."
-      }
-    }
-
-    Say "Scaffolding WEATHER//ROOM with official Meta @iwsdk/create"
-    $appsDir = Split-Path $appPath -Parent
-    New-Item -ItemType Directory -Force -Path $appsDir | Out-Null
-
-    # @iwsdk/create 1.0.x validates its positional argument as a project
-    # directory name, not an arbitrary absolute Windows path. Run it from
-    # apps/ and pass the simple child name.
-    Push-Location $appsDir
-    try {
-      & npx --yes @iwsdk/create@latest "weather-room" --yes --target ar --physics --grabbing --scene-understanding --environment-raycast --language ts --no-git --install
-      if ($LASTEXITCODE -ne 0) { throw "@iwsdk/create failed." }
-    }
-    finally {
-      Pop-Location
-    }
-  } else {
-    Write-Host "apps/weather-room already exists; not overwriting it."
-  }
-
-  if (Test-Path (Join-Path $appPath "package.json")) {
-    Push-Location $appPath
-    try {
-      Say "Verifying Meta IWSDK coding-tool adapters"
-      & npx @iwsdk/cli adapter sync
-      if ($LASTEXITCODE -ne 0) { Write-Warning "adapter sync returned non-zero; OMP can still use CLI-first workflow." }
-
-      Say "Warming local Meta IWSDK reference corpus"
-      & npx @iwsdk/cli reference warmup
-      if ($LASTEXITCODE -ne 0) { throw "IWSDK reference warmup failed." }
-
-      & npx @iwsdk/cli reference status | Out-Host
-
-      Say "Verifying fresh IWSDK app build"
-      & npm run build
-      if ($LASTEXITCODE -ne 0) { throw "Fresh IWSDK app build failed." }
-    } finally {
-      Pop-Location
-    }
-
-    Say "Syncing generated Meta IWSDK skills into root .omp/skills"
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo "scripts\sync-iwsdk-skills.ps1") -AppPath $appPath
-  }
-}
 
 Write-Host ""
 Write-Host "Bootstrap complete." -ForegroundColor Green
 Write-Host "Project OMP config: .omp/config.yml"
 Write-Host "Meta rules:         .omp/RULES.md"
 Write-Host "Agents:             .omp/agents/"
-Write-Host "IWSDK skills:       .omp/skills/"
+Write-Host "IWSDK skills:       .omp/skills/ (OMP syncs these after scaffolding)"
 Write-Host "Weather prompt:     .omp/prompts/weather-room.md"
 Write-Host ""
 Write-Host "No PAYG provider was configured. Model selectors came from your local OMP catalog."

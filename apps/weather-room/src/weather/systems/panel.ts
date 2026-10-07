@@ -19,6 +19,17 @@ function compassFrom(metDegrees: number): string {
   const to = (((metDegrees + 180) % 360) + 360) % 360;
   return COMPASS[Math.round(to / 45) % 8];
 }
+function weatherCodeName(code: number): string {
+  if (code === 0) return 'Clear';
+  if (code <= 3) return 'Clouds';
+  if (code === 45 || code === 48) return 'Fog';
+  if (code >= 51 && code <= 57) return 'Drizzle';
+  if (code >= 61 && code <= 67) return 'Rain';
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'Snow';
+  if (code >= 80 && code <= 82) return 'Showers';
+  if (code >= 95) return 'Thunder';
+  return 'Weather';
+}
 
 /** Format one measurement; `--` marks values the dataset does not provide. */
 function valueOrDash(value: number, format: (n: number) => string, unit: string): string {
@@ -56,15 +67,20 @@ export class PanelSystem extends createSystem({}) {
     this.playheadEl = asTextLine(panel.getElementById('playhead-line'));
     this.valuesEl = asTextLine(panel.getElementById('values-line'));
 
+    const backButton = panel.getElementById('back-button');
+    const forwardButton = panel.getElementById('forward-button');
     const nowButton = panel.getElementById('now-button');
     const reloadButton = panel.getElementById('reload-button');
+    const stepBack = () => weatherStore.setPlayhead(weatherStore.state.peek().playheadHours - 6);
+    const stepForward = () => weatherStore.setPlayhead(weatherStore.state.peek().playheadHours + 6);
     const goLive = () => weatherStore.goLive();
     const reload = () => {
       void reloadWeather();
     };
+    backButton?.addEventListener('click', stepBack);
+    forwardButton?.addEventListener('click', stepForward);
     nowButton?.addEventListener('click', goLive);
     reloadButton?.addEventListener('click', reload);
-
     if (xrButton != null && exitButton != null) {
       if (!this.world.xrEnabled) {
         xrButton.setProperties({ display: 'none' });
@@ -86,6 +102,8 @@ export class PanelSystem extends createSystem({}) {
       }
     }
     this.cleanupFuncs.push(
+      () => backButton?.removeEventListener('click', stepBack),
+      () => forwardButton?.removeEventListener('click', stepForward),
       () => nowButton?.removeEventListener('click', goLive),
       () => reloadButton?.removeEventListener('click', reload),
     );
@@ -97,13 +115,17 @@ export class PanelSystem extends createSystem({}) {
     const state = weatherStore.state.peek();
     const current = weatherStore.current();
     if (current == null) {
-      this.pushStatus('Loading weather...', state.status.kind === 'demo' ? 'demo' : '');
+      const status = state.status;
+      this.pushStatus(
+        status.kind === 'loading' ? `Loading: ${status.label}` : 'Loading weather...',
+        status.kind === 'loading' ? 'Waiting for device location / forecast...' : '--',
+      );
       this.lastPushAt = time;
       return;
     }
     const { dataset, playheadHours, isLive, status } = state;
     const { frame } = current;
-    const staleSuffix = frame.stale ? ' · cached' : '';
+    const staleSuffix = frame.stale ? ' | cached' : '';
     const statusText =
       status.kind === 'demo'
         ? `DEMO: ${status.reason}`
@@ -114,10 +136,11 @@ export class PanelSystem extends createSystem({}) {
             : status.kind === 'locating'
               ? 'Locating...'
               : 'Ready';
-    const locationText = dataset?.label ?? '--';
+    const locationText =
+      dataset?.label ?? (status.kind === 'loading' ? 'Requesting device location...' : '--');
     const at = playheadTime(dataset!, playheadHours, new Date());
     const clock = `${at.getHours() < 10 ? `0${at.getHours()}` : at.getHours()}:${at.getMinutes() < 10 ? `0${at.getMinutes()}` : at.getMinutes()}`;
-    const beyondData = frame.outOfCoverage ? ' · beyond data' : '';
+    const beyondData = frame.outOfCoverage ? ' | beyond data' : '';
     const deltaLabel = isLive
       ? `NOW${beyondData}`
       : `${clock} / ${playheadHours > 0 ? '+' : ''}${Math.round(playheadHours)}h${beyondData}`;
@@ -125,12 +148,20 @@ export class PanelSystem extends createSystem({}) {
       frame.available.windSpeedKmh && frame.available.windDirectionDeg
         ? ` ${compassFrom(frame.windDirectionDeg)}`
         : '';
+    const weatherCode = frame.available.weatherCode ? weatherCodeName(frame.weatherCode) : '--';
     const valuesText =
-      `${valueOrDash(frame.temperatureC, (n) => n.toFixed(1), 'C')}  ` +
-      `${valueOrDash(frame.precipitationMm, (n) => n.toFixed(1), 'mm/h')}  ` +
-      `${valueOrDash(frame.windSpeedKmh, (n) => String(Math.round(n)), `km/h${compass}`)}  ` +
-      `${valueOrDash(frame.cloudCoverPct, (n) => String(Math.round(n)), '%')}  ` +
-      `${valueOrDash(frame.pressureHpa, (n) => String(Math.round(n)), 'hPa')}`;
+      `${valueOrDash(frame.temperatureC, (n) => n.toFixed(1), 'C')} | ` +
+      `feels ${valueOrDash(frame.apparentTemperatureC, (n) => n.toFixed(1), 'C')} | ${weatherCode} | ` +
+      `rain ${valueOrDash(frame.precipitationMm, (n) => n.toFixed(1), 'mm/h')} ` +
+      `(${valueOrDash(frame.precipitationProbabilityPct, (n) => String(Math.round(n)), '%')} chance) | ` +
+      `snow ${valueOrDash(frame.snowfallCm, (n) => n.toFixed(1), 'cm/h')}\n` +
+      `wind ${valueOrDash(frame.windSpeedKmh, (n) => String(Math.round(n)), `km/h${compass}`)} ` +
+      `(gust ${valueOrDash(frame.windGustsKmh, (n) => String(Math.round(n)), 'km/h')}) | ` +
+      `cloud ${valueOrDash(frame.cloudCoverPct, (n) => String(Math.round(n)), '%')} | ` +
+      `RH ${valueOrDash(frame.humidityPct, (n) => String(Math.round(n)), '%')}\n` +
+      `visibility ${valueOrDash(frame.visibilityM, (n) => (n / 1000).toFixed(1), 'km')} | ` +
+      `pressure ${valueOrDash(frame.pressureHpa, (n) => String(Math.round(n)), 'hPa')} | ` +
+      `${frame.available.isDay ? (frame.isDay === 1 ? 'daylight' : 'night') : 'light --'}`;
     const combined = `${statusText}|${locationText}|${deltaLabel}|${valuesText}`;
     if (combined === this.lastText) return;
     this.lastText = combined;

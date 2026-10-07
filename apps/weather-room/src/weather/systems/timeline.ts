@@ -14,8 +14,9 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
-  OneHandGrabbable,
+  DistanceGrabbable,
   RayInteractable,
+  OneHandGrabbable,
   Vector3,
 } from '@iwsdk/core';
 import type { Entity } from '@iwsdk/core';
@@ -82,7 +83,8 @@ export class TimelineSystem extends createSystem({
     this.handleEntity = this.world.createTransformEntity(knob, { parent: this.railEntity });
     this.handleEntity.addComponent(TimelineHandle, {});
     this.handleEntity.addComponent(RayInteractable, {});
-    this.handleEntity.addComponent(OneHandGrabbable, {});
+    this.handleEntity.addComponent(DistanceGrabbable, { rotate: false });
+    this.handleEntity.addComponent(OneHandGrabbable, { rotate: false });
     this.handleEntity.object3D?.position.set(0, 0.06, 0);
     this.cleanupFuncs.push(
       this.queries.grabbed.subscribe('qualify', (entity) => {

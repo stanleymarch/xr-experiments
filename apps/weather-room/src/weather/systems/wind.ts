@@ -51,7 +51,9 @@ export class WindSystem extends createSystem({}) {
 
   update(delta: number): void {
     const current = weatherStore.current();
-    const strength = current?.drivers.wind ?? 0;
+    const meanWind = current?.drivers.wind ?? 0;
+    const gust = current?.drivers.gust ?? 0;
+    const strength = Math.min(1, meanWind + Math.max(0, gust - meanWind) * 0.55);
     const dt = Math.min(delta, 0.05);
     const { min, max } = roomModel;
     const spanX = Math.max(0.5, max.x - min.x);

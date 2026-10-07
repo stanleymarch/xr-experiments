@@ -21,7 +21,10 @@
       }
     },
     "input": {
-      "canvasPointerEvents": true
+      "canvasPointerEvents": {
+        "enabled": true,
+        "activeDuringXR": true
+      }
     },
     "render": {
       "near": 0.001,

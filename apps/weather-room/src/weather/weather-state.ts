@@ -18,18 +18,39 @@ export interface WeatherFrame {
   readonly temperatureC: number;
   /** Precipitation mm/h — drives rain intensity. */
   readonly precipitationMm: number;
+  /** Snowfall cm/h. */
+  readonly snowfallCm: number;
+  /** WMO weather code (categorical; nearest hour). */
+  readonly weatherCode: number;
+  /** Relative humidity %. */
+  readonly humidityPct: number;
+  /** 1 = daylight, 0 = night (categorical; nearest hour). */
+  readonly isDay: number;
   readonly windSpeedKmh: number;
   /** Meteorological direction (wind comes FROM), degrees. */
   readonly windDirectionDeg: number;
+  /** Wind gusts km/h. */
+  readonly windGustsKmh: number;
   readonly cloudCoverPct: number;
   readonly pressureHpa: number;
+  readonly apparentTemperatureC: number;
+  readonly precipitationProbabilityPct: number;
+  readonly visibilityM: number;
   readonly available: {
     readonly temperatureC: boolean;
     readonly precipitationMm: boolean;
+    readonly snowfallCm: boolean;
+    readonly weatherCode: boolean;
+    readonly humidityPct: boolean;
+    readonly isDay: boolean;
     readonly windSpeedKmh: boolean;
     readonly windDirectionDeg: boolean;
+    readonly windGustsKmh: boolean;
     readonly cloudCoverPct: boolean;
     readonly pressureHpa: boolean;
+    readonly apparentTemperatureC: boolean;
+    readonly precipitationProbabilityPct: boolean;
+    readonly visibilityM: boolean;
   };
   /** Dataset is older than its 15-minute refresh interval. */
   readonly stale: boolean;
@@ -41,13 +62,25 @@ export interface WeatherFrame {
 export interface WeatherDrivers {
   /** 0 = dry, 1 = downpour (saturates around 8 mm/h). */
   readonly rain: number;
+  /** 0 = no snow, 1 = heavy snowfall (saturates around 2 cm/h). */
+  readonly snow: number;
   /** 0 = calm, 1 = storm wind (saturates around 50 km/h). */
   readonly wind: number;
+  /** 0 = no gusts, 1 = violent gusts (saturates around 80 km/h). */
+  readonly gust: number;
   readonly cloud: number;
   /** 0 = cold (-15 °C mapped), 1 = hot (+35 °C mapped). */
   readonly warmth: number;
   /** 0 = low (985 hPa), 1 = high (1040 hPa). */
   readonly pressure: number;
+  /** 0 = dry air, 1 = saturated. */
+  readonly humidity: number;
+  /** 0 = night, 1 = daylight; 0.5 when unknown. */
+  readonly daylight: number;
+  /** Thunderstorm codes (WMO 95..99). */
+  readonly thunder: boolean;
+  /** Fog codes (WMO 45/48) or near-saturated air. */
+  readonly fog: boolean;
 }
 
 class Signal<T> {
@@ -101,40 +134,73 @@ const interpolateDirection = (a: number | null, b: number | null, t: number): nu
   return ((a + delta * t) % 360 + 360) % 360;
 };
 
+/** values order: temperatureC, precipitationMm, snowfallCm, weatherCode,
+ * humidityPct, isDay, windSpeedKmh, windDirectionDeg, windGustsKmh,
+ * cloudCoverPct, pressureHpa, apparentTemperatureC,
+ * precipitationProbabilityPct, visibilityM. */
+type FrameValues = readonly [
+  number, number, number, number, number, number, number,
+  number, number, number, number, number, number, number,
+];
+
 const frameFromValues = (
   dataset: WeatherDataset,
   at: Date,
-  values: readonly [number, number, number, number, number, number],
+  values: FrameValues,
   outOfCoverage: boolean,
 ): WeatherFrame => ({
   time: at,
   temperatureC: values[0],
   precipitationMm: values[1],
-  windSpeedKmh: values[2],
-  windDirectionDeg: values[3],
-  cloudCoverPct: values[4],
-  pressureHpa: values[5],
+  snowfallCm: values[2],
+  weatherCode: values[3],
+  humidityPct: values[4],
+  isDay: values[5],
+  windSpeedKmh: values[6],
+  windDirectionDeg: values[7],
+  windGustsKmh: values[8],
+  cloudCoverPct: values[9],
+  pressureHpa: values[10],
+  apparentTemperatureC: values[11],
+  precipitationProbabilityPct: values[12],
+  visibilityM: values[13],
   available: {
     temperatureC: Number.isFinite(values[0]),
     precipitationMm: Number.isFinite(values[1]),
-    windSpeedKmh: Number.isFinite(values[2]),
-    windDirectionDeg: Number.isFinite(values[3]),
-    cloudCoverPct: Number.isFinite(values[4]),
-    pressureHpa: Number.isFinite(values[5]),
+    snowfallCm: Number.isFinite(values[2]),
+    weatherCode: Number.isFinite(values[3]),
+    humidityPct: Number.isFinite(values[4]),
+    isDay: Number.isFinite(values[5]),
+    windSpeedKmh: Number.isFinite(values[6]),
+    windDirectionDeg: Number.isFinite(values[7]),
+    windGustsKmh: Number.isFinite(values[8]),
+    cloudCoverPct: Number.isFinite(values[9]),
+    pressureHpa: Number.isFinite(values[10]),
+    apparentTemperatureC: Number.isFinite(values[11]),
+    precipitationProbabilityPct: Number.isFinite(values[12]),
+    visibilityM: Number.isFinite(values[13]),
   },
   stale: Date.now() - dataset.fetchedAt >= REFRESH_TTL_MS,
   outOfCoverage,
 });
 
+const ALL_UNAVAILABLE: FrameValues = [
+  Number.NaN, Number.NaN, Number.NaN, Number.NaN, Number.NaN, Number.NaN,
+  Number.NaN, Number.NaN, Number.NaN, Number.NaN, Number.NaN,
+  Number.NaN, Number.NaN, Number.NaN,
+];
+
+/** Categorical fields take the nearest hour instead of interpolating. */
+const nearest = (a: number | null, b: number | null, t: number): number =>
+  isAvailable(a) || isAvailable(b) ? ((t < 0.5 ? a : b) ?? UNAVAILABLE) : UNAVAILABLE;
+
 /** Interpolate the hourly series at an arbitrary timestamp. */
 export function frameAt(dataset: WeatherDataset, at: Date): WeatherFrame {
   const target = at.getTime();
   const { hours } = dataset;
-  if (hours.length === 0) {
-    return frameFromValues(dataset, at, [UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE], true);
-  }
+  if (hours.length === 0) return frameFromValues(dataset, at, ALL_UNAVAILABLE, true);
   if (target < hours[0].time.getTime() || target > hours[hours.length - 1].time.getTime()) {
-    return frameFromValues(dataset, at, [UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE], true);
+    return frameFromValues(dataset, at, ALL_UNAVAILABLE, true);
   }
   if (target === hours[0].time.getTime()) return frameFromHour(dataset, hours[0], at, false);
   const lastIndex = hours.length - 1;
@@ -154,10 +220,18 @@ export function frameAt(dataset: WeatherDataset, at: Date): WeatherFrame {
   return frameFromValues(dataset, at, [
     interpolate(a.temperatureC, b.temperatureC, t),
     interpolate(a.precipitationMm, b.precipitationMm, t),
+    interpolate(a.snowfallCm, b.snowfallCm, t),
+    nearest(a.weatherCode, b.weatherCode, t),
+    interpolate(a.humidityPct, b.humidityPct, t),
+    nearest(a.isDay, b.isDay, t),
     interpolate(a.windSpeedKmh, b.windSpeedKmh, t),
     interpolateDirection(a.windDirectionDeg, b.windDirectionDeg, t),
+    interpolate(a.windGustsKmh, b.windGustsKmh, t),
     interpolate(a.cloudCoverPct, b.cloudCoverPct, t),
     interpolate(a.pressureHpa, b.pressureHpa, t),
+    interpolate(a.apparentTemperatureC, b.apparentTemperatureC, t),
+    interpolate(a.precipitationProbabilityPct, b.precipitationProbabilityPct, t),
+    interpolate(a.visibilityM, b.visibilityM, t),
   ], false);
 }
 
@@ -165,21 +239,40 @@ function frameFromHour(dataset: WeatherDataset, hour: WeatherDataset['hours'][nu
   return frameFromValues(dataset, at, [
     hour.temperatureC ?? UNAVAILABLE,
     hour.precipitationMm ?? UNAVAILABLE,
+    hour.snowfallCm ?? UNAVAILABLE,
+    hour.weatherCode ?? UNAVAILABLE,
+    hour.humidityPct ?? UNAVAILABLE,
+    hour.isDay ?? UNAVAILABLE,
     hour.windSpeedKmh ?? UNAVAILABLE,
     hour.windDirectionDeg ?? UNAVAILABLE,
+    hour.windGustsKmh ?? UNAVAILABLE,
     hour.cloudCoverPct ?? UNAVAILABLE,
     hour.pressureHpa ?? UNAVAILABLE,
+    hour.apparentTemperatureC ?? UNAVAILABLE,
+    hour.precipitationProbabilityPct ?? UNAVAILABLE,
+    hour.visibilityM ?? UNAVAILABLE,
   ], outOfCoverage);
 }
 
 /** Neutral fallbacks mirror the visual systems' `??` defaults. */
 export function driversFromFrame(frame: WeatherFrame): WeatherDrivers {
   const rain = frame.available.precipitationMm ? Math.min(1, frame.precipitationMm / 8) : 0;
+  const snow = frame.available.snowfallCm ? Math.min(1, frame.snowfallCm / 2) : 0;
   const wind = frame.available.windSpeedKmh ? Math.min(1, frame.windSpeedKmh / 50) : 0;
+  const gust = frame.available.windGustsKmh ? Math.min(1, frame.windGustsKmh / 80) : 0;
   const cloud = frame.available.cloudCoverPct ? Math.min(1, Math.max(0, frame.cloudCoverPct / 100)) : 0.3;
-  const warmth = frame.available.temperatureC ? Math.min(1, Math.max(0, (frame.temperatureC + 15) / 50)) : 0.5;
+  const thermal = frame.available.apparentTemperatureC ? frame.apparentTemperatureC : frame.temperatureC;
+  const warmth = Number.isFinite(thermal) ? Math.min(1, Math.max(0, (thermal + 15) / 50)) : 0.5;
   const pressure = frame.available.pressureHpa ? Math.min(1, Math.max(0, (frame.pressureHpa - 985) / 55)) : 0.5;
-  return { rain, wind, cloud, warmth, pressure };
+  const humidity = frame.available.humidityPct ? Math.min(1, Math.max(0, frame.humidityPct / 100)) : 0.5;
+  const daylight = frame.available.isDay ? frame.isDay : 0.5;
+  const code = frame.available.weatherCode ? frame.weatherCode : 0;
+  const lowVisibility = frame.available.visibilityM && frame.visibilityM <= 1200;
+  return {
+    rain, snow, wind, gust, cloud, warmth, pressure, humidity, daylight,
+    thunder: code >= 95,
+    fog: code === 45 || code === 48 || lowVisibility || humidity >= 0.97,
+  };
 }
 
 /** Timestamp the playhead currently points at. */

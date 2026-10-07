@@ -1,21 +1,22 @@
 /**
- * Rain: CPU-simulated THREE.Points streaks (max 2400 full / 1200 reduced)
+ * Rain: CPU-simulated instanced streak quads (max 2400 full / 1200 reduced)
  * filling the RoomModel bounds, plus a 48-instance splash ring field.
  * Density <- drivers.rain, fall speed 4+8*rain m/s, tilt <- shared wind.
- * All buffers preallocated; per-frame work touches only live particles.
+ * Instanced quads replace point sprites: point sprites render as solid
+ * squares on some mobile/Quest GPUs. All buffers preallocated; per-frame
+ * work touches only live particles.
  */
 
 import {
   AdditiveBlending,
-  BufferAttribute,
-  BufferGeometry,
   createSystem,
   DoubleSide,
+  DynamicDrawUsage,
+  InstancedBufferAttribute,
   InstancedMesh,
   MeshBasicMaterial,
   Object3D,
   PlaneGeometry,
-  Points,
   RingGeometry,
   ShaderMaterial,
   Vector3,
@@ -32,35 +33,40 @@ const MAX_REDUCED = 1200;
 const SPLASH_COUNT = 48;
 const SPLASH_FADE_S = 0.4;
 const FALL_BASE_SPEED = 4;
+const STREAK_WIDTH = 0.012;
+const STREAK_BASE_LEN = 0.3;
 
 const RAIN_VERTEX = /* glsl */ `
 attribute float aAlpha;
 varying float vAlpha;
+varying vec2 vUv;
 void main() {
   vAlpha = aAlpha;
-  vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  gl_PointSize = 130.0 / max(0.1, -mv.z);
-  gl_Position = projectionMatrix * mv;
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
 }
 `;
 const RAIN_FRAGMENT = /* glsl */ `
 varying float vAlpha;
+varying vec2 vUv;
 void main() {
-  vec2 uv = gl_PointCoord - vec2(0.5, 0.5);
-  float d = length(vec2(uv.x * 3.2, uv.y));
-  float a = (1.0 - smoothstep(0.08, 0.5, d)) * vAlpha;
+  // Soft horizontal edges; vertical gradient: bright head at the bottom.
+  float edge = 1.0 - smoothstep(0.18, 0.5, abs(vUv.x - 0.5));
+  float grad = smoothstep(0.0, 0.75, vUv.y);
+  float head = smoothstep(0.0, 0.12, vUv.y);
+  float a = edge * (0.12 + 0.88 * grad) * head * vAlpha;
   if (a < 0.01) discard;
-  gl_FragColor = vec4(0.4, 0.65, 1.0, a * 0.8);
+  gl_FragColor = vec4(0.55, 0.72, 0.95, a * 0.6);
 }
 `;
 
 export class RainSystem extends createSystem({}) {
   private entity!: Entity;
   private splashEntity!: Entity;
-  private geometry!: BufferGeometry;
-  private points!: Points;
+  private streaks!: InstancedMesh;
   private positions = new Float32Array(MAX_FULL * 3);
   private alphas = new Float32Array(MAX_FULL);
+  private lengths = new Float32Array(MAX_FULL);
   private speeds = new Float32Array(MAX_FULL);
   private cursor = 0;
   private splashMesh!: InstancedMesh;
@@ -69,24 +75,36 @@ export class RainSystem extends createSystem({}) {
   private splashCursor = 0;
   private readonly dummy = new Object3D();
   private readonly wind = new Vector3();
+  private readonly cameraPos = new Vector3();
   private profile!: ReadonlySignal<CapabilityProfile>;
 
   init(): void {
     this.profile = capabilityProfile(this.world);
-    this.geometry = new BufferGeometry();
-    this.geometry.setAttribute('position', new BufferAttribute(this.positions, 3));
-    this.geometry.setAttribute('aAlpha', new BufferAttribute(this.alphas, 1));
-    this.geometry.setDrawRange(0, 0);
+
+    // Streak field: thin quads stretched along the fall+wind velocity.
+    const geo = new PlaneGeometry(STREAK_WIDTH, 1);
+    geo.translate(0, -0.5, 0); // pivot at the streak head (bottom).
     const material = new ShaderMaterial({
       vertexShader: RAIN_VERTEX,
       fragmentShader: RAIN_FRAGMENT,
       transparent: true,
       depthWrite: false,
+      side: DoubleSide,
       blending: AdditiveBlending,
     });
-    this.points = new Points(this.geometry, material);
-    this.points.frustumCulled = false;
-    this.entity = this.world.createTransformEntity(this.points);
+    this.streaks = new InstancedMesh(geo, material, MAX_FULL);
+    this.streaks.frustumCulled = false;
+    this.streaks.instanceMatrix.setUsage(DynamicDrawUsage);
+    const alphaAttr = new InstancedBufferAttribute(this.alphas, 1);
+    alphaAttr.setUsage(DynamicDrawUsage);
+    geo.setAttribute('aAlpha', alphaAttr);
+    this.dummy.position.set(0, -10, 0);
+    this.dummy.scale.set(1, 0.001, 1);
+    this.dummy.updateMatrix();
+    for (let i = 0; i < MAX_FULL; i += 1) this.streaks.setMatrixAt(i, this.dummy.matrix);
+    this.streaks.instanceMatrix.needsUpdate = true;
+    this.streaks.count = 0;
+    this.entity = this.world.createTransformEntity(this.streaks);
 
     const splashGeo = new RingGeometry(0.032, 0.06, 24);
     const splashMat = new MeshBasicMaterial({
@@ -99,13 +117,11 @@ export class RainSystem extends createSystem({}) {
     this.splashMesh = new InstancedMesh(splashGeo, splashMat, SPLASH_COUNT);
     this.splashMesh.frustumCulled = false;
     this.splashAge.fill(Number.POSITIVE_INFINITY);
-    this.dummy.rotation.x = -Math.PI / 2;
-    for (let i = 0; i < SPLASH_COUNT; i += 1) {
-      this.dummy.position.set(0, -10, 0);
-      this.dummy.scale.setScalar(0.001);
-      this.dummy.updateMatrix();
-      this.splashMesh.setMatrixAt(i, this.dummy.matrix);
-    }
+    this.dummy.rotation.set(-Math.PI / 2, 0, 0);
+    this.dummy.position.set(0, -10, 0);
+    this.dummy.scale.setScalar(0.001);
+    this.dummy.updateMatrix();
+    for (let i = 0; i < SPLASH_COUNT; i += 1) this.splashMesh.setMatrixAt(i, this.dummy.matrix);
     this.splashMesh.instanceMatrix.needsUpdate = true;
     this.splashEntity = this.world.createTransformEntity(this.splashMesh);
     this.cleanupFuncs.push(() => {
@@ -119,38 +135,53 @@ export class RainSystem extends createSystem({}) {
     const budget = this.profile.peek().particleBudget === 'full' ? MAX_FULL : MAX_REDUCED;
     const dt = Math.min(delta, 0.05);
     if (current == null || current.drivers.rain <= 0.01) {
-      this.geometry.setDrawRange(0, 0);
-      this.points.visible = false;
+      this.streaks.count = 0;
       this.updateSplashes(dt);
       return;
     }
-    this.points.visible = true;
     const { drivers, frame } = current;
     const live = Math.floor(drivers.rain * budget);
+    this.streaks.count = live;
     windVectorFromFrame(frame, 0.35, this.wind);
+    this.wind.multiplyScalar(1 + Math.max(0, drivers.gust - drivers.wind) * 0.8);
     const { min, max } = roomModel;
     const spanX = Math.max(0.5, max.x - min.x);
     const spanZ = Math.max(0.5, max.z - min.z);
     const height = Math.max(0.5, max.y - min.y);
     const floorY = min.y;
     const fallBase = FALL_BASE_SPEED + 8 * drivers.rain;
+    this.world.camera.getWorldPosition(this.cameraPos);
 
     // Seed newly-visible particles at the top (deterministic hash from the
     // cursor keeps the hot loop allocation-free and Math.random-free).
     for (let i = 0; i < live; i += 1) {
-      const ix = i * 3;
       if (this.alphas[i] <= 0) {
         this.cursor += 1;
         const seed = ((this.cursor * 2654435761) % 1000) / 1000;
+        const ix = i * 3;
         this.positions[ix] = min.x + seed * spanX;
         this.positions[ix + 1] = min.y + height * (0.5 + 0.5 * ((seed * 7) % 1));
         this.positions[ix + 2] = min.z + ((seed * 13) % 1) * spanZ;
         this.speeds[i] = fallBase * (0.85 + 0.3 * ((seed * 29) % 1));
-        this.alphas[i] = 0.35 + 0.65 * drivers.rain;
+        this.lengths[i] = STREAK_BASE_LEN * (0.7 + 0.6 * drivers.rain + 0.2 * ((seed * 31) % 1));
+        this.alphas[i] = 0.3 + 0.7 * drivers.rain;
       }
     }
-    // Simulate drops and recycle each one at the first surface it crosses.
+    // Simulate drops: recycle each one at the first surface it crosses.
+    const toCamYaw = Math.atan2(
+      this.cameraPos.x - (min.x + spanX / 2),
+      this.cameraPos.z - (min.z + spanZ / 2),
+    );
+    const cosYaw = Math.cos(toCamYaw);
+    const sinYaw = Math.sin(toCamYaw);
+    // Wind tilt expressed in each streak's camera-facing plane.
+    const tiltTan = Math.min(
+      1.2,
+      Math.abs((this.wind.x * cosYaw - this.wind.z * sinYaw) / Math.max(1, FALL_BASE_SPEED)),
+    );
+    const tiltZ = -Math.sign(this.wind.x * cosYaw - this.wind.z * sinYaw || 1) * Math.atan(tiltTan);
     for (let i = 0; i < live; i += 1) {
+      if (this.alphas[i] <= 0) continue;
       const ix = i * 3;
       const previousY = this.positions[ix + 1];
       this.positions[ix] += this.wind.x * dt;
@@ -164,19 +195,34 @@ export class RainSystem extends createSystem({}) {
       const surfaceY = roomModel.surfaceHeightAt(this.positions[ix], this.positions[ix + 2], previousY);
       if (surfaceY != null && this.positions[ix + 1] <= surfaceY) {
         this.spawnSplash(this.positions[ix], this.positions[ix + 2], surfaceY);
-        this.alphas[i] = 0;
-        this.positions[ix + 1] = max.y;
+        this.recycle(i, min, height);
       } else if (this.positions[ix + 1] <= floorY + 0.02) {
         this.spawnSplash(this.positions[ix], this.positions[ix + 2], floorY);
-        this.alphas[i] = 0;
-        this.positions[ix + 1] = max.y;
+        this.recycle(i, min, height);
       }
+      // Cylindrical billboard toward the camera, tilted into the wind.
+      this.dummy.position.set(this.positions[ix], this.positions[ix + 1], this.positions[ix + 2]);
+      this.dummy.rotation.set(0, toCamYaw, tiltZ);
+      this.dummy.scale.set(1, this.lengths[i], 1);
+      this.dummy.updateMatrix();
+      this.streaks.setMatrixAt(i, this.dummy.matrix);
     }
-    this.geometry.setDrawRange(0, live);
-    (this.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
-    (this.geometry.getAttribute('aAlpha') as BufferAttribute).needsUpdate = true;
+    this.streaks.instanceMatrix.needsUpdate = true;
+    (this.streaks.geometry.getAttribute('aAlpha') as InstancedBufferAttribute).needsUpdate = true;
 
     this.updateSplashes(dt);
+  }
+
+  /** Re-seed particle i near the top of the volume. */
+  private recycle(i: number, min: Vector3, height: number): void {
+    this.cursor += 1;
+    const seed = ((this.cursor * 2654435761) % 1000) / 1000;
+    const ix = i * 3;
+    const spanX = Math.max(0.5, roomModel.max.x - min.x);
+    const spanZ = Math.max(0.5, roomModel.max.z - min.z);
+    this.positions[ix] = min.x + seed * spanX;
+    this.positions[ix + 1] = min.y + height * (0.75 + 0.25 * ((seed * 3) % 1));
+    this.positions[ix + 2] = min.z + ((seed * 17) % 1) * spanZ;
   }
 
   private updateSplashes(dt: number): void {
@@ -189,6 +235,7 @@ export class RainSystem extends createSystem({}) {
       if (nextAge >= SPLASH_FADE_S) {
         // Expired: park the instance out of sight until reused.
         this.dummy.position.set(0, -10, 0);
+        this.dummy.rotation.set(-Math.PI / 2, 0, 0);
         this.dummy.scale.setScalar(0.001);
         this.dummy.updateMatrix();
         this.splashMesh.setMatrixAt(s, this.dummy.matrix);
@@ -199,6 +246,7 @@ export class RainSystem extends createSystem({}) {
       this.splashAge[s] = nextAge;
       const t = nextAge / SPLASH_FADE_S;
       this.dummy.position.set(this.splashPos[si], this.splashPos[si + 1], this.splashPos[si + 2]);
+      this.dummy.rotation.set(-Math.PI / 2, 0, 0);
       this.dummy.scale.setScalar(0.5 + t * 1.9);
       this.dummy.updateMatrix();
       this.splashMesh.setMatrixAt(s, this.dummy.matrix);
@@ -216,6 +264,7 @@ export class RainSystem extends createSystem({}) {
     this.splashPos[si + 2] = z;
     this.splashAge[s] = 0;
   }
+
   override destroy(): void {
     super.destroy();
     this.positions.fill(0);

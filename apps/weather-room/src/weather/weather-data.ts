@@ -11,15 +11,26 @@ export interface WeatherHour {
   /** Hour start, UTC-based Date. */
   readonly time: Date;
   readonly temperatureC: number | null;
-  /** Precipitation mm per hour. */
+  /** Precipitation mm per hour (rain equivalent). */
   readonly precipitationMm: number | null;
   readonly windSpeedKmh: number | null;
   /** Meteorological wind direction, degrees (from = direction wind comes from). */
   readonly windDirectionDeg: number | null;
-  /** Cloud cover, 0–100 %. */
   readonly cloudCoverPct: number | null;
-  /** Surface pressure, hPa. */
   readonly pressureHpa: number | null;
+  readonly apparentTemperatureC: number | null;
+  readonly precipitationProbabilityPct: number | null;
+  readonly visibilityM: number | null;
+  /** Snowfall cm per hour. */
+  readonly snowfallCm: number | null;
+  /** WMO weather interpretation code (0 clear .. 95+ thunderstorm). */
+  readonly weatherCode: number | null;
+  /** Relative humidity %. */
+  readonly humidityPct: number | null;
+  /** 1 = daylight hour, 0 = night. */
+  readonly isDay: number | null;
+  /** Wind gusts km/h. */
+  readonly windGustsKmh: number | null;
 }
 
 export type WeatherSource = 'open-meteo' | 'open-meteo-fallback-location' | 'demo';
@@ -57,12 +68,20 @@ const GEOLOCATION_TIMEOUT_MS = 8_000;
 
 const HOURLY_FIELDS = [
   'temperature_2m',
+  'apparent_temperature',
   'precipitation',
+  'precipitation_probability',
+  'snowfall',
+  'weather_code',
+  'relative_humidity_2m',
+  'is_day',
   'wind_speed_10m',
   'wind_direction_10m',
+  'wind_gusts_10m',
   'cloud_cover',
   'surface_pressure',
-] as const;
+  'visibility',
+];
 
 const num = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -70,11 +89,19 @@ const num = (value: unknown): number | null =>
 interface OpenMeteoHourly {
   time: unknown[];
   temperature_2m?: unknown[];
+  apparent_temperature?: unknown[];
   precipitation?: unknown[];
+  precipitation_probability?: unknown[];
+  snowfall?: unknown[];
+  weather_code?: unknown[];
+  relative_humidity_2m?: unknown[];
+  is_day?: unknown[];
   wind_speed_10m?: unknown[];
   wind_direction_10m?: unknown[];
+  wind_gusts_10m?: unknown[];
   cloud_cover?: unknown[];
   surface_pressure?: unknown[];
+  visibility?: unknown[];
 }
 
 async function fetchJson(url: string): Promise<unknown> {
@@ -108,21 +135,41 @@ function parseOpenMeteo(payload: unknown, _latitude: number, _longitude: number)
         : String(rawTime));
     if (!Number.isFinite(time.getTime())) continue;
     const temperatureC = num(hourly.temperature_2m?.[i]);
+    const apparentTemperatureC = num(hourly.apparent_temperature?.[i]);
     const precipitationMm = num(hourly.precipitation?.[i]);
+    const precipitationProbabilityPct = num(hourly.precipitation_probability?.[i]);
+    const visibilityM = num(hourly.visibility?.[i]);
+    const snowfallCm = num(hourly.snowfall?.[i]);
+    const weatherCode = num(hourly.weather_code?.[i]);
+    const humidityPct = num(hourly.relative_humidity_2m?.[i]);
+    const isDay = num(hourly.is_day?.[i]);
     const windSpeedKmh = num(hourly.wind_speed_10m?.[i]);
     const windDirectionDeg = num(hourly.wind_direction_10m?.[i]);
+    const windGustsKmh = num(hourly.wind_gusts_10m?.[i]);
     const cloudCoverPct = num(hourly.cloud_cover?.[i]);
     const pressureHpa = num(hourly.surface_pressure?.[i]);
     if (
-      temperatureC == null && precipitationMm == null && windSpeedKmh == null &&
-      windDirectionDeg == null && cloudCoverPct == null && pressureHpa == null
+      temperatureC == null && apparentTemperatureC == null &&
+      precipitationMm == null && precipitationProbabilityPct == null &&
+      visibilityM == null && snowfallCm == null && weatherCode == null &&
+      humidityPct == null && isDay == null && windSpeedKmh == null &&
+      windDirectionDeg == null && windGustsKmh == null &&
+      cloudCoverPct == null && pressureHpa == null
     ) continue;
     hours.push({
       time,
       temperatureC,
+      apparentTemperatureC,
       precipitationMm,
+      precipitationProbabilityPct,
+      visibilityM,
+      snowfallCm,
+      weatherCode,
+      humidityPct,
+      isDay,
       windSpeedKmh,
       windDirectionDeg,
+      windGustsKmh,
       cloudCoverPct,
       pressureHpa,
     });
@@ -150,9 +197,17 @@ export function buildDemoDataset(now = new Date()): WeatherDataset {
     hours.push({
       time,
       temperatureC: 9 + 8 * Math.sin(phase * Math.PI) + 3 * dayWave,
+      apparentTemperatureC: 7 + 8 * Math.sin(phase * Math.PI) + 2 * dayWave,
+      precipitationProbabilityPct: Math.round(rainHump * 92),
+      visibilityM: Math.max(350, 24_000 - rainHump * 18_000),
       precipitationMm: Number((4.2 * rainHump).toFixed(2)),
+      snowfallCm: phase > 0.72 ? Number((0.5 * (phase - 0.72) * 10).toFixed(2)) : 0,
+      weatherCode: phase > 0.5 && phase <= 0.58 ? 95 : rainHump > 0.25 ? 63 : phase > 0.8 ? 71 : 3,
+      humidityPct: Math.round(55 + 35 * rainHump),
+      isDay: time.getUTCHours() >= 6 && time.getUTCHours() < 20 ? 1 : 0,
       windSpeedKmh: 6 + 22 * Math.abs(Math.sin(phase * Math.PI * 1.5)),
       windDirectionDeg: Math.round((200 + 120 * phase) % 360),
+      windGustsKmh: Math.round(12 + 40 * Math.abs(Math.sin(phase * Math.PI * 1.5))),
       cloudCoverPct: Math.round(Math.min(100, 25 + 70 * rainHump + 20 * Math.sin(phase * 9))),
       pressureHpa: Math.round((1006 + 14 * Math.cos(phase * Math.PI * 2)) * 10) / 10,
     });
@@ -172,6 +227,7 @@ export interface GeolocationResult {
   longitude: number;
   label: string;
   fallback: boolean;
+  fallbackReason?: string;
 }
 
 /** One Open-Meteo request covering at least now-24h .. now+24h. */
@@ -200,7 +256,7 @@ export function resolveLocation(): Promise<GeolocationResult> {
   const { promise, resolve } = Promise.withResolvers<GeolocationResult>();
   const geolocation = navigator.geolocation;
   if (geolocation == null) {
-    resolve({ ...FALLBACK_LOCATION, fallback: true });
+    resolve({ ...FALLBACK_LOCATION, fallback: true, fallbackReason: 'browser location unavailable' });
     return promise;
   }
   geolocation.getCurrentPosition(
@@ -208,7 +264,15 @@ export function resolveLocation(): Promise<GeolocationResult> {
       const { latitude, longitude } = position.coords;
       resolve({ latitude, longitude, label: `${latitude.toFixed(2)}°, ${longitude.toFixed(2)}°`, fallback: false });
     },
-    () => resolve({ ...FALLBACK_LOCATION, fallback: true }),
+    (error) => {
+      const reason =
+        error.code === error.PERMISSION_DENIED
+          ? 'permission denied'
+          : error.code === error.POSITION_UNAVAILABLE
+            ? 'device location unavailable'
+            : 'location request timed out';
+      resolve({ ...FALLBACK_LOCATION, fallback: true, fallbackReason: reason });
+    },
     { timeout: GEOLOCATION_TIMEOUT_MS, maximumAge: 5 * 60 * 1000 },
   );
   return promise;
@@ -234,7 +298,9 @@ export async function loadWeather(previous?: WeatherDataset): Promise<WeatherFet
     return {
       dataset: {
         source: location.fallback ? 'open-meteo-fallback-location' : 'open-meteo',
-        label: location.label,
+        label: location.fallback
+          ? `${location.label} (${location.fallbackReason})`
+          : location.label,
         fetchedAt: Date.now(),
         latitude: location.latitude,
         longitude: location.longitude,
@@ -245,7 +311,10 @@ export async function loadWeather(previous?: WeatherDataset): Promise<WeatherFet
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return {
-      dataset: buildDemoDataset(),
+      dataset: {
+        ...buildDemoDataset(),
+        label: `DEMO - ${location.fallback ? `${location.label} (${location.fallbackReason})` : location.label}`,
+      },
       status: { kind: 'demo', reason },
     };
   }

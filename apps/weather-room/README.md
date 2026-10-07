@@ -38,55 +38,68 @@ npm run build    # production bundle
 
 | Variable | Source field | Scene behavior |
 |---|---|---|
-| Rain | `precipitation` mm/h → `drivers.rain` (saturates ~8 mm/h) | Points streaks, count ← density, fall 4+8·rain m/s, tilt ← wind; splash rings on detected surfaces |
-| Wind | `wind_speed_10m` + `wind_direction_10m` → `drivers.wind` (saturates ~50 km/h) | 16 ribbon trails advect along the flow (met FROM → world TO; base heading world -Z, not true north); speed/amplitude ← wind; rain tilt shares the vector |
-| Cloud | `cloud_cover` % → `drivers.cloud` | FogExp2 0.006→0.028, 3 translucent ceiling plates opacity ← cover (capped 0.3), directional light 1.0→0.35 |
-| Temperature | `temperature_2m` → `drivers.warmth` (-15 °C→0, +35 °C→1) | 500 motes: continuously blended warm/cool tint, rising/falling according to temperature; warm PointLight |
-| Pressure | `surface_pressure` hPa → `drivers.pressure` (985→0, 1040→1) | 400-point dust: high pressure low/dense/slow near floor; low pressure expanded with upward swirl |
+| Rain | `precipitation` mm/h → `drivers.rain` | Instanced soft-edged streak quads tilt with wind; short-lived splash rings use the sampled real-surface height grid. Rain accumulates into 14 shader-driven floor puddles with ripple/sheens. |
+| Snow | `snowfall` cm/h → `drivers.snow` | Capability-scaled instanced flakes drift under wind and recycle on detected upward-facing surfaces. |
+| Wind | `wind_speed_10m`, `wind_direction_10m`, `wind_gusts_10m` | 16 advected ribbons show mean flow; gust excess intensifies flow and rain tilt. The shared vector maps meteorological “from” to world “to”; it is not north-aligned. |
+| Clouds / visibility | `cloud_cover`, `weather_code`, `relative_humidity_2m`, `visibility` | FogExp2 combines cloud, humidity and low-visibility/fog codes; three animated four-octave cloud impostors drift near the mapped room ceiling. Passthrough remains visible. |
+| Thermal / daylight | `temperature_2m`, `apparent_temperature`, `is_day` | 500 motes and a warm/cool point light use apparent temperature when available; a softened day/night palette dims the directional and ambient lights. |
+| Pressure | `surface_pressure` hPa | 400 soft instanced dust sprites compress toward the floor at high pressure and expand with gentle upward swirl at low pressure. |
+| Forecast context | `weather_code`, `precipitation_probability` | WMO condition label and precipitation probability are shown on the panel; thunder codes add capped, spaced lightning-like light pulses. |
 
-## Timeline usage
+The 0.9 m rail sits below the panel, with 6-hour ticks, an emphasized NOW
+tick and colored endpoints. The glowing knob supports hand/controller
+proximity grab and ray/distance grab. It maps rail X to −24…+24 h; release
+within ±0.75 h snaps to NOW. The panel provides −6h/+6h, NOW and Reload
+buttons for mouse/touch users who cannot grab the spatial control.
 
-The 0.9 m rail sits below the compact weather panel, with ticks every 6 h,
-an emphasized NOW tick, and colored endpoints. Move close and squeeze/grab
-the glowing knob with a controller or hand; rail X maps to -24…+24 h.
-Release near center (±0.75 h) to snap back to NOW. The panel shows the
-selected time and values, with NOW and Reload buttons.
+## Spatial-surface limits
+
+Room sensing builds a 25 cm height grid from tracked XR planes/meshes. Rain
+and snow particles can react to the highest upward-facing hit in a cell;
+the grid is an approximation, not a rigid-body physics world or a complete
+collider for every room surface. Puddles query near the lowest mapped room
+height and appear only where an upward-facing floor cell was sampled.
+Ceiling clouds use mapped bounds, not ceiling collision. If room geometry
+is unavailable, the scene keeps its fallback volume; real-surface contact
+is not claimed.
 
 ## Capability degradation
 
 | Target | Surfaces | Hit-test | Particles | Notes |
 |---|---|---|---|---|
-| Quest 3 (MR, primary) | planes + meshes | yes | full (2400 rain) | surface-coupled splashes, full wind/atmosphere/thermal |
-| Android WebXR (secondary) | planes, usually no meshes | yes | reduced (1200 rain) | floor-y splash fallback; atmosphere/wind/thermal kept |
-| IWER desktop (dev) | none | no | full | XR grab input requires IWER controller/hand emulation |
+| Quest 3 (MR, primary) | planes + meshes when granted | yes | full (2400 rain / 900 snow) | sampled surface reactions; hardware sensing/performance still needs Quest validation |
+| Android WebXR (secondary) | planes, often no meshes | capability-dependent | reduced (1200 rain / 400 snow) | no Quest-style room mesh assumed; browser touch buttons remain available |
+| IWER desktop (dev) | none | no real surfaces | full | mouse buttons work in non-immersive mode; XR ray requires emulated input |
 
-Detection is from the XR session's granted features (`enabledFeatures`),
-never user-agent sniffing. No mesh detection → `particleBudget: 'reduced'`.
-The timeline handle is proximity-grabbable; mouse/ray scrubbing is not implemented.
+Detection is from the XR session's granted features, never user-agent sniffing.
+Without mesh detection, the scene uses a reduced particle budget.
 
-## Verified in IWER
+## Verified in this workstation session
 
-- `npm run typecheck` and `npm run build` pass after the review fixes. Build
-  emits only the Vite chunk-size warning. App-only flat and XR screenshots
-  were captured during verification.
-- Geolocation denial used the labeled `Moscow (fallback)` location; Open-Meteo
-  returned live hourly weather in XR (UTC timestamps), with the timeline rail,
-  NOW tick, end caps, and knob rendered.
-- Grabbed the timeline knob with both controller squeeze and hand pinch
-  (`Grabbed` query qualified in ECS each time); a lost grab released cleanly
-  and snapped the playhead back to NOW. Earlier verification moved the knob
-  to `+16h` and observed values change from the cached series; the
-  scrub-to-values loop was not re-exercised after the review fixes because
-  the managed browser bridge dropped repeatedly under XR that day.
-- Data-layer fixes verified by a throwaway script: UTC parsing, per-field
-  unavailability (`--`, neutral drivers, no fabricated values), wind
-  shortest-arc interpolation across 350°→10°, `· beyond data` past the
-  series edge, `stale` after the 15-minute TTL, and per-minute `current()`
-  sample caching. The script was removed afterwards.
-- Forced the synthetic demo dataset through a temporary verification hook
-  (earlier session); at `4.1 mm/h`, rain streaks appeared, and at `0.0 mm/h`
-  they disappeared. The hook and throwaway scripts were removed.
-- Browser console had no errors after clean managed-runtime restarts; only
-  the benign UIKitML `row` stylesheet warning appears.
+`npm run typecheck` and root `npm run build` passed. The build assembled
+4 experiences into `_site/`; Vite warned about Zod annotations and bundle size.
 
-Quest 3 scene sensing, real-surface splashes, passthrough comfort, hand tracking and standalone performance remain unverified on hardware. Android WebXR feature availability and hit-test degradation also require a physical Android browser/device test; IWER does not prove either.
+- Managed IWSDK runtime entered IWER `immersive-ar`; `xr status` reported
+  emulated hand tracking, hit-test, plane detection, and mesh detection.
+- The timeline entity queried with `TimelineHandle` had `RayInteractable`,
+  `OneHandGrabbable`, and `DistanceGrabbable`. An emulated controller trigger
+  produced a live `Grabbed` component; the trigger was released.
+- UIKitML asset registration and the `-6h` button layout were inspected.
+  A controller-ray click did not change the playhead; the panel is
+  `ScreenSpace`. The project now enables canvas-pointer forwarding during XR
+  (`activeDuringXR: true`) so touch/mouse pointer events can reach screen-space
+  controls. Physical Android touch remains unverified.
+- `ui render-preview` produced an 800x600 panel preview. The managed runtime
+  screenshot command timed out twice; no runtime screenshot is claimed.
+- A direct Open-Meteo request verified the request window spans more than
+  24 hours before and after NOW. The implemented hourly query requests
+  temperature/apparent temperature, precipitation/probability, snowfall,
+  WMO code, humidity/daylight, wind/direction/gusts, clouds, pressure and
+  visibility.
+- Surface reactions use a 25 cm sampled height grid, not rigid-body room
+  colliders. This IWER run did not have real room geometry; real floor
+  puddle placement and Quest/Android surface sensing remain hardware checks.
+
+Physical Quest 3 passthrough, Android browser behavior/permissions, surface
+coverage, comfort, and standalone performance remain unverified. IWER does not
+prove those device-specific behaviors.

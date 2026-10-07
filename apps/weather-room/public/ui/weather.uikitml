@@ -63,10 +63,14 @@
     margin-top: 5px;
     text-align: center;
   }
-  .button {
-    justify-content: flex-start;
-    margin-left: 24px;
-    margin-right: 24px;
+  .controls-row {
+    flex-direction: row;
+    justify-content: center;
+  }
+  .control-button {
+    width: 78px;
+    margin-left: 3px;
+    margin-right: 3px;
     margin-top: 10px;
     margin-bottom: 8px;
   }
@@ -84,11 +88,17 @@
     <div id="values-line" class="values">--</div>
     <div class="timeline-hint">-24h  &lt; DRAG &gt;  +24h</div>
   </div>
-  <div class="row">
-    <Button id="now-button" class="button">
+  <div class="controls-row">
+    <Button id="back-button" class="control-button">
+      <ButtonLabel class="button-label">-6h</ButtonLabel>
+    </Button>
+    <Button id="now-button" class="control-button">
       <ButtonLabel class="button-label">NOW</ButtonLabel>
     </Button>
-    <Button id="reload-button" class="button">
+    <Button id="forward-button" class="control-button">
+      <ButtonLabel class="button-label">+6h</ButtonLabel>
+    </Button>
+    <Button id="reload-button" class="control-button">
       <ButtonLabel class="button-label">Reload</ButtonLabel>
     </Button>
   </div>

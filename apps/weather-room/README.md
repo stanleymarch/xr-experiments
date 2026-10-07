@@ -46,11 +46,16 @@ npm run build    # production bundle
 | Pressure | `surface_pressure` hPa | 400 soft instanced dust sprites compress toward the floor at high pressure and expand with gentle upward swirl at low pressure. |
 | Forecast context | `weather_code`, `precipitation_probability` | WMO condition label and precipitation probability are shown on the panel; thunder codes add capped, spaced lightning-like light pulses. |
 
+This intentionally requests the main hourly scene variables, not every
+Open-Meteo variable. UV/radiation, snow depth, daily sunrise/sunset, soil
+conditions, and vertical pressure-level fields are not currently fetched or
+visualized.
+
 The 0.9 m rail sits below the panel, with 6-hour ticks, an emphasized NOW
 tick and colored endpoints. The glowing knob supports hand/controller
 proximity grab and ray/distance grab. It maps rail X to −24…+24 h; release
-within ±0.75 h snaps to NOW. The panel provides −6h/+6h, NOW and Reload
-buttons for mouse/touch users who cannot grab the spatial control.
+within ±0.75 h snaps to NOW. The panel has −6h/+6h, NOW and Reload buttons as
+mouse/touch fallbacks; physical-device clicks remain unverified.
 
 ## Spatial-surface limits
 
@@ -68,8 +73,8 @@ is not claimed.
 | Target | Surfaces | Hit-test | Particles | Notes |
 |---|---|---|---|---|
 | Quest 3 (MR, primary) | planes + meshes when granted | yes | full (2400 rain / 900 snow) | sampled surface reactions; hardware sensing/performance still needs Quest validation |
-| Android WebXR (secondary) | planes, often no meshes | capability-dependent | reduced (1200 rain / 400 snow) | no Quest-style room mesh assumed; browser touch buttons remain available |
-| IWER desktop (dev) | none | no real surfaces | full | mouse buttons work in non-immersive mode; XR ray requires emulated input |
+| Android WebXR (secondary) | planes, often no meshes | capability-dependent | reduced (1200 rain / 400 snow) | no Quest-style room mesh assumed; touch forwarding is configured, but device behavior is unverified |
+| IWER desktop (dev) | none | no real surfaces | full | distance grab was exercised; mouse-button interaction was not verified in this session |
 
 Detection is from the XR session's granted features, never user-agent sniffing.
 Without mesh detection, the scene uses a reduced particle budget.

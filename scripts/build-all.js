@@ -5,6 +5,7 @@
 const path = require('path')
 const fs = require('fs')
 const {spawnSync} = require('child_process')
+const webpack = require('webpack')
 
 const root = path.join(__dirname, '..')
 const wallDir = path.join(root, '8thwall')

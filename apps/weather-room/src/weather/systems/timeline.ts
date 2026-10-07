@@ -1,132 +1,180 @@
 /**
- * Spatial timeline: a 0.9 m rail with 6-hour ticks and a grabbable handle.
+ * Spatial timeline: clones the reusable `timeline-control` manifest asset
+ * (0.96 m exhibition instrument, knob travel ±0.45 m) and drives it.
  * While grabbed, handle X in [-0.45, 0.45] maps to playhead hours [-24, 24].
- * Releasing within +/-0.75 h of 0 snaps back to live. The rail floats at a
- * fixed pose until room surfaces appear, then re-anchors to the floor.
+ * Releasing within +/-0.75 h of 0 snaps back to live. On XR entry the control
+ * is placed in front of the tracked viewer once (0.8 m out, 0.4 m below the
+ * eyes, face tilted up) then stays fixed in the room.
+ *
+ * Hover/grab feedback animates the cloned glow-ring/crown emissive and the
+ * NOW→playhead light-guide fill on materials cloned once at setup — no
+ * per-frame allocations, shared prototype materials untouched.
  */
 
 import {
-  BoxGeometry,
   createSystem,
-  CylinderGeometry,
+  DistanceGrabbable,
   Grabbed,
   Hovered,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
-  DistanceGrabbable,
-  RayInteractable,
   OneHandGrabbable,
+  RayInteractable,
   Vector3,
+  VisibilityState,
 } from '@iwsdk/core';
-import type { Entity } from '@iwsdk/core';
+import type { Entity, Object3D } from '@iwsdk/core';
+import {
+  TIMELINE_CONTROL_ASSET_ID,
+  TIMELINE_KNOB_PART,
+  TIMELINE_KNOB_REST_Z,
+  TIMELINE_TRAVEL_HALF,
+} from '../../scene-assets/timeline-control.scene-asset.js';
 import { TimelineHandle } from '../components/timeline-handle.js';
-import { roomModel } from '../room.js';
+import { placeControlAtViewer } from '../control-placement.js';
 import { PLAYHEAD_MAX_H, PLAYHEAD_MIN_H, weatherStore } from '../weather-state.js';
 
-const RAIL_HALF = 0.45;
+const RAIL_HALF = TIMELINE_TRAVEL_HALF;
 const SNAP_HOURS = 0.75;
 const DEFAULT_POS = new Vector3(0, 1.05, -1.0);
+/** Comfortable reach: inside arm's length, below eye line, face tipped up. */
+const PLACEMENT_DISTANCE = 0.8;
+const PLACEMENT_HEIGHT_OFFSET = -0.4;
+const FACE_TILT_X = -0.28;
 
 export class TimelineSystem extends createSystem({
   hovered: { required: [TimelineHandle, Hovered] },
   grabbed: { required: [TimelineHandle, Grabbed] },
   handles: { required: [TimelineHandle] },
 }) {
-  private railEntity!: Entity;
-  private handleEntity!: Entity;
+  private railEntity: Entity | null = null;
+  private handleEntity: Entity | null = null;
   private grabbedHandle: Entity | null = null;
-  private anchored = false;
-  private readonly railPos = new Vector3();
+  private needsPlacement = false;
+  private placedInSession = false;
   private readonly handleWorld = new Vector3();
-  private readonly railWorld = new Vector3();
-  private handleMaterial!: MeshStandardMaterial;
+  private glowMaterial: MeshStandardMaterial | null = null;
+  private crownMaterial: MeshStandardMaterial | null = null;
+  private fillMaterial: MeshBasicMaterial | null = null;
+  private fillMesh: Object3D | null = null;
 
   init(): void {
-    // Rail: slim rounded feel via a box + tick marks every 6 h (9 ticks).
-    const railGeo = new BoxGeometry(0.9, 0.03, 0.06);
-    const railMat = new MeshStandardMaterial({ color: 0x2e3a4d, roughness: 0.5, metalness: 0.3 });
-    const rail = new Mesh(railGeo, railMat);
-    this.railEntity = this.world.createTransformEntity(rail);
-    this.railEntity.object3D?.position.copy(DEFAULT_POS);
-    this.railPos.copy(DEFAULT_POS);
-
-    const tickGeo = new BoxGeometry(0.008, 0.05, 0.02);
-    const tickMat = new MeshBasicMaterial({ color: 0x9fb4cc });
-    const nowTickGeo = new BoxGeometry(0.018, 0.12, 0.03);
-    const nowTickMat = new MeshBasicMaterial({ color: 0x58d9ff });
-    const endTickGeo = new BoxGeometry(0.014, 0.075, 0.025);
-    const endTickMat = new MeshBasicMaterial({ color: 0xf2a56e });
-    for (let h = PLAYHEAD_MIN_H; h <= PLAYHEAD_MAX_H; h += 6) {
-      const t = (h - PLAYHEAD_MIN_H) / (PLAYHEAD_MAX_H - PLAYHEAD_MIN_H);
-      const isNow = h === 0;
-      const isEnd = Math.abs(h) === PLAYHEAD_MAX_H;
-      const tick = new Mesh(
-        isNow ? nowTickGeo : isEnd ? endTickGeo : tickGeo,
-        isNow ? nowTickMat : isEnd ? endTickMat : tickMat,
-      );
-      tick.position.set(-RAIL_HALF + t * RAIL_HALF * 2, isNow ? 0.04 : 0.01, 0);
-      this.railEntity.object3D?.add(tick);
-    }
-
-    // Handle: small grabbable knob riding the rail.
-    // Larger luminous marker makes the grab target distinct from the tick marks.
-    const knobGeo = new CylinderGeometry(0.0525, 0.0525, 0.105, 20);
-    this.handleMaterial = new MeshStandardMaterial({
-      color: 0x4dc3ff,
-      roughness: 0.35,
-      emissive: 0x0a2a3a,
-      emissiveIntensity: 0.65,
-    });
-    const knob = new Mesh(knobGeo, this.handleMaterial);
-    knob.rotation.z = Math.PI / 2;
-    this.handleEntity = this.world.createTransformEntity(knob, { parent: this.railEntity });
-    this.handleEntity.addComponent(TimelineHandle, {});
-    this.handleEntity.addComponent(RayInteractable, {});
-    this.handleEntity.addComponent(DistanceGrabbable, { rotate: false });
-    this.handleEntity.addComponent(OneHandGrabbable, { rotate: false });
-    this.handleEntity.object3D?.position.set(0, 0.06, 0);
     this.cleanupFuncs.push(
+      this.world.visibilityState.subscribe((state) => {
+        if (state === VisibilityState.NonImmersive) this.placedInSession = false;
+        this.needsPlacement = state === VisibilityState.Visible && !this.placedInSession;
+      }),
       this.queries.grabbed.subscribe('qualify', (entity) => {
         this.grabbedHandle = entity;
       }),
       this.queries.grabbed.subscribe('disqualify', () => {
         this.grabbedHandle = null;
       }),
-      () => {
-        this.handleEntity.dispose();
-        this.railEntity.dispose();
-      },
     );
+    // elics `System.init()` is synchronous and never awaited (no official
+    // async-init API), so report clone/registration failures loudly instead
+    // of leaving an unhandled rejection.
+    this.setupControl().catch((error: unknown) => {
+      console.error('[TimelineSystem] failed to instantiate timeline-control asset:', error);
+    });
+  }
+
+  /** Clone the registered prototype, restyle state materials once, wire ECS. */
+  private async setupControl(): Promise<void> {
+    const model = await this.world.assets.instantiate<Object3D>(TIMELINE_CONTROL_ASSET_ID);
+    model.name = 'Weather Timeline';
+    model.position.copy(DEFAULT_POS);
+    model.rotation.x = FACE_TILT_X;
+    this.railEntity = this.world.createTransformEntity(model);
+
+    // One-time material clones for per-instance state feedback (the manifest
+    // contract: reassigning mesh.material on a clone restyles one instance).
+    model.traverse((child) => {
+      if (!(child instanceof Mesh)) return;
+      if (child.name === 'KnobGlowRing' && child.material instanceof MeshStandardMaterial) {
+        const cloned = child.material.clone();
+        child.material = cloned;
+        this.glowMaterial = cloned;
+      } else if (child.name === 'KnobCrown' && child.material instanceof MeshStandardMaterial) {
+        const cloned = child.material.clone();
+        child.material = cloned;
+        this.crownMaterial = cloned;
+      } else if (child.name === 'LightGuideFill' && child.material instanceof MeshBasicMaterial) {
+        const cloned = child.material.clone();
+        child.material = cloned;
+        this.fillMaterial = cloned;
+        this.fillMesh = child;
+      }
+    });
+
+    const knob = model.getObjectByName(TIMELINE_KNOB_PART);
+    if (knob == null) {
+      throw new Error(`timeline-control asset is missing its ${TIMELINE_KNOB_PART} part`);
+    }
+    knob.name = 'Weather Timeline Handle';
+    knob.position.set(0, 0, TIMELINE_KNOB_REST_Z);
+    this.handleEntity = this.world.createTransformEntity(knob, { parent: this.railEntity });
+    this.handleEntity.addComponent(TimelineHandle, {});
+    this.handleEntity.addComponent(RayInteractable, {});
+    this.handleEntity.addComponent(DistanceGrabbable, { rotate: false });
+    this.handleEntity.addComponent(OneHandGrabbable, { rotate: false });
+
+    this.cleanupFuncs.push(() => {
+      this.handleEntity?.dispose();
+      this.railEntity?.dispose();
+    });
   }
 
   update(): void {
-    // Re-anchor once: sit the rail on the detected floor/table height.
-    if (!this.anchored && roomModel.hasSurfaces) {
-      this.anchored = true;
-      this.railPos.set(0, roomModel.min.y + 1.05, -1.0);
-      this.railEntity.object3D?.position.copy(this.railPos);
+    if (this.railEntity == null || this.handleEntity == null) return;
+
+    if (this.needsPlacement && this.railEntity.object3D != null) {
+      placeControlAtViewer(this.railEntity.object3D, this.world, PLACEMENT_DISTANCE, PLACEMENT_HEIGHT_OFFSET);
+      this.railEntity.object3D.rotateX(FACE_TILT_X);
+      this.needsPlacement = false;
+      this.placedInSession = true;
     }
 
     const state = weatherStore.state.peek();
     const handle = this.grabbedHandle;
-    const hovered = this.queries.hovered.entities.size > 0 || this.grabbedHandle != null;
-    this.handleMaterial.emissiveIntensity = hovered
-      ? 1.1 + Math.sin(performance.now() * 0.008) * 0.25
-      : 0.65;
-    if (handle != null) {
+    const grabbed = handle != null;
+    const hovered = this.queries.hovered.entities.size > 0 || grabbed;
+
+    // State feedback on the pre-cloned materials only.
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.008);
+    if (this.glowMaterial != null) {
+      this.glowMaterial.emissiveIntensity = grabbed ? 2.2 + pulse * 0.6 : hovered ? 1.6 : 0.9;
+    }
+    if (this.crownMaterial != null) {
+      this.crownMaterial.emissiveIntensity = grabbed ? 0.5 : hovered ? 0.22 : 0.06;
+    }
+    if (this.fillMaterial != null) {
+      this.fillMaterial.opacity = grabbed ? 0.95 : hovered ? 0.8 : 0.55;
+    }
+
+    let knobX: number;
+    if (grabbed) {
       // While held: map handle world X (rail-local) to playhead hours.
       handle.object3D?.getWorldPosition(this.handleWorld);
-      this.railEntity.object3D?.getWorldPosition(this.railWorld);
-      const localX = Math.max(-RAIL_HALF, Math.min(RAIL_HALF, this.handleWorld.x - this.railWorld.x));
+      this.railEntity.object3D?.worldToLocal(this.handleWorld);
+      const localX = Math.max(-RAIL_HALF, Math.min(RAIL_HALF, this.handleWorld.x));
       const t = (localX + RAIL_HALF) / (RAIL_HALF * 2);
       const hours = PLAYHEAD_MIN_H + t * (PLAYHEAD_MAX_H - PLAYHEAD_MIN_H);
       if (Math.abs(hours) <= SNAP_HOURS) weatherStore.goLive();
       else weatherStore.setPlayhead(hours);
+      knobX = localX;
     } else {
       // Released: keep the knob where the playhead says it is.
       const t = (state.playheadHours - PLAYHEAD_MIN_H) / (PLAYHEAD_MAX_H - PLAYHEAD_MIN_H);
-      this.handleEntity.object3D?.position.set(-RAIL_HALF + t * RAIL_HALF * 2, 0.06, 0);
+      knobX = -RAIL_HALF + t * RAIL_HALF * 2;
+      this.handleEntity.object3D?.position.set(knobX, 0, TIMELINE_KNOB_REST_Z);
+    }
+
+    // Luminous NOW→playhead segment follows the knob (transform only).
+    if (this.fillMesh != null) {
+      const clamped = Math.max(-RAIL_HALF, Math.min(RAIL_HALF, knobX));
+      this.fillMesh.scale.x = Math.abs(clamped) < 0.0001 ? 0.0001 : clamped;
     }
   }
 }

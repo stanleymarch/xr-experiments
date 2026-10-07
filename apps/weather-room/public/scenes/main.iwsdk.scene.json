@@ -2,6 +2,12 @@
   "version": "iwsdk.scene.v1",
   "units": "meters",
   "components": {
+    "com.iwsdk.components.DomeGradient": {
+      "sky": [0.025, 0.05, 0.085, 1],
+      "equator": [0.13, 0.2, 0.27, 1],
+      "ground": [0.035, 0.06, 0.075, 1],
+      "intensity": 1
+    },
     "com.iwsdk.components.IBLGradient": {
       "sky": [0.62, 0.7, 0.78, 1],
       "equator": [0.6, 0.66, 0.74, 1],
@@ -10,6 +16,16 @@
     }
   },
   "resources": {},
+  "authoring": {
+    "views": [{
+      "id": "weather-room-browser",
+      "role": "hero",
+      "projection": "perspective",
+      "position": [2.8, 2.2, 3.5],
+      "target": [0, 1.2, -0.3],
+      "fov": 48
+    }]
+  },
   "nodes": [
     {
       "id": "weather-panel",
@@ -19,17 +35,11 @@
         "asset": "weather-panel"
       },
       "transform": {
-        "position": [-0.85, 1.82, -1.2],
+        "position": [0, 1.85, -1.5],
         "scale": 0.25
       },
       "components": {
-        "RayInteractable": {},
-        "ScreenSpace": {
-          "top": "12px",
-          "left": "2vw",
-          "width": "min(96vw, 420px)",
-          "height": "min(60vh, 420px)"
-        }
+        "RayInteractable": {}
       }
     }
   ]

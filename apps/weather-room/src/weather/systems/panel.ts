@@ -1,7 +1,9 @@
 /**
- * Panel wiring for the WEATHER//ROOM HUD: status, location, playhead, live
- * values, NOW/Reload actions, and the template Enter/Exit XR behavior.
- * Text pushes are throttled to 2 Hz and only fire on actual changes.
+ * Panel wiring for the WEATHER//ROOM spatial control: concise data hierarchy
+ * (playhead hero, location, key values, honest source status), NOW/Reload
+ * actions, and the template Enter/Exit XR behavior. Text pushes are throttled
+ * to 2 Hz and only fire on actual changes. Placement stays once-per-session
+ * via placeControlAtViewer; visibility handling is unchanged.
  */
 
 import { createSystem, UIKitMLAsset, VisibilityState } from '@iwsdk/core';
@@ -9,6 +11,7 @@ import type { Component as UIKitComponent } from '@pmndrs/uikit';
 import { weatherStore } from '../weather-state.js';
 import { playheadTime } from '../weather-state.js';
 import { reloadWeather } from './weather-loader.js';
+import { placeControlAtViewer } from '../control-placement.js';
 
 /** Minimum seconds between panel text pushes (2 Hz ceiling). */
 const PANEL_PUSH_INTERVAL_S = 0.5;
@@ -38,7 +41,7 @@ function valueOrDash(value: number, format: (n: number) => string, unit: string)
 
 /** A UIKitML text-line container: child text inherits the parent `text` prop. */
 interface TextLine {
-  setProperties(props: { text: string }): void;
+  setProperties(props: Record<string, unknown>): void;
 }
 
 function asTextLine(el: UIKitComponent | null): TextLine | null {
@@ -54,23 +57,41 @@ export class PanelSystem extends createSystem({}) {
   private locationEl: TextLine | null = null;
   private playheadEl: TextLine | null = null;
   private valuesEl: TextLine | null = null;
+  private modeEl: TextLine | null = null;
+  private revisionEl: TextLine | null = null;
   private lastPushAt = -PANEL_PUSH_INTERVAL_S;
   private lastText = '';
+  private needsPlacement = false;
+  private placedInSession = false;
 
   init(): void {
     const panel = this.world.getSceneObject<UIKitMLAsset>('weather-panel');
-    const xrButton = panel?.getElementById('xr-button');
-    const exitButton = panel?.getElementById('exit-button');
+    const xrButton = panel?.requireElementById('xr-button');
+    const exitButton = panel?.requireElementById('exit-button');
     if (panel == null) return;
+    const panelRoot = panel.requireElementById('weather-root');
+    this.cleanupFuncs.push(this.world.visibilityState.subscribe((state) => {
+      panel.visible = state !== VisibilityState.NonImmersive;
+      panelRoot.setProperties({ display: panel.visible ? 'flex' : 'none' });
+      if (state === VisibilityState.NonImmersive) this.placedInSession = false;
+      this.needsPlacement = state === VisibilityState.Visible && !this.placedInSession;
+    }));
     this.statusEl = asTextLine(panel.getElementById('status-line'));
     this.locationEl = asTextLine(panel.getElementById('location-line'));
     this.playheadEl = asTextLine(panel.getElementById('playhead-line'));
     this.valuesEl = asTextLine(panel.getElementById('values-line'));
+    this.modeEl = asTextLine(panel.getElementById('mode-badge'));
+    this.revisionEl = asTextLine(panel.getElementById('revision-label'));
+    this.revisionEl?.setProperties({ text: `rev ${__WEATHER_ROOM_REVISION__}` });
 
-    const backButton = panel.getElementById('back-button');
-    const forwardButton = panel.getElementById('forward-button');
-    const nowButton = panel.getElementById('now-button');
-    const reloadButton = panel.getElementById('reload-button');
+    const backButton = panel.requireElementById('back-button');
+    const forwardButton = panel.requireElementById('forward-button');
+    const nowButton = panel.requireElementById('now-button');
+    const reloadButton = panel.requireElementById('reload-button');
+    backButton.name = 'weather-step-back';
+    forwardButton.name = 'weather-step-forward';
+    nowButton.name = 'weather-go-live';
+    reloadButton.name = 'weather-reload';
     const stepBack = () => weatherStore.setPlayhead(weatherStore.state.peek().playheadHours - 6);
     const stepForward = () => weatherStore.setPlayhead(weatherStore.state.peek().playheadHours + 6);
     const goLive = () => weatherStore.goLive();
@@ -110,6 +131,12 @@ export class PanelSystem extends createSystem({}) {
   }
 
   update(_delta: number, time: number): void {
+    if (this.needsPlacement) {
+      const panel = this.world.getSceneObject<UIKitMLAsset>('weather-panel');
+      if (panel != null) placeControlAtViewer(panel, this.world, 1.5, 0.3);
+      this.needsPlacement = false;
+      this.placedInSession = true;
+    }
     if (this.statusEl == null || this.valuesEl == null || this.playheadEl == null) return;
     if (time - this.lastPushAt < PANEL_PUSH_INTERVAL_S) return;
     const state = weatherStore.state.peek();
@@ -126,16 +153,20 @@ export class PanelSystem extends createSystem({}) {
     const { dataset, playheadHours, isLive, status } = state;
     const { frame } = current;
     const staleSuffix = frame.stale ? ' | cached' : '';
+    // A retained synthetic dataset stays DEMO even while a reload is loading.
+    const demoDataset = dataset?.source === 'demo';
     const statusText =
       status.kind === 'demo'
         ? `DEMO: ${status.reason}`
-        : status.kind === 'ready'
-          ? `Live from Open-Meteo${staleSuffix}`
-          : status.kind === 'loading'
-            ? `Loading: ${status.label}`
-            : status.kind === 'locating'
-              ? 'Locating...'
-              : 'Ready';
+        : demoDataset
+          ? `DEMO synthetic data${staleSuffix}`
+          : status.kind === 'ready'
+            ? `Live from Open-Meteo${staleSuffix}`
+            : status.kind === 'loading'
+              ? `Loading: ${status.label}`
+              : status.kind === 'locating'
+                ? 'Locating...'
+                : 'Ready';
     const locationText =
       dataset?.label ?? (status.kind === 'loading' ? 'Requesting device location...' : '--');
     const at = playheadTime(dataset!, playheadHours, new Date());
@@ -149,23 +180,26 @@ export class PanelSystem extends createSystem({}) {
         ? ` ${compassFrom(frame.windDirectionDeg)}`
         : '';
     const weatherCode = frame.available.weatherCode ? weatherCodeName(frame.weatherCode) : '--';
+    // Concise hero hierarchy: hero temp + condition, then one compact row each
+    // for precip/wind/sky. Full detail stays in the browser panel.
     const valuesText =
-      `${valueOrDash(frame.temperatureC, (n) => n.toFixed(1), 'C')} | ` +
-      `feels ${valueOrDash(frame.apparentTemperatureC, (n) => n.toFixed(1), 'C')} | ${weatherCode} | ` +
+      `${valueOrDash(frame.temperatureC, (n) => n.toFixed(1), 'C')} ` +
+      `(${valueOrDash(frame.apparentTemperatureC, (n) => n.toFixed(1), 'C')} feels) | ${weatherCode}\n` +
       `rain ${valueOrDash(frame.precipitationMm, (n) => n.toFixed(1), 'mm/h')} ` +
-      `(${valueOrDash(frame.precipitationProbabilityPct, (n) => String(Math.round(n)), '%')} chance) | ` +
-      `snow ${valueOrDash(frame.snowfallCm, (n) => n.toFixed(1), 'cm/h')}\n` +
-      `wind ${valueOrDash(frame.windSpeedKmh, (n) => String(Math.round(n)), `km/h${compass}`)} ` +
-      `(gust ${valueOrDash(frame.windGustsKmh, (n) => String(Math.round(n)), 'km/h')}) | ` +
+      `(${valueOrDash(frame.precipitationProbabilityPct, (n) => String(Math.round(n)), '%')}) | ` +
+      `wind ${valueOrDash(frame.windSpeedKmh, (n) => String(Math.round(n)), `km/h${compass}`)}\n` +
       `cloud ${valueOrDash(frame.cloudCoverPct, (n) => String(Math.round(n)), '%')} | ` +
-      `RH ${valueOrDash(frame.humidityPct, (n) => String(Math.round(n)), '%')}\n` +
-      `visibility ${valueOrDash(frame.visibilityM, (n) => (n / 1000).toFixed(1), 'km')} | ` +
-      `pressure ${valueOrDash(frame.pressureHpa, (n) => String(Math.round(n)), 'hPa')} | ` +
+      `RH ${valueOrDash(frame.humidityPct, (n) => String(Math.round(n)), '%')} | ` +
       `${frame.available.isDay ? (frame.isDay === 1 ? 'daylight' : 'night') : 'light --'}`;
-    const combined = `${statusText}|${locationText}|${deltaLabel}|${valuesText}`;
+    const modeText = demoDataset || status.kind === 'demo' ? 'DEMO' : 'LIVE';
+    const combined = `${statusText}|${locationText}|${deltaLabel}|${valuesText}|${modeText}`;
     if (combined === this.lastText) return;
     this.lastText = combined;
     this.lastPushAt = time;
+    this.modeEl?.setProperties({
+      text: modeText,
+      backgroundColor: demoDataset || status.kind === 'demo' ? '#f2b63d' : '#79d7f2',
+    });
     this.statusEl.setProperties({ text: statusText });
     this.locationEl?.setProperties({ text: locationText });
     this.playheadEl.setProperties({ text: deltaLabel });

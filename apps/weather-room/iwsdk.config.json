@@ -30,17 +30,14 @@
       "near": 0.001,
       "far": 200,
       "camera": {
-        "position": [
-          0,
-          1,
-          0.5
-        ]
+        "position": [2.8, 2.2, 3.5],
+        "lookAt": [0, 1.2, -0.3]
       }
     },
     "features": {
       "locomotion": false,
-      "grabbing": true,
-      "physics": true,
+      "grabbing": { "useHandPinchForGrab": true },
+      "physics": false,
       "sceneUnderstanding": true,
       "environmentRaycast": true,
       "spatialUI": {

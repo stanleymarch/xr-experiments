@@ -13,7 +13,65 @@
 
 GitHub Actions собирает полку 8th Wall в единый `_site/` и публикует каталог на GitHub Pages.
 
-Концепции опытов ниже (REALITY//FIELD, WEATHER//ROOM, CITY//ORBIT, SOUND//SPACE, ECHO//ROOM) сохранены как замыслы для greenfield-пересборки на IWSDK — см. MIGRATION.md. Живых реализаций этих концепций в репозитории сейчас нет.
+Концепции опытов ниже (REALITY//FIELD, CITY//ORBIT, SOUND//SPACE, ECHO//ROOM) сохранены как замыслы для greenfield-пересборки на IWSDK — см. MIGRATION.md. WEATHER//ROOM уже существует как нативное IWSDK-приложение в `apps/weather-room`, но нативное приёмка-тестирование на Quest 3 ещё идёт.
+
+## Permanent Meta skills, MCP and Quest debugging setup
+
+One-time (or after re-scaffolding the IWSDK app) from the repo root:
+
+```powershell
+npm run setup
+```
+
+This runs `scripts/setup-iwsdk-debug.ps1` (shared by `npm run setup` and the
+full `scripts/bootstrap-iwsdk-omp.ps1`, which keeps its old behavior of also
+refreshing the OMP model catalog and rewriting `.omp/config.yml` model roles
+for people who invoke bootstrap explicitly). Side effects of `npm run setup`,
+and nothing else:
+1. full official `iwsdk-*` skill sync from `apps/weather-room/.agents/skills`
+   (installed `@iwsdk/cli` 1.0.1 + `@iwsdk/create` output) into both
+   `.agents/skills/` and `.omp/skills/` — no OMP model/routing changes,
+   no model catalog refresh, no app/source rewrites;
+2. official CLI adapter-state inspection:
+   `node node_modules/@iwsdk/cli/dist/cli.js adapter status` with cwd
+   `apps/weather-room` (read-only probe, fails the script on nonzero exit);
+3. official Android platform-tools install/version check: downloads
+   `platform-tools-latest-windows.zip` from `dl.google.com` into the ignored
+   local cache `tools/` only when `tools/platform-tools/adb.exe` is absent,
+   then runs `adb --version` (fails the script on nonzero exit).
+
+Re-sync skills alone any time with `npm run skills:sync`.
+
+OMP loads the skills automatically: it walks up `.agents/skills` and resolves
+`.omp/agents/*.md` `autoloadSkills` against the same registry; no extra OMP
+skills config is needed. OMP loads the IWSDK MCP servers from `mcp.json` in the
+project root when OMP starts there (`mcp.enableProjectConfig` defaults to true;
+schema `https://agent-plugins.org/schemas/1.0.0/mcp.schema.json`):
+
+- `iwsdk-runtime` — `node apps/weather-room/node_modules/@iwsdk/cli/dist/cli.js mcp stdio`,
+  cwd `apps/weather-room` (the runtime bridge; must run with the workspace as cwd
+  so `findNearestIwsdkAppRoot` resolves the app);
+- `iwsdk-reference` — `node apps/weather-room/node_modules/@iwsdk/reference/dist/cli.js`;
+- `metavr` — `node apps/weather-room/node_modules/@meta-quest/metavr/bin.js mcp server`.
+All three entries use `cwd: ./apps/weather-room`.
+
+These are the exact stdio entries the official
+`node node_modules/@iwsdk/cli/dist/cli.js adapter sync` would write, adapted to
+the OMP-compatible shape. OMP stdio entries require `type` plus a bare binary or
+`./`-relative `command`; `node` is on PATH here, and entrypoint paths are
+passed as `apps/weather-room`-relative `args` with `cwd: ./apps/weather-room`.
+Do not invent a fake MCP wrapper: the CLI stdio command above is authoritative
+and sufficient.
+
+Quest debugging needs official `adb`, absent from PATH on this machine and now
+installed as an ignored local cache at `tools/platform-tools/adb.exe`
+(`npm run adb -- devices -l`). One authorized Quest 3 was observed there;
+re-query with `npm run adb -- devices -l` before any native session and pass
+`-s <serial>` to every ADB command. Native testing itself follows the official
+`iwsdk-native-xr-test` skill: `adb -s <serial> reverse`, `runtime pair-headset`
+with that serial as `headsetId`, exact `runtimeTarget` copied from
+`runtime targets` on every headset command, loopback only.
+
 
 ---
 

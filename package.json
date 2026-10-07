@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-iwsdk-debug.ps1",
+    "skills:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-iwsdk-skills.ps1",
+    "adb": "tools/platform-tools/adb.exe",
     "build": "node scripts/build-all.js",
     "serve:knockdown": "cd 8thwall/knockdown && webpack-dev-server --mode=development --config config/webpack.config.js --port 8091",
     "build:sea-battle": "cd 8thwall/sea-battle && webpack --config config/webpack.config.js",

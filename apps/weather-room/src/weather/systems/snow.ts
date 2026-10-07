@@ -35,19 +35,24 @@ void main() {
 }
 `;
 const FRAGMENT = /* glsl */ `
+uniform float uTime;
 varying float vAlpha;
 varying vec2 vUv;
 void main() {
+  // Fluffy flake: soft six-arm puff + gaussian core, slow glint so the
+  // field sparkles instead of reading as static sprites.
   vec2 p = (vUv - 0.5) * 2.0;
   float r = length(p);
   float a = atan(p.y, p.x);
-  float arms = abs(cos(a * 3.0));
-  float star = 0.26 + 0.24 * arms;
-  float body = 1.0 - smoothstep(star - 0.04, star + 0.08, r);
-  float core = 1.0 - smoothstep(0.04, 0.22, r);
-  float alpha = max(body * 0.65, core) * vAlpha;
+  float arms = 0.5 + 0.5 * cos(a * 6.0);
+  float body = 1.0 - smoothstep(0.12, 0.42 + 0.4 * arms, r);
+  float core = exp(-r * r * 14.0);
+  float alpha = max(body * 0.6, core) * vAlpha;
   if (alpha < 0.01) discard;
-  gl_FragColor = vec4(0.78, 0.9, 1.0, alpha * 0.85);
+  float glint = 0.85 + 0.3 * sin(uTime * 2.6 + vAlpha * 47.0);
+  gl_FragColor = vec4(vec3(0.82, 0.92, 1.0) * glint, alpha * 0.8);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }
 `;
 
@@ -76,6 +81,7 @@ export class SnowSystem extends createSystem({}) {
       new ShaderMaterial({
         vertexShader: VERTEX,
         fragmentShader: FRAGMENT,
+        uniforms: { uTime: { value: 0 } },
         transparent: true,
         depthWrite: false,
         side: DoubleSide,
@@ -110,6 +116,7 @@ export class SnowSystem extends createSystem({}) {
     const height = Math.max(0.5, max.y - min.y);
     windVectorFromFrame(current.frame, 0.12, this.wind);
     const time = performance.now() / 1000;
+    (this.flakes.material as ShaderMaterial).uniforms.uTime.value = time;
     this.world.camera.getWorldPosition(this.cameraPos);
     const yaw = Math.atan2(this.cameraPos.x - (min.x + max.x) * 0.5, this.cameraPos.z - (min.z + max.z) * 0.5);
 

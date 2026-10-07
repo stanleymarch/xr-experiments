@@ -514,7 +514,8 @@ Read and execute the complete task in docs/tasks/weather-room.md.
 Treat root AGENTS.md and MIGRATION.md as repository policy.
 You are the lead orchestrator: manage the repository migration, discover the current IWSDK CLI yourself, scaffold and implement WEATHER//ROOM, delegate bounded work/reviews, test in the managed runtime/IWER, fix failures, and continue until the acceptance criteria in the task brief are satisfied or a concrete external/hardware blocker remains.
 "@
-Set-Content -Path (Join-Path $promptsDir "weather-room.md") -Value $weatherPrompt -Encoding UTF8
+Say "Syncing official Meta IWSDK skills, adapter state and Quest debug tools"
+& (Join-Path $repo "scripts\setup-iwsdk-debug.ps1")
 
 Say "Leaving repository migration and IWSDK scaffolding to the OMP lead"
 Write-Host "Bootstrap will not delete XR Blocks, modify root build files, or scaffold apps/weather-room."
@@ -529,7 +530,10 @@ Write-Host "Bootstrap complete." -ForegroundColor Green
 Write-Host "Project OMP config: .omp/config.yml"
 Write-Host "Meta rules:         .omp/RULES.md"
 Write-Host "Agents:             .omp/agents/"
-Write-Host "IWSDK skills:       .omp/skills/ (OMP syncs these after scaffolding)"
+Write-Host "IWSDK skills:       .agents/skills/ + .omp/skills/ (synced from apps/weather-room/.agents/skills)"
+Write-Host "IWSDK MCP:          mcp.json (iwsdk-runtime, iwsdk-reference, metavr; loaded from project root when OMP starts there)"
+Write-Host "Android adb:        tools/platform-tools/adb.exe (official platform-tools; ignored local cache)"
+Write-Host "Official probe:     cd apps/weather-room; node node_modules/@iwsdk/cli/dist/cli.js adapter status"
 Write-Host "Weather task:       docs/tasks/weather-room.md"
 Write-Host "Launch prompt:      .omp/prompts/weather-room.md"
 Write-Host ""

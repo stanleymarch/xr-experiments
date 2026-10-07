@@ -5,6 +5,7 @@
  */
 
 import {
+  Color,
   createSystem,
   DynamicDrawUsage,
   CircleGeometry,
@@ -17,6 +18,9 @@ import type { Entity } from '@iwsdk/core';
 import { roomModel } from '../room.js';
 import { weatherStore } from '../weather-state.js';
 
+const SKY_DAY_CLEAR = new Color(0x86a2b8);
+const SKY_OVERCAST = new Color(0x8e969e);
+
 const PATCH_COUNT = 14;
 const VERTEX = /* glsl */ `
 attribute float aWetness;
@@ -28,22 +32,64 @@ void main() {
   gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
 }
 `;
+// MIT 2D simplex noise: https://github.com/stegu/webgl-noise.
+// Copyright (C) 2011 Ashima Arts; 2011-2016 Stefan Gustavson.
+// Full notice is shipped in public/licenses/webgl-noise.txt.
 const FRAGMENT = /* glsl */ `
 uniform float uTime;
 uniform float uRain;
+uniform vec3 uSky;
 varying float vWetness;
 varying vec2 vUv;
+vec3 permute(vec3 x) { return mod(((x * 34.0) + 1.0) * x, 289.0); }
+float snoise(vec2 v) {
+  const vec4 C = vec4(0.211324865405187, 0.366025403784439,
+                      -0.577350269189626, 0.024390243902439);
+  vec2 i = floor(v + dot(v, C.yy));
+  vec2 x0 = v - i + dot(i, C.xx);
+  vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+  vec4 x12 = x0.xyxy + C.xxzz;
+  x12.xy -= i1;
+  i = mod(i, 289.0);
+  vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0)) + i.x + vec3(0.0, i1.x, 1.0));
+  vec3 m = max(0.5 - vec3(dot(x0, x0), dot(x12.xy, x12.xy), dot(x12.zw, x12.zw)), 0.0);
+  m = m * m;
+  m = m * m;
+  vec3 x = 2.0 * fract(p * C.www) - 1.0;
+  vec3 h = abs(x) - 0.5;
+  vec3 ox = floor(x + 0.5);
+  vec3 a0 = x - ox;
+  m *= 1.79284291400159 - 0.85373472095314 * (a0 * a0 + h * h);
+  vec3 g;
+  g.x = a0.x * x0.x + h.x * x0.y;
+  g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+  return 130.0 * dot(m, g);
+}
 void main() {
   vec2 p = vUv - vec2(0.5);
-  float r = length(p);
-  float edgeNoise = sin(vUv.x * 19.0 + sin(vUv.y * 13.0)) * cos(vUv.y * 17.0) * 0.025;
-  float edge = 1.0 - smoothstep(0.43 + edgeNoise, 0.5 + edgeNoise, r);
-  float ripple = 0.5 + 0.5 * sin(r * 74.0 - uTime * (1.0 + uRain * 2.0) + sin(vUv.x * 11.0) * 1.2);
-  float sheen = pow(max(0.0, sin(vUv.x * 8.0 + vUv.y * 11.0 + uTime * 0.15)), 12.0);
-  float alpha = edge * vWetness * (0.12 + 0.07 * ripple + 0.12 * sheen);
+  float r = length(p) * 2.0;
+  float ang = atan(p.y, p.x);
+  // Organic boundary: radius wobbles around the rim and breathes slowly.
+  vec2 rim = vec2(cos(ang), sin(ang));
+  float wob = snoise(rim * 1.6 + uTime * 0.02) * 0.6 + snoise(rim * 3.3 - uTime * 0.015) * 0.4;
+  float edge0 = 0.52 + wob * 0.3;
+  float body = 1.0 - smoothstep(edge0 - 0.26, edge0, r);
+  float inner = 1.0 - smoothstep(0.0, edge0, r);
+  // Expanding rain rings, only while it is actually raining.
+  float rings = 0.0;
+  if (uRain > 0.01) {
+    float ph = fract(r * 2.2 - uTime * (0.6 + uRain * 1.8) + wob * 0.35);
+    rings = smoothstep(0.0, 0.1, ph) * (1.0 - smoothstep(0.1, 0.32, ph)) * uRain;
+  }
+  // Restrained moving sky sheen, brighter toward the middle.
+  float sheen = pow(max(0.0, sin(vUv.x * 5.0 + vUv.y * 8.0 + uTime * 0.12)), 8.0) *
+                (0.3 + 0.45 * inner);
+  vec3 col = mix(uSky * 0.18, uSky * 0.95, clamp(sheen + rings * 0.8, 0.0, 1.0));
+  float alpha = body * vWetness * min(0.55, 0.16 + sheen * 0.3 + rings * 0.4);
   if (alpha < 0.008) discard;
-  vec3 water = mix(vec3(0.018, 0.055, 0.09), vec3(0.16, 0.43, 0.58), sheen * 0.7 + ripple * uRain * 0.12);
-  gl_FragColor = vec4(water, alpha);
+  gl_FragColor = vec4(col, alpha);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }
 `;
 
@@ -54,6 +100,8 @@ export class PuddlesSystem extends createSystem({}) {
   private readonly xz = new Float32Array(PATCH_COUNT * 2);
   private readonly lastBounds = new Float32Array(6);
   private readonly dummy = new Object3D();
+  private readonly skyColor = new Color();
+  private daylightEase = 0.5;
   private material!: ShaderMaterial;
   private initialized = false;
   private lastHasSurfaces = false;
@@ -65,7 +113,7 @@ export class PuddlesSystem extends createSystem({}) {
     this.material = new ShaderMaterial({
       vertexShader: VERTEX,
       fragmentShader: FRAGMENT,
-      uniforms: { uTime: { value: 0 }, uRain: { value: 0 } },
+      uniforms: { uTime: { value: 0 }, uRain: { value: 0 }, uSky: { value: new Color(0x5a6a78) } },
       transparent: true,
       depthWrite: false,
     });
@@ -110,6 +158,16 @@ export class PuddlesSystem extends createSystem({}) {
     const time = performance.now() / 1000;
     this.material.uniforms.uTime.value = time;
     this.material.uniforms.uRain.value = rain;
+    // Wet sheen mirrors the actual sky: slate when overcast, warmer and
+    // brighter when daylight escapes the cover, dim at night.
+    const daylight = current?.drivers.daylight ?? 0.5;
+    const cloud = current?.drivers.cloud ?? 0.3;
+    this.daylightEase += (daylight - this.daylightEase) * Math.min(1, dt * 2);
+    this.skyColor
+      .copy(SKY_DAY_CLEAR)
+      .lerp(SKY_OVERCAST, cloud)
+      .multiplyScalar(0.2 + 0.8 * this.daylightEase);
+    (this.material.uniforms.uSky.value as Color).copy(this.skyColor);
     for (let i = 0; i < PATCH_COUNT; i += 1) {
       this.wetness[i] = Math.max(0, Math.min(1, this.wetness[i] + rain * 0.08 * dt - (1 - rain) * 0.0025 * dt));
       const x = this.xz[i * 2];

@@ -5,10 +5,22 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+import { execSync } from 'node:child_process';
 import { iwsdkDev } from '@iwsdk/vite-plugin-dev';
 import { defineConfig } from 'vite';
 
+/** Build-time git revision for the UI freshness label; never a secret. */
+function resolveRevision(): string {
+  try {
+    return execSync('git rev-parse --short HEAD', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+const revision = resolveRevision();
+
 export default defineConfig({
+  define: { __WEATHER_ROOM_REVISION__: JSON.stringify(revision) },
   plugins: [iwsdkDev()],
   server: { host: '0.0.0.0', port: 8081, open: false },
   build: {

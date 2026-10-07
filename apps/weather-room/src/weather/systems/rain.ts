@@ -14,7 +14,6 @@ import {
   DynamicDrawUsage,
   InstancedBufferAttribute,
   InstancedMesh,
-  MeshBasicMaterial,
   Object3D,
   PlaneGeometry,
   RingGeometry,
@@ -33,8 +32,8 @@ const MAX_REDUCED = 1200;
 const SPLASH_COUNT = 48;
 const SPLASH_FADE_S = 0.4;
 const FALL_BASE_SPEED = 4;
-const STREAK_WIDTH = 0.012;
-const STREAK_BASE_LEN = 0.3;
+const STREAK_WIDTH = 0.0075;
+const STREAK_BASE_LEN = 0.45;
 
 const RAIN_VERTEX = /* glsl */ `
 attribute float aAlpha;
@@ -50,13 +49,47 @@ const RAIN_FRAGMENT = /* glsl */ `
 varying float vAlpha;
 varying vec2 vUv;
 void main() {
-  // Soft horizontal edges; vertical gradient: bright head at the bottom.
-  float edge = 1.0 - smoothstep(0.18, 0.5, abs(vUv.x - 0.5));
-  float grad = smoothstep(0.0, 0.75, vUv.y);
-  float head = smoothstep(0.0, 0.12, vUv.y);
-  float a = edge * (0.12 + 0.88 * grad) * head * vAlpha;
+  // Thread-like filament: gaussian core + faint halo, lit head at the
+  // leading (bottom) end dissolving into a soft tail. Reads as a thin
+  // streak of light from every angle, never a box.
+  float x = (vUv.x - 0.5) * 2.0;
+  float core = exp(-x * x * 16.0);
+  float halo = exp(-x * x * 3.5) * 0.3;
+  float head = 0.45 + 0.85 * exp(-pow((vUv.y - 0.1) * 3.0, 2.0));
+  float tail = smoothstep(0.0, 0.05, vUv.y) * (1.0 - smoothstep(0.4, 1.0, vUv.y) * 0.7);
+  float a = (core + halo) * head * tail * vAlpha;
   if (a < 0.01) discard;
-  gl_FragColor = vec4(0.55, 0.72, 0.95, a * 0.6);
+  vec3 col = mix(vec3(0.5, 0.66, 0.92), vec3(0.85, 0.92, 1.0), core);
+  gl_FragColor = vec4(col, a * 0.5);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`;
+
+const SPLASH_VERTEX = /* glsl */ `
+attribute float aFade;
+varying float vFade;
+varying vec2 vUv;
+void main() {
+  vFade = aFade;
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+}
+`;
+const SPLASH_FRAGMENT = /* glsl */ `
+varying float vFade;
+varying vec2 vUv;
+void main() {
+  // Soft expanding crown ring + brief central glint (RingGeometry uvs are
+  // planar across the bounding square, so radial distance is exact).
+  float d = length(vUv - vec2(0.5)) * 2.0;
+  float ring = exp(-pow((d - 0.72) * 7.0, 2.0));
+  float glint = exp(-d * d * 9.0) * 0.3;
+  float a = (ring + glint) * vFade;
+  if (a < 0.01) discard;
+  gl_FragColor = vec4(0.62, 0.78, 1.0, a * 0.65);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }
 `;
 
@@ -72,6 +105,7 @@ export class RainSystem extends createSystem({}) {
   private splashMesh!: InstancedMesh;
   private splashPos = new Float32Array(SPLASH_COUNT * 3);
   private splashAge = new Float32Array(SPLASH_COUNT);
+  private splashFade = new Float32Array(SPLASH_COUNT);
   private splashCursor = 0;
   private readonly dummy = new Object3D();
   private readonly wind = new Vector3();
@@ -107,12 +141,16 @@ export class RainSystem extends createSystem({}) {
     this.entity = this.world.createTransformEntity(this.streaks);
 
     const splashGeo = new RingGeometry(0.032, 0.06, 24);
-    const splashMat = new MeshBasicMaterial({
-      color: 0x8cb0e6,
-      opacity: 0.7,
+    const fadeAttr = new InstancedBufferAttribute(this.splashFade, 1);
+    fadeAttr.setUsage(DynamicDrawUsage);
+    splashGeo.setAttribute('aFade', fadeAttr);
+    const splashMat = new ShaderMaterial({
+      vertexShader: SPLASH_VERTEX,
+      fragmentShader: SPLASH_FRAGMENT,
       transparent: true,
       side: DoubleSide,
       depthWrite: false,
+      blending: AdditiveBlending,
     });
     this.splashMesh = new InstancedMesh(splashGeo, splashMat, SPLASH_COUNT);
     this.splashMesh.frustumCulled = false;
@@ -240,11 +278,13 @@ export class RainSystem extends createSystem({}) {
         this.dummy.updateMatrix();
         this.splashMesh.setMatrixAt(s, this.dummy.matrix);
         this.splashAge[s] = Number.POSITIVE_INFINITY;
+        this.splashFade[s] = 0;
         splashDirty = true;
         continue;
       }
       this.splashAge[s] = nextAge;
       const t = nextAge / SPLASH_FADE_S;
+      this.splashFade[s] = (1 - t) * (1 - t);
       this.dummy.position.set(this.splashPos[si], this.splashPos[si + 1], this.splashPos[si + 2]);
       this.dummy.rotation.set(-Math.PI / 2, 0, 0);
       this.dummy.scale.setScalar(0.5 + t * 1.9);
@@ -252,7 +292,10 @@ export class RainSystem extends createSystem({}) {
       this.splashMesh.setMatrixAt(s, this.dummy.matrix);
       splashDirty = true;
     }
-    if (splashDirty) this.splashMesh.instanceMatrix.needsUpdate = true;
+    if (splashDirty) {
+      this.splashMesh.instanceMatrix.needsUpdate = true;
+      (this.splashMesh.geometry.getAttribute('aFade') as InstancedBufferAttribute).needsUpdate = true;
+    }
   }
 
   private spawnSplash(x: number, z: number, y: number): void {
@@ -263,6 +306,7 @@ export class RainSystem extends createSystem({}) {
     this.splashPos[si + 1] = y + 0.01;
     this.splashPos[si + 2] = z;
     this.splashAge[s] = 0;
+    this.splashFade[s] = 1;
   }
 
   override destroy(): void {
@@ -272,6 +316,7 @@ export class RainSystem extends createSystem({}) {
     this.speeds.fill(0);
     this.splashPos.fill(0);
     this.splashAge.fill(Number.POSITIVE_INFINITY);
+    this.splashFade.fill(0);
     this.cursor = 0;
     this.splashCursor = 0;
   }

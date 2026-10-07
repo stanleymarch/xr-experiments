@@ -1,117 +1,219 @@
+<meta preferred-color-scheme="dark" />
 <style>
+  @font-face {
+    font-family: "Geologica";
+    src: url("../fonts/Geologica-Regular.ttf");
+    font-weight: 400;
+  }
+  @font-face {
+    font-family: "Geologica";
+    src: url("../fonts/Geologica-Medium.ttf");
+    font-weight: 500;
+  }
+  @font-face {
+    font-family: "Geologica";
+    src: url("../fonts/Geologica-SemiBold.ttf");
+    font-weight: 600;
+  }
+  @font-face {
+    font-family: "Geologica";
+    src: url("../fonts/Geologica-Bold.ttf");
+    font-weight: 700;
+  }
+  @font-face {
+    font-family: "Unbounded";
+    src: url("../fonts/Unbounded-Medium.ttf");
+    font-weight: 500;
+  }
+  @font-face {
+    font-family: "Unbounded";
+    src: url("../fonts/Unbounded-Bold.ttf");
+    font-weight: 700;
+  }
   .panel-root {
     flex-direction: column;
-    width: 380px;
+    width: 340px;
   }
   .panel-content {
     align-items: stretch;
     flex-direction: column;
-    padding-top: 16px;
-    padding-left: 24px;
-    padding-right: 24px;
+    padding-top: 18px;
+    padding-left: 22px;
+    padding-right: 22px;
   }
-  .heading {
-    height: 40px;
-    text-align: center;
-    font-size: 22px;
-    font-weight: 700;
-    line-height: 22px;
-    letter-spacing: -0.5px;
-    color: #272727;
-  }
-  .heading:dark {
-    color: rgba(255, 255, 255, 0.9);
-  }
-  .status {
-    color: #5a6b82;
-    font-size: 13px;
-    font-weight: 500;
-    line-height: 16px;
-    width: 100%;
-    margin-top: 4px;
-    text-align: center;
-  }
-  .playhead {
-    color: #272727;
-    font-size: 18px;
-    font-weight: 700;
-    line-height: 20px;
-    width: 100%;
-    margin-top: 10px;
-    text-align: center;
-  }
-  .playhead:dark {
-    color: rgba(255, 255, 255, 0.9);
-  }
-  .values {
-    color: #272727;
-    font-size: 14px;
-    font-weight: 500;
-    line-height: 18px;
-    width: 100%;
-    margin-top: 8px;
-  }
-  .values:dark {
-    color: rgba(255, 255, 255, 0.9);
-  }
-  .timeline-hint {
-    color: #5a6b82;
+  .brand-kicker {
+    font-family: "Geologica";
     font-size: 11px;
     font-weight: 600;
     line-height: 14px;
+    letter-spacing: 2.5px;
     width: 100%;
-    margin-top: 5px;
     text-align: center;
+    color: #79d7f2;
+  }
+  .heading {
+    font-family: "Unbounded";
+    height: 30px;
+    text-align: center;
+    font-size: 21px;
+    font-weight: 700;
+    line-height: 26px;
+    letter-spacing: 1px;
+    margin-top: 4px;
+    color: #eef5ff;
+  }
+  .heading:dark {
+    color: #eef5ff;
+  }
+  .mode-row {
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .mode-pill {
+    font-family: "Geologica";
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 14px;
+    letter-spacing: 1.5px;
+    padding-top: 3px;
+    padding-left: 12px;
+    padding-right: 12px;
+    padding-bottom: 3px;
+    border-radius: 999px;
+    background-color: #79d7f2;
+    color: #060b18;
+    text-align: center;
+  }
+  .revision {
+    font-family: "Geologica";
+    color: #94aac8;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 14px;
+    margin-left: 8px;
+  }
+  .playhead {
+    font-family: "Geologica";
+    color: #eef5ff;
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 32px;
+    width: 100%;
+    margin-top: 8px;
+    text-align: center;
+  }
+  .playhead:dark {
+    color: #eef5ff;
+  }
+  .subhead {
+    font-family: "Geologica";
+    color: #94aac8;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 15px;
+    width: 100%;
+    margin-top: 2px;
+    text-align: center;
+  }
+  .subhead:dark {
+    color: #94aac8;
+  }
+  .values {
+    font-family: "Geologica";
+    color: #eef5ff;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 19px;
+    width: 100%;
+    margin-top: 8px;
+    text-align: center;
+  }
+  .values:dark {
+    color: #eef5ff;
+  }
+  .status {
+    font-family: "Geologica";
+    color: #94aac8;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 14px;
+    width: 100%;
+    margin-top: 8px;
+    text-align: center;
+  }
+  .status:dark {
+    color: #94aac8;
+  }
+  .timeline-hint {
+    font-family: "Geologica";
+    color: #79d7f2;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 13px;
+    width: 100%;
+    margin-top: 8px;
+    text-align: center;
+    letter-spacing: 1px;
+  }
+  .timeline-hint:dark {
+    color: #79d7f2;
   }
   .controls-row {
     flex-direction: row;
     justify-content: center;
+    margin-top: 10px;
+    margin-bottom: 6px;
   }
   .control-button {
-    width: 78px;
+    width: 70px;
     margin-left: 3px;
     margin-right: 3px;
-    margin-top: 10px;
-    margin-bottom: 8px;
   }
   .button-label {
     transform-translate-y: 1px;
   }
+  .xr-row {
+    flex-direction: row;
+    justify-content: center;
+    margin-bottom: 16px;
+  }
 </style>
-<Panel class="panel-root">
+<Panel id="weather-root" class="panel-root">
   <div class="panel-content">
+    <div class="brand-kicker">STANIVERSE</div>
     <div class="heading">WEATHER//ROOM</div>
-    <Divider></Divider>
-    <div id="status-line" class="status">Locating...</div>
-    <div id="location-line" class="status">--</div>
+    <div class="mode-row">
+      <div id="mode-badge" class="mode-pill">LIVE</div>
+      <div id="revision-label" class="revision">rev --</div>
+    </div>
     <div id="playhead-line" class="playhead">NOW</div>
+    <div id="location-line" class="subhead">Locating...</div>
     <div id="values-line" class="values">--</div>
-    <div class="timeline-hint">-24h  &lt; DRAG &gt;  +24h</div>
+    <div id="status-line" class="status">Loading...</div>
+    <div class="timeline-hint">-24H &lt; GRAB KNOB / TAP BUTTONS &gt; +24H</div>
   </div>
   <div class="controls-row">
-    <Button id="back-button" class="control-button">
+    <Button id="back-button" class="control-button" variant="secondary">
       <ButtonLabel class="button-label">-6h</ButtonLabel>
     </Button>
-    <Button id="now-button" class="control-button">
+    <Button id="now-button" class="control-button" variant="primary">
       <ButtonLabel class="button-label">NOW</ButtonLabel>
     </Button>
-    <Button id="forward-button" class="control-button">
+    <Button id="forward-button" class="control-button" variant="secondary">
       <ButtonLabel class="button-label">+6h</ButtonLabel>
     </Button>
-    <Button id="reload-button" class="control-button">
+    <Button id="reload-button" class="control-button" variant="tertiary">
       <ButtonLabel class="button-label">Reload</ButtonLabel>
     </Button>
   </div>
-  <Button id="xr-button" class="button">
-    <ButtonIcon>
-      <RectangleGoggles></RectangleGoggles>
-    </ButtonIcon>
-    <ButtonLabel class="button-label">Enter XR</ButtonLabel>
-  </Button>
-  <Button id="exit-button" class="button" style="display: none">
-    <ButtonIcon>
-      <LogIn></LogIn>
-    </ButtonIcon>
-    <ButtonLabel class="button-label">Exit to Browser</ButtonLabel>
-  </Button>
+  <div class="xr-row">
+    <Button id="xr-button" class="control-button" variant="primary">
+      <ButtonLabel class="button-label">Enter AR</ButtonLabel>
+    </Button>
+    <Button id="exit-button" class="control-button" variant="tertiary">
+      <ButtonLabel class="button-label">Exit</ButtonLabel>
+    </Button>
+  </div>
 </Panel>

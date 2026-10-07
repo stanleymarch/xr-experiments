@@ -1,0 +1,23 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "iwsdk-runtime": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["node_modules/@iwsdk/cli/dist/cli.js", "mcp", "stdio"],
+      "cwd": "./apps/weather-room"
+    },
+    "iwsdk-reference": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["node_modules/@iwsdk/reference/dist/cli.js"],
+      "cwd": "./apps/weather-room"
+    },
+    "metavr": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["node_modules/@meta-quest/metavr/bin.js", "mcp", "server"],
+      "cwd": "./apps/weather-room"
+    }
+  }
+}

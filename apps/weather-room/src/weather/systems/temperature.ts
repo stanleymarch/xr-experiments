@@ -44,6 +44,8 @@ void main() {
   float a = (1.0 - smoothstep(0.05, 0.5, d)) * vAlpha;
   if (a < 0.01) discard;
   gl_FragColor = vec4(uColor, a * 0.8);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }
 `;
 

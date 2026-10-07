@@ -19,10 +19,7 @@ import { TimelineSystem } from './weather/systems/timeline.js';
 import { WeatherLoaderSystem } from './weather/systems/weather-loader.js';
 import { WindSystem } from './weather/systems/wind.js';
 
-World.create(
-  document.getElementById('scene-container') as HTMLDivElement,
-  projectOptions,
-).then((world) => {
+const boot = (world: World): void => {
   world.registerSystem(ScreenInputSystem, { priority: -3.9 });
   world.registerSystem(WeatherLoaderSystem, { priority: 1 });
   world.registerSystem(RoomSensingSystem, { priority: 2 });
@@ -35,4 +32,21 @@ World.create(
   world.registerSystem(TimelineSystem, { priority: 36 });
   world.registerSystem(PanelSystem, { priority: 37 });
   world.registerSystem(BrowserPanelSystem, { priority: 38 });
-});
+};
+
+const onBootError = (reason: unknown): void => {
+  const err = reason instanceof Error ? (reason.stack ?? reason.message) : reason;
+  window.__showBootError?.(err);
+  console.error('[weather-room] boot failed', reason);
+};
+
+World.create(
+  document.getElementById('scene-container') as HTMLDivElement,
+  projectOptions,
+).then((world) => {
+  try {
+    boot(world);
+  } catch (error) {
+    onBootError(error);
+  }
+}, onBootError);

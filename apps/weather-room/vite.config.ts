@@ -19,6 +19,7 @@ function resolveRevision(): string {
 }
 const revision = resolveRevision();
 
+
 export default defineConfig({
   define: { __WEATHER_ROOM_REVISION__: JSON.stringify(revision) },
   plugins: [iwsdkDev()],
@@ -26,10 +27,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: process.env.NODE_ENV !== 'production',
-    target: 'esnext',
+    // Quest Browser can lag desktop Chromium; transpile modern syntax down
+    // instead of shipping esnext that older headset engines fail to parse.
+    target: 'chrome100',
     rollupOptions: { input: './index.html' },
   },
-  esbuild: { target: 'esnext' },
+  esbuild: { target: 'chrome100' },
   // @drawcall/uikitml otherwise pulls a second three/@pmndrs/uikit graph
   // (three@0.185 vs app super-three@0.181). Duplicate Component classes break
   // instanceof checks → "Only pmndrs/uikit components can be added as children".

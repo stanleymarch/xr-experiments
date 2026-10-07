@@ -251,9 +251,14 @@ export interface WeatherFetchOutcome {
   status: WeatherLoadStatus;
 }
 
-/** Browser geolocation with a bounded wait; falls back to a fixed location. */
+/** Browser geolocation with a bounded wait; falls back to a fixed location.
+ * Hand-rolled resolve (not Promise.withResolvers): Quest Browser builds on
+ * Chromium < 119 lack that ES2024 API and the loader must not crash on boot. */
 export function resolveLocation(): Promise<GeolocationResult> {
-  const { promise, resolve } = Promise.withResolvers<GeolocationResult>();
+  let resolve!: (result: GeolocationResult) => void;
+  const promise = new Promise<GeolocationResult>((res) => {
+    resolve = res;
+  });
   const geolocation = navigator.geolocation;
   if (geolocation == null) {
     resolve({ ...FALLBACK_LOCATION, fallback: true, fallbackReason: 'browser location unavailable' });
@@ -292,7 +297,14 @@ export async function loadWeather(previous?: WeatherDataset): Promise<WeatherFet
     return { dataset: previous, status: { kind: 'ready' } };
   }
 
-  const location = await resolveLocation();
+  let location: GeolocationResult;
+  try {
+    location = await resolveLocation();
+  } catch {
+    // Legacy engines (Quest Browser < Chromium 119) lack ES2024 APIs used
+    // above; degrade to the fixed location instead of rejecting the chain.
+    location = { ...FALLBACK_LOCATION, fallback: true, fallbackReason: 'location unavailable on this browser' };
+  }
   try {
     const hours = await fetchOpenMeteo(location.latitude, location.longitude);
     return {

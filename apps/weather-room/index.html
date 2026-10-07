@@ -7,9 +7,57 @@
       content="width=device-width, initial-scale=1, shrink-to-fit=no"
     />
     <link rel="icon" href="data:," />
-    <title>weather-room</title>
+    <title>WEATHER//ROOM</title>
+    <script>
+      // Boot error surface: without this any pre-UI failure is a bare white
+      // page (Quest Browser has no devtools). Inline and dependency-free so
+      // it survives module parse/network failures.
+      (function () {
+        var shown = 0;
+        function showBootError(detail) {
+          var host = document.getElementById('boot-error');
+          if (!host) {
+            host = document.createElement('pre');
+            host.id = 'boot-error';
+            host.setAttribute('aria-live', 'assertive');
+            var style =
+              'position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;' +
+              'max-height:60vh;overflow:auto;margin:0;padding:14px 16px;' +
+              'background:#0d1930;color:#eef5ff;border:1px solid #79d7f2;' +
+              'border-radius:12px;font:12px/1.5 Geologica,system-ui,monospace;' +
+              'white-space:pre-wrap;word-break:break-word;';
+            host.setAttribute('style', style);
+            var label = document.createElement('div');
+            label.textContent = 'WEATHER//ROOM — startup error';
+            label.setAttribute(
+              'style',
+              'color:#79d7f2;font-weight:700;letter-spacing:0.08em;margin-bottom:6px;',
+            );
+            host.appendChild(label);
+            document.body.appendChild(host);
+          }
+          if (shown >= 6) return;
+          shown += 1;
+          var line = document.createElement('div');
+          line.textContent = String(detail).slice(0, 1200);
+          host.appendChild(line);
+        }
+        window.__showBootError = showBootError;
+        window.addEventListener('error', function (event) {
+          var e = event.error || event.message;
+          showBootError(
+            (e && (e.stack || e.message)) ||
+              event.message + ' @ ' + (event.filename || '?') + ':' + event.lineno,
+          );
+        });
+        window.addEventListener('unhandledrejection', function (event) {
+          var r = event.reason;
+          showBootError((r && (r.stack || r.message)) || r);
+        });
+      })();
+    </script>
   </head>
-  <body style="margin: 0">
+  <body style="margin: 0; background: #060b18">
     <div id="scene-container"></div>
     <script type="module" src="/src/index.ts"></script>
   </body>

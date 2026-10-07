@@ -64,6 +64,34 @@ try {
   handleEntity.removeComponent(Grabbed);
   timelineSystem.update();
   if (Math.abs(knob.position.x - 0.3) > 0.0001 || Math.abs(knob.position.y) > 0.0001) throw new Error('Released knob did not re-seat on the rail at the scrubbed hour');
+  {
+    const { roomModel } = await import('./src/weather/room.ts');
+    const { Mesh, PlaneGeometry, MeshBasicMaterial, Vector3 } = await import('@iwsdk/core');
+    const floor = new Mesh(new PlaneGeometry(3, 3, 40, 40), new MeshBasicMaterial());
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(0, 1.0, 0);
+    floor.updateWorldMatrix(true, true);
+    roomModel.beginRebuild([floor]);
+    if (!roomModel.hasSurfaces) throw new Error('Tracked floor did not mark room surfaces as available');
+    let steps = 0;
+    while (roomModel.building && steps < 500) { roomModel.step(); steps += 1; }
+    if (roomModel.building) throw new Error('Incremental grid build never finished');
+    const sampled = roomModel.surfaceHeightAt(0.5, -0.5, 1.2);
+    if (sampled === null || Math.abs(sampled - 1.0) > 0.001) throw new Error(`Sampled floor height is wrong (got ${sampled})`);
+    const ceilingSide = roomModel.surfaceHeightAt(0.5, -0.5, 0.9);
+    if (ceilingSide !== null) throw new Error('Surface above the query point must not be reported');
+    const dense = new Mesh(new PlaneGeometry(4, 4, 300, 300), new MeshBasicMaterial());
+    dense.rotation.x = -Math.PI / 2;
+    dense.position.set(0, 0.5, 0);
+    dense.updateWorldMatrix(true, true);
+    roomModel.beginRebuild([dense]);
+    const vertices = dense.geometry.getAttribute('position').array.length;
+    roomModel.step();
+    if (vertices > 20000 && !roomModel.building) throw new Error('Dense mesh build was not sliced across frames');
+    while (roomModel.building) roomModel.step();
+    roomModel.beginRebuild([]);
+    if (roomModel.hasSurfaces) throw new Error('Clearing tracked surfaces must drop room knowledge');
+  }
   world.player.head.position.set(0,1.6,0);
   world.visibilityState.value = VisibilityState.Visible;
   panelSystem.update(0.016, 10);

@@ -22,8 +22,21 @@ type MeshSource = {
 };
 
 
+/** Bounded stride sample; full mesh scans cost tens of millions of ops per
+ * second on real room meshes (hundreds of thousands of vertices). */
+const SIGNATURE_SAMPLES = 256;
+
 function mixSignature(signature: number, value: number): number {
   return Math.imul(signature ^ Math.round(value * 10000), 16777619);
+}
+
+/** Hash at most SIGNATURE_SAMPLES evenly spaced components of an array-like. */
+function mixSampled(signature: number, values: ArrayLike<number>): number {
+  const count = values.length;
+  signature = mixSignature(signature, count);
+  const stride = Math.max(1, Math.floor(count / SIGNATURE_SAMPLES));
+  for (let i = 0; i < count; i += stride) signature = mixSignature(signature, values[i]);
+  return signature;
 }
 
 function geometrySignature(
@@ -39,15 +52,11 @@ function geometrySignature(
     const geometry = object.geometry;
     const positions = geometry.getAttribute('position');
     if (positions != null) {
-      signature = mixSignature(signature, positions.count);
-      const values = positions.array;
-      for (let i = 0; i < values.length; i += 1) signature = mixSignature(signature, values[i]);
+      signature = mixSampled(signature, positions.array as ArrayLike<number>);
     }
     const indices = geometry.index;
     if (indices != null) {
-      signature = mixSignature(signature, indices.count);
-      const values = indices.array;
-      for (let i = 0; i < values.length; i += 1) signature = mixSignature(signature, values[i]);
+      signature = mixSampled(signature, indices.array as ArrayLike<number>);
     }
   }
   if (plane != null) {
@@ -65,15 +74,9 @@ function geometrySignature(
   if (mesh != null) {
     signature = mixSignature(signature, mesh.lastChangedTime ?? 0);
     const vertices = mesh.vertices;
-    if (vertices != null) {
-      signature = mixSignature(signature, vertices.length);
-      for (let i = 0; i < vertices.length; i += 1) signature = mixSignature(signature, vertices[i]);
-    }
+    if (vertices != null) signature = mixSampled(signature, vertices);
     const indices = mesh.indices;
-    if (indices != null) {
-      signature = mixSignature(signature, indices.length);
-      for (let i = 0; i < indices.length; i += 1) signature = mixSignature(signature, indices[i]);
-    }
+    if (indices != null) signature = mixSampled(signature, indices);
   }
   return signature;
 }
@@ -132,6 +135,12 @@ export class RoomSensingSystem extends createSystem({
         this.signatures.set(entity, signature);
       }
     }
+    // The grid build is incremental and frame-bounded: never raycast a whole
+    // room mesh on one frame (that is what froze the headset on VR entry).
+    if (roomModel.building) {
+      roomModel.step();
+      return;
+    }
     if (!this.pendingRebuild) return;
     if (time - this.lastRebuildAt < REBUILD_DEBOUNCE_S) return;
     const objects = [];
@@ -140,7 +149,8 @@ export class RoomSensingSystem extends createSystem({
     }
     this.pendingRebuild = false;
     this.lastRebuildAt = time;
-    roomModel.rebuild(objects);
+    roomModel.beginRebuild(objects);
+    roomModel.step();
   }
 
   override destroy(): void {
@@ -148,6 +158,6 @@ export class RoomSensingSystem extends createSystem({
     this.tracked.clear();
     this.signatures.clear();
     this.pendingRebuild = false;
-    roomModel.rebuild([]);
+    roomModel.beginRebuild([]);
   }
 }

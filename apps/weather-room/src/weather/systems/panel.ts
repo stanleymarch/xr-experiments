@@ -184,12 +184,12 @@ export class PanelSystem extends createSystem({}) {
     // for precip/wind/sky. Full detail stays in the browser panel.
     const valuesText =
       `${valueOrDash(frame.temperatureC, (n) => n.toFixed(1), 'C')} ` +
-      `(${valueOrDash(frame.apparentTemperatureC, (n) => n.toFixed(1), 'C')} feels) | ${weatherCode}\n` +
+      `(${valueOrDash(frame.apparentTemperatureC, (n) => n.toFixed(1), 'C')} feels) · ${weatherCode}\n` +
       `rain ${valueOrDash(frame.precipitationMm, (n) => n.toFixed(1), 'mm/h')} ` +
-      `(${valueOrDash(frame.precipitationProbabilityPct, (n) => String(Math.round(n)), '%')}) | ` +
+      `(${valueOrDash(frame.precipitationProbabilityPct, (n) => String(Math.round(n)), '%')}) · ` +
       `wind ${valueOrDash(frame.windSpeedKmh, (n) => String(Math.round(n)), `km/h${compass}`)}\n` +
-      `cloud ${valueOrDash(frame.cloudCoverPct, (n) => String(Math.round(n)), '%')} | ` +
-      `RH ${valueOrDash(frame.humidityPct, (n) => String(Math.round(n)), '%')} | ` +
+      `cloud ${valueOrDash(frame.cloudCoverPct, (n) => String(Math.round(n)), '%')} · ` +
+      `RH ${valueOrDash(frame.humidityPct, (n) => String(Math.round(n)), '%')} · ` +
       `${frame.available.isDay ? (frame.isDay === 1 ? 'daylight' : 'night') : 'light --'}`;
     const modeText = demoDataset || status.kind === 'demo' ? 'DEMO' : 'LIVE';
     const combined = `${statusText}|${locationText}|${deltaLabel}|${valuesText}|${modeText}`;

@@ -1,0 +1,486 @@
+{
+  "% Anisotropic Filtered": {
+    "entries": 13311,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "% Shader ALU Capacity Utilized": {
+    "entries": 13311,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "% Texture Fetch Stall": {
+    "entries": 13311,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "% Time ALUs Working": {
+    "entries": 13311,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "% Time Shading Fragments": {
+    "entries": 13311,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "% Time Shading Vertices": {
+    "entries": 13311,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "% Vertex Fetch Stall": {
+    "entries": 13311,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "Avg Bytes / Vertex": {
+    "entries": 13311,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "Engine": "unknown",
+  "Fragment Instructions / Fragments Shaded": {
+    "entries": 13311,
+    "max": 1.0,
+    "mean": 1.0,
+    "quantile_75": 1.0,
+    "std": 0.0
+  },
+  "Fragment Instructions / Second": {
+    "entries": 13311,
+    "max": -1.0,
+    "mean": -1.0,
+    "quantile_75": -1.0,
+    "std": 0.0
+  },
+  "Fragments Shaded / Pixel Second": {
+    "entries": 0,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "Fragments Shaded / Second": {
+    "entries": 13311,
+    "max": -1.0,
+    "mean": -1.0,
+    "quantile_75": -1.0,
+    "std": 0.0
+  },
+  "GPU % Bus Busy": {
+    "entries": 13311,
+    "max": 100.0,
+    "mean": 100.0,
+    "quantile_75": 100.0,
+    "std": 0.0
+  },
+  "GPUData": true,
+  "MSAA": {
+    "entries": 0,
+    "mean": 0.0,
+    "std": 0.0
+  },
+  "Main Buffer Pixel Count": {
+    "entries": 0,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "NumberOfBins": {
+    "entries": 0,
+    "mean": 0.0,
+    "std": 0.0
+  },
+  "Reused Vertices / Second": {
+    "entries": 13311,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "TargetMainThread": "com.oculus.browser",
+  "TargetProcess": "com.oculus.browser",
+  "TargetRenderThread": "com.oculus.browser",
+  "Textures / Fragment": {
+    "entries": 13311,
+    "max": -1.0,
+    "mean": -1.0,
+    "quantile_75": -1.0,
+    "std": 0.0
+  },
+  "Vertex Instructions / Second": {
+    "entries": 13311,
+    "max": -1.0,
+    "mean": -1.0,
+    "quantile_75": -1.0,
+    "std": 0.0
+  },
+  "Vertex Instructions / Vertex Shaded": {
+    "entries": 0,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "Vertices Shaded / Second": {
+    "entries": 13311,
+    "max": 0.0,
+    "mean": 0.0,
+    "quantile_75": 0.0,
+    "std": 0.0
+  },
+  "_hzdb_evidence": {
+    "distributions": {
+      "app_cadence": {
+        "entries": 0,
+        "max": 0.0,
+        "mean": 0.0,
+        "min": 0.0,
+        "p50": 0.0,
+        "p75": 0.0,
+        "p90": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "std": 0.0
+      },
+      "gpu": {
+        "entries": 19,
+        "max": 1.8461984395980835,
+        "mean": 1.8461984395980835,
+        "min": 1.8461984395980835,
+        "p50": 1.8461984395980835,
+        "p75": 1.8461984395980835,
+        "p90": 1.8461984395980835,
+        "p95": 1.8461984395980835,
+        "p99": 1.8461984395980835,
+        "std": 0.0
+      },
+      "main_work": {
+        "entries": 0,
+        "max": 0.0,
+        "mean": 0.0,
+        "min": 0.0,
+        "p50": 0.0,
+        "p75": 0.0,
+        "p90": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "std": 0.0
+      },
+      "render_cadence": {
+        "entries": 0,
+        "max": 0.0,
+        "mean": 0.0,
+        "min": 0.0,
+        "p50": 0.0,
+        "p75": 0.0,
+        "p90": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "std": 0.0
+      }
+    },
+    "engine": "unknown",
+    "findings": [],
+    "frame_slices": {
+      "mid_schedule": {
+        "run_ratio": 0.0,
+        "runable_ratio": 0.0,
+        "running_time": 0.0
+      },
+      "mid_vs_worst": {
+        "dur": [],
+        "name": [],
+        "ts": []
+      },
+      "peak": null,
+      "worst": null,
+      "worst_core_occupancy": {
+        "cpu_occupency": []
+      },
+      "worst_schedule": {
+        "run_ratio": 0.0,
+        "runable_ratio": 0.0,
+        "running_time": 0.0,
+        "tname": ""
+      }
+    },
+    "frame_target": {
+      "budget_ms": 13.88888888888889,
+      "display_frames_per_app_frame": 1,
+      "refresh_rate_hz": 72.0,
+      "slow_frames": null,
+      "source": "default_72hz_no_counter_no_cadence",
+      "total_frames": null
+    },
+    "gpu": {
+      "binning": null,
+      "counter_validity": {
+        "% Shader ALU Capacity Utilized": {
+          "entries": 13311,
+          "valid": false
+        },
+        "% Texture Fetch Stall": {
+          "entries": 13311,
+          "valid": false
+        },
+        "% Time Shading Fragments": {
+          "entries": 13311,
+          "valid": false
+        },
+        "% Time Shading Vertices": {
+          "entries": 13311,
+          "valid": false
+        },
+        "% Vertex Fetch Stall": {
+          "entries": 13311,
+          "valid": false
+        },
+        "GPU % Bus Busy": {
+          "entries": 13311,
+          "valid": true
+        }
+      },
+      "msaa": {
+        "entries": 0,
+        "mean": 0.0,
+        "std": 0.0
+      },
+      "render_passes": []
+    },
+    "limitations": [
+      "GPU counter `% Shader ALU Capacity Utilized` is missing or zero",
+      "GPU counter `% Texture Fetch Stall` is missing or zero",
+      "GPU counter `% Time Shading Fragments` is missing or zero",
+      "GPU counter `% Time Shading Vertices` is missing or zero",
+      "GPU counter `% Vertex Fetch Stall` is missing or zero",
+      "GPU binning evidence is unavailable",
+      "worst-frame slice hierarchy is unavailable"
+    ],
+    "markers": {
+      "main_pattern": null,
+      "main_samples": 0,
+      "render_pattern": null,
+      "render_samples": 0
+    },
+    "schema_version": "1.0.0",
+    "target": {
+      "requested_package": "com.oculus.browser",
+      "selected_process": "com.oculus.browser",
+      "selection_source": "explicit_package"
+    },
+    "threads": {
+      "main": "com.oculus.browser",
+      "render": "com.oculus.browser",
+      "states": [
+        {
+          "blocked_pct": 0.0,
+          "name": "Gamepad polling",
+          "priority": 120,
+          "runnable_pct": 0.3387993983340455,
+          "running_pct": 1.2453027032285149,
+          "sleeping_pct": 108.24908478549423,
+          "utid": 3710
+        },
+        {
+          "blocked_pct": 0.0,
+          "name": "ThreadPoolForeg",
+          "priority": 120,
+          "runnable_pct": 0.011451878923225006,
+          "running_pct": 0.32359023785102686,
+          "sleeping_pct": 85.48457791030361,
+          "utid": 3683
+        },
+        {
+          "blocked_pct": 0.0,
+          "name": "StackSamplingPr",
+          "priority": 120,
+          "runnable_pct": 0.029975496056152177,
+          "running_pct": 0.1830810823238275,
+          "sleeping_pct": 53.706732273876824,
+          "utid": 3773
+        },
+        {
+          "blocked_pct": 0.0,
+          "name": ".oculus.browser",
+          "priority": 120,
+          "runnable_pct": 0.015069457287381897,
+          "running_pct": 0.1288509494054241,
+          "sleeping_pct": 106.26361937486459,
+          "utid": 669
+        },
+        {
+          "blocked_pct": 0.0,
+          "name": "MQD_Bg_Executor",
+          "priority": 130,
+          "runnable_pct": 0.008135561267648457,
+          "running_pct": 0.0578216683136902,
+          "sleeping_pct": 108.62327700072102,
+          "utid": 3676
+        },
+        {
+          "blocked_pct": 0.0,
+          "name": "CrRendererMain",
+          "priority": 116,
+          "runnable_pct": 0.002247555988559121,
+          "running_pct": 0.04885227651245346,
+          "sleeping_pct": 105.54541464000849,
+          "utid": 3599
+        },
+        {
+          "blocked_pct": 0.0,
+          "name": "Chrome_IOThread",
+          "priority": 116,
+          "runnable_pct": 0.006799403639967073,
+          "running_pct": 0.028579414045961923,
+          "sleeping_pct": 105.55907124956894,
+          "utid": 3686
+        },
+        {
+          "blocked_pct": 0.0,
+          "name": "VrShellGL.OVRMo",
+          "priority": 120,
+          "runnable_pct": 0.0017681164865617398,
+          "running_pct": 0.02400935075997099,
+          "sleeping_pct": 105.5466923620582,
+          "utid": 3731
+        },
+        {
+          "blocked_pct": 0.0,
+          "name": "CrGpuMain",
+          "priority": 116,
+          "runnable_pct": 0.002068749452931691,
+          "running_pct": 0.015398705299112301,
+          "sleeping_pct": 88.87683254668322,
+          "utid": 3808
+        },
+        {
+          "blocked_pct": 0.0,
+          "name": "Chrome_ChildIOT",
+          "priority": 116,
+          "runnable_pct": 0.006258906486337633,
+          "running_pct": 0.009132021475654761,
+          "sleeping_pct": 105.57861616994674,
+          "utid": 3604
+        }
+      ]
+    },
+    "trace": {
+      "duration_sec": 18.001019866,
+      "end_ts": 121462883871795,
+      "path": "C:\\Users\\Stanley\\AppData\\Roaming\\odh\\traces\\weather_spin.pftrace",
+      "process_count": 1,
+      "slice_count": 19,
+      "start_ts": 121444882851929
+    },
+    "warnings": [
+      "no colour passes in the capture to scope GPU counters to; counters cover the whole capture",
+      "fewer than 30 main-thread frame work samples",
+      "fewer than 30 app frame intervals samples",
+      "fewer than 30 render-thread frame intervals samples",
+      "target APK GPU timing is undersampled (19 samples)",
+      "no display refresh rate counter in trace; frame budget resolved as 72Hz via default_72hz_no_counter_no_cadence"
+    ]
+  },
+  "app_frame_interval_time": {
+    "entries": 0,
+    "mean": 0.0,
+    "std": 0.0
+  },
+  "app_gpu_time": {
+    "data_source": "app_gpu_ms_counter",
+    "entries": 19,
+    "max": 1.846198439598,
+    "mean": 1.846198439598,
+    "quantile_75": 1.846198439598,
+    "render_passes_mean": 0.0,
+    "std": 0.0
+  },
+  "binning": null,
+  "data_quality": {
+    "status": "degraded",
+    "warnings": [
+      "no colour passes in the capture to scope GPU counters to; counters cover the whole capture",
+      "fewer than 30 main-thread frame work samples",
+      "fewer than 30 app frame intervals samples",
+      "fewer than 30 render-thread frame intervals samples",
+      "target APK GPU timing is undersampled (19 samples)"
+    ]
+  },
+  "fragment_instructions_per_pixel_per_frame": 0.0,
+  "fragment_per_pixel_per_frame": 0.0,
+  "high_frequency_analysis": {
+    "analysis_quality": 0.0,
+    "frame_duration_ms": 0.0,
+    "high_frequency_functions": {},
+    "threads_analyzed": []
+  },
+  "main_thread_frame_time": {
+    "entries": 0,
+    "mean": 0.0,
+    "std": 0.0
+  },
+  "main_thread_mid_frame_run_ratio": {
+    "run_ratio": 0.0,
+    "runable_ratio": 0.0,
+    "running_time": 0.0
+  },
+  "main_thread_top_frame_core": {
+    "cpu_occupency": []
+  },
+  "main_thread_top_frame_run_ratio": {
+    "run_ratio": 0.0,
+    "runable_ratio": 0.0,
+    "running_time": 0.0,
+    "tname": ""
+  },
+  "mid_frame_tracks": {
+    "dur": [],
+    "name": [],
+    "ts": []
+  },
+  "render_thread_frame_diffs": {
+    "dur": [],
+    "name": [],
+    "ts": []
+  },
+  "render_thread_frame_time": {
+    "entries": 0,
+    "mean": 0.0,
+    "std": 0.0
+  },
+  "render_thread_top_frame_core": {
+    "cpu_occupency": []
+  },
+  "render_thread_top_frame_run_ratio": {
+    "run_ratio": 0.0,
+    "runable_ratio": 0.0,
+    "running_time": 0.0,
+    "tname": ""
+  },
+  "top_frame_tracks": {
+    "dur": [],
+    "name": [],
+    "ts": []
+  },
+  "top_main_thread_frame_time": 0.0,
+  "version": "0.0.1"
+}

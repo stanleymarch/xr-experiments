@@ -85,7 +85,7 @@
 <body>
   <header>
     <h1>xr<span class="glow">//</span>experiments</h1>
-    <p data-i18n="tagline">Пять WebXR-опытов и три камерные AR-игры. Quest 3, телефон, десктоп.</p>
+    <p data-i18n="tagline">MR-погода на Meta IWSDK и три камерные AR-игры. Quest 3, телефон, десктоп.</p>
     <div class="lang">
       <button id="lang-ru" class="on">RU</button><button id="lang-en">EN</button>
     </div>
@@ -98,12 +98,11 @@
     <p data-i18n="lic_intro">Стороннее — бесплатное, с атрибуцией. Наш код — MIT. Данные — по их лицензиям.</p>
     <table>
       <tr><th data-i18n="th_what">Что</th><th data-i18n="th_src">Источник / лицензия</th><th data-i18n="th_where">Где</th></tr>
-      <tr><td>Google XR Blocks 0.21.1</td><td><a href="https://github.com/google/xrblocks">google/xrblocks</a>, Apache-2.0 (CDN jsDelivr)</td><td data-i18n="lic_xrb">все опыты xrblocks/</td></tr>
-      <tr><td>three.js 0.186.0</td><td><a href="https://threejs.org/">threejs.org</a>, MIT (CDN jsDelivr)</td><td data-i18n="lic_three">все опыты xrblocks/</td></tr>
       <tr><td>8th Wall engine (8frame 1.5.0), A-Frame</td><td><a href="https://www.8thwall.com/">8thwall.com</a> — коммерческий движок, бесплатный тир; <a href="https://aframe.io/">A-Frame</a> MIT</td><td>8thwall/</td></tr>
+      <tr><td>Meta Immersive Web SDK 1.0.1 + three.js (super-three)</td><td><a href="https://www.npmjs.com/package/@iwsdk/create">npm @iwsdk/create</a>, Meta Platforms, MIT; three.js MIT</td><td>apps/weather-room</td></tr>
       <tr><td>cannon-es</td><td><a href="https://github.com/pmndrs/cannon-es">pmndrs/cannon-es</a>, MIT (npm)</td><td>8thwall/knockdown</td></tr>
-      <tr><td>Open-Meteo API</td><td><a href="https://open-meteo.com/">open-meteo.com</a> — бесплатно без ключа, лимит 10 000 запр./сутки, некоммерческое использование</td><td>xrblocks/weather-room</td></tr>
-      <tr><td>Overpass API / OpenStreetMap</td><td><a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>, ODbL; публичные серверы Overpass — умеренное использование, кэширование</td><td>xrblocks/city-orbit</td></tr>
+      <tr><td>Open-Meteo API</td><td><a href="https://open-meteo.com/">open-meteo.com</a> — бесплатно без ключа, лимит 10 000 запр./сутки, некоммерческое использование</td><td>концепт WEATHER//ROOM → apps/weather-room</td></tr>
+      <tr><td>Overpass API / OpenStreetMap</td><td><a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>, ODbL; публичные серверы Overpass — умеренное использование, кэширование</td><td>концепт CITY//ORBIT</td></tr>
       <tr><td>Unbounded, Geologica</td><td>Google Fonts, <a href="https://scripts.sil.org/OFL">SIL Open Font License 1.1</a></td><td data-i18n="lic_fonts">эта страница</td></tr>
       <tr><td>QR-коды</td><td><a href="https://goqr.me/api/">goqr.me API</a> — бесплатный генератор, картинки по требованию</td><td data-i18n="lic_qr">карточки каталога</td></tr>
     </table>
@@ -116,35 +115,33 @@
   <script>
     const I18N = {
       ru: {
-        tagline: 'Пять WebXR-опытов и три камерные AR-игры. Quest 3, телефон, десктоп.',
+        tagline: 'MR-погода на Meta IWSDK и три камерные AR-игры. Quest 3, телефон, десктоп.',
         lic_title: 'Технологии и лицензии',
         lic_intro: 'Стороннее — бесплатное, с атрибуцией. Наш код — MIT. Данные — по их лицензиям.',
         th_what: 'Что', th_src: 'Источник / лицензия', th_where: 'Где',
-        lic_xrb: 'все опыты xrblocks/', lic_three: 'все опыты xrblocks/',
         lic_fonts: 'эта страница', lic_qr: 'карточки каталога',
         foot: 'XR нужен HTTPS и поддерживающий браузер; камера/микрофон/геолокация спрашиваются на входе.',
         loading: 'Загрузка…', empty: 'Пока пусто.',
         err: 'Не удалось загрузить список опытов.',
         open: 'Открыть →',
-        sec_xrblocks_title: 'XR Blocks опыты',
-        sec_xrblocks_note: 'Google XR Blocks + three.js · без сборки · Quest 3 / Android XR / симулятор',
         sec_8thwall_title: '8th Wall',
+        sec_iwsdk_title: 'Meta IWSDK',
+        sec_iwsdk_note: 'WebXR MR · Quest 3 / Android XR · собирается из apps/',
         sec_8thwall_note: 'A-Frame · камерный AR на телефоне',
       },
       en: {
-        tagline: 'Five WebXR experiences and three camera-AR games. Quest 3, phone, desktop.',
+        tagline: 'IWSDK mixed-reality weather and three camera-AR games. Quest 3, phone, desktop.',
         lic_title: 'Tech & licenses',
         lic_intro: 'Third-party bits are free and credited. Our code is MIT. Data follows its licenses.',
         th_what: 'What', th_src: 'Source / license', th_where: 'Where',
-        lic_xrb: 'all xrblocks/ builds', lic_three: 'all xrblocks/ builds',
         lic_fonts: 'this page', lic_qr: 'catalog cards',
         foot: 'XR needs HTTPS and a capable browser; camera/mic/geolocation ask on entry.',
         loading: 'Loading…', empty: 'Nothing yet.',
         err: 'Could not load the experiment list.',
         open: 'Open →',
-        sec_xrblocks_title: 'XR Blocks experiences',
-        sec_xrblocks_note: 'Google XR Blocks + three.js · no build · Quest 3 / Android XR / simulator',
         sec_8thwall_title: '8th Wall',
+        sec_iwsdk_title: 'Meta IWSDK',
+        sec_iwsdk_note: 'WebXR MR · Quest 3 / Android XR · built from apps/',
         sec_8thwall_note: 'A-Frame · camera AR on the phone',
       },
     };
@@ -164,7 +161,7 @@
 
     const desc = (e) => (LANG === 'ru' && e.description_ru) ? e.description_ru : e.description;
     const card = (e) => {
-      const target = hrefFor(e);
+      const target = e.path;
       const url = new URL(target, window.location.href).href;
       const tags = (e.tags || []).map((tag) => `<span>${tag}</span>`).join('');
       return `
@@ -185,7 +182,7 @@
     // Секции каталога: порядок ключей = порядок на странице. Заголовки
     // берутся из I18N, чтобы переключение RU/EN пересобирало и секции.
     const SECTIONS = () => ({
-      xrblocks: { title: t('sec_xrblocks_title'), note: t('sec_xrblocks_note') },
+      'iwsdk': { title: t('sec_iwsdk_title'), note: t('sec_iwsdk_note') },
       '8thwall': { title: t('sec_8thwall_title'), note: t('sec_8thwall_note') },
     });
     function render() {
@@ -200,13 +197,7 @@
       }).join('') || `<p class="empty">${t('empty')}</p>`;
     }
     let ENTRIES = [];
-    // Десктоп сразу падает в симулятор: flat-десктоп без WebXR иначе показывает
-    // только entry-экран с кнопкой. Тач-устройствам — чистый URL (там свой AR-вход).
-    const isTouchDevice = () =>
-      window.matchMedia?.('(pointer: coarse)').matches ||
-      'ontouchstart' in window || navigator.maxTouchPoints > 0;
-    const hrefFor = (e) => (e.stack === 'xrblocks' && !isTouchDevice())
-      ? `${e.path}?formFactor=desktop` : e.path;
+    // Каталог собирается из активных 8th Wall приложений (manifest.json от build-all).
     (async () => {
       try {
         const res = await fetch('manifest.json');

@@ -1,12 +1,14 @@
-// build-all.js — builds active 8th Wall WebAR apps and assembles them into _site/.
-// Google XR Blocks is intentionally gone. New Meta IWSDK apps under apps/ build independently.
+// build-all.js — builds active 8th Wall WebAR apps and Meta IWSDK apps,
+// then assembles everything into _site/.
+// Google XR Blocks is intentionally gone.
 
 const path = require('path')
 const fs = require('fs')
-const webpack = require('webpack')
+const {spawnSync} = require('child_process')
 
 const root = path.join(__dirname, '..')
 const wallDir = path.join(root, '8thwall')
+const appsDir = path.join(root, 'apps')
 const siteDir = path.join(root, '_site')
 
 const isDir = (p) => fs.existsSync(p) && fs.statSync(p).isDirectory()
@@ -18,6 +20,14 @@ function listWall() {
   if (!isDir(wallDir)) return []
   return fs.readdirSync(wallDir)
     .filter((d) => isDir(path.join(wallDir, d)))
+    .sort()
+}
+
+// Meta IWSDK apps: any apps/<name> with a package.json.
+function listApps() {
+  if (!isDir(appsDir)) return []
+  return fs.readdirSync(appsDir)
+    .filter((d) => isDir(path.join(appsDir, d)) && fs.existsSync(path.join(appsDir, d, 'package.json')))
     .sort()
 }
 
@@ -71,7 +81,15 @@ function buildOne(name) {
   })
 }
 
-function assemble(wallNames) {
+function buildApp(name) {
+  const appDir = path.join(appsDir, name)
+  const run = (args) =>
+    spawnSync(`npm ${args.map((a) => `"${a}"`).join(' ')}`, {stdio: 'inherit', shell: true, cwd: appDir}).status === 0
+  if (!run(['ci', '--no-fund', '--no-audit'])) throw new Error(`npm ci failed for IWSDK app "${name}"`)
+  if (!run(['run', 'build'])) throw new Error(`Build failed for IWSDK app "${name}"`)
+}
+
+function assemble(wallNames, appNames) {
   fs.rmSync(siteDir, {recursive: true, force: true})
   fs.mkdirSync(path.join(siteDir, '8thwall'), {recursive: true})
 
@@ -87,6 +105,14 @@ function assemble(wallNames) {
     fs.cpSync(dist, path.join(siteDir, '8thwall', name), {recursive: true})
     manifest.push({stack: '8thwall', name, path: `8thwall/${name}/`, ...readMeta(wallDir, name)})
   }
+  // Meta IWSDK: vite output from dist/.
+  if (appNames.length > 0) fs.mkdirSync(path.join(siteDir, 'iwsdk'), {recursive: true})
+  for (const name of appNames) {
+    const dist = path.join(appsDir, name, 'dist')
+    if (!isDir(dist)) throw new Error(`IWSDK app "${name}" produced no dist/`)
+    fs.cpSync(dist, path.join(siteDir, 'iwsdk', name), {recursive: true})
+    manifest.push({stack: 'iwsdk', name, path: `iwsdk/${name}/`, ...readMeta(appsDir, name)})
+  }
 
   fs.writeFileSync(path.join(siteDir, 'manifest.json'), JSON.stringify(manifest, null, 2))
   return manifest
@@ -94,13 +120,17 @@ function assemble(wallNames) {
 
 async function main() {
   const wallNames = listWall()
-  if (wallNames.length === 0) console.warn('No apps found in 8thwall/ — nothing to build.')
+  const appNames = listApps()
   const rebuild = process.argv.includes('--rebuild-8thwall') || wallNames.some((name) => !isDir(path.join(wallDir, name, 'dist')))
   for (const name of rebuild ? wallNames : []) {
     console.log(`\n=== Building ${name} ===`)
     await buildOne(name)
   }
-  const manifest = assemble(wallNames)
+  for (const name of appNames) {
+    console.log(`\n=== Building IWSDK ${name} ===`)
+    buildApp(name)
+  }
+  const manifest = assemble(wallNames, appNames)
   console.log(`\nAssembled ${manifest.length} experience(s) into _site/`)
 }
 

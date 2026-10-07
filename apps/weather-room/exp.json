@@ -1,0 +1,6 @@
+{
+  "title": "WEATHER//ROOM",
+  "description": "Your room manifests local weather from Open-Meteo: rain, wind, clouds, temperature and pressure around you, with a -24h/NOW/+24h spatial timeline. Quest 3 mixed reality.",
+  "description_ru": "Комната проявляет местную погоду с Open-Meteo: дождь, ветер, облака, температура и давление вокруг вас и временная шкала -24ч/СЕЙЧАС/+24ч. Quest 3 MR.",
+  "tags": ["WebXR", "Meta IWSDK", "Quest 3", "Open-Meteo"]
+}

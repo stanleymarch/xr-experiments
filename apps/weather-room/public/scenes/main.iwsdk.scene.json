@@ -1,0 +1,36 @@
+{
+  "version": "iwsdk.scene.v1",
+  "units": "meters",
+  "components": {
+    "com.iwsdk.components.IBLGradient": {
+      "sky": [0.62, 0.7, 0.78, 1],
+      "equator": [0.6, 0.66, 0.74, 1],
+      "ground": [0.72, 0.7, 0.68, 1],
+      "intensity": 1
+    }
+  },
+  "resources": {},
+  "nodes": [
+    {
+      "id": "weather-panel",
+      "name": "Weather Panel",
+      "content": {
+        "type": "asset",
+        "asset": "weather-panel"
+      },
+      "transform": {
+        "position": [-0.85, 1.82, -1.2],
+        "scale": 0.25
+      },
+      "components": {
+        "RayInteractable": {},
+        "ScreenSpace": {
+          "top": "20px",
+          "left": "20px",
+          "width": "25vw",
+          "height": "40%"
+        }
+      }
+    }
+  ]
+}

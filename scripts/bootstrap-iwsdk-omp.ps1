@@ -535,11 +535,8 @@ Write-Host "Launch prompt:      .omp/prompts/weather-room.md"
 Write-Host ""
 Write-Host "No PAYG provider was configured. Model selectors came from your local OMP catalog."
 
-Write-Host ""
-Write-Host "OMP was not launched automatically." -ForegroundColor Green
-Write-Host "Open OMP yourself from the repository root and use the prepared task:"
-Write-Host "  .omp/prompts/weather-room.md"
-Write-Host ""
-Write-Host "Optional: copy the task to clipboard with:"
-Write-Host '  Get-Content .\.omp\prompts\weather-room.md -Raw | Set-Clipboard'
-Write-Host ""
+if (-not $NoLaunch) {
+  Say "Launching OMP with WEATHER//ROOM task"
+  $prompt = Get-Content (Join-Path $promptsDir "weather-room.md") -Raw
+  & omp -p $prompt
+}

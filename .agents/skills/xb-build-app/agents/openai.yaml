@@ -1,6 +1,0 @@
-interface:
-  display_name: 'Build an XR Blocks App'
-  short_description: 'Deliver a complete XR Blocks experience slice'
-  default_prompt: 'Use $xb-build-app to build a complete, testable XR Blocks experience from this request.'
-policy:
-  allow_implicit_invocation: true

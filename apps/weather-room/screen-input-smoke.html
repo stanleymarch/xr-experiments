@@ -64,6 +64,56 @@ try {
   timelineSystem.update();
   if (Math.abs(knob.position.x - 0.3) > 0.0001 || Math.abs(knob.position.y) > 0.0001) throw new Error('Released knob did not re-seat on the rail at the scrubbed hour');
   {
+    // Whole-control move grip: translation plus yaw-only rotation through
+    // the real createGripDriver. Yaw must accumulate hand deltas exactly
+    // once (a held-steady rotation must not spin the root), pitch/roll
+    // must stay untouched, and release must surface once.
+    const { buildMoveGrip, createGripDriver } = await import('./src/weather/control-placement.ts');
+    const { Grabbed: G2, Group, Quaternion: Qt, Vector3: V3 } = await import('@iwsdk/core');
+    const grip = buildMoveGrip('Smoke Move Grip', 0.2, 0.03, 0.03);
+    const root = new Group();
+    world.createTransformEntity(root);
+    const gripEntity = world.createTransformEntity(grip.group);
+    const nearEntity = world.createTransformEntity(grip.near, { parent: gripEntity });
+    const farEntity = world.createTransformEntity(grip.far, { parent: gripEntity });
+    const driver = createGripDriver(world, nearEntity, farEntity, grip, { yaw: true });
+    const yawOf = (q) => Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.x * q.x));
+    const axisY = new V3(0, 1, 0);
+    // Model the grab system: each frame it applies that frame's pose delta
+    // on top of the grip's pinned rest transform.
+    const handYaw = (deg) => {
+      grip.near.quaternion.copy(new Qt().setFromAxisAngle(axisY, (deg * Math.PI) / 180));
+      grip.near.updateWorldMatrix(true, false);
+    };
+    root.updateMatrixWorld(true);
+    nearEntity.addComponent(G2, {});
+    driver.update(root);
+    handYaw(35);
+    driver.update(root);
+    if (Math.abs(yawOf(root.quaternion) - (35 * Math.PI) / 180) > 0.02) throw new Error(`Grip yaw did not rotate the root (got ${((yawOf(root.quaternion) * 180) / Math.PI).toFixed(1)} deg)`);
+    handYaw(0);
+    driver.update(root);
+    driver.update(root);
+    if (Math.abs(yawOf(root.quaternion) - (35 * Math.PI) / 180) > 0.02) throw new Error('Held-steady rotation spun the root (yaw must apply once per hand delta)');
+    if (Math.abs(root.rotation.x) > 0.001 || Math.abs(root.rotation.z) > 0.001) throw new Error('Yaw move must not pitch or roll the root');
+    handYaw(55);
+    driver.update(root);
+    if (Math.abs(yawOf(root.quaternion) - (90 * Math.PI) / 180) > 0.02) throw new Error(`Cumulative yaw wrong (got ${((yawOf(root.quaternion) * 180) / Math.PI).toFixed(1)} deg)`);
+    grip.near.position.x += 0.15;
+    grip.near.updateWorldMatrix(true, false);
+    driver.update(root);
+    if (Math.abs(root.position.x - 0.15) > 0.02) throw new Error(`Translation regressed (root x ${root.position.x.toFixed(3)})`);
+    nearEntity.removeComponent(G2, {});
+    driver.update(root);
+    if (!driver.consumeReleased()) throw new Error('Release must surface exactly once');
+    if (driver.consumeReleased()) throw new Error('Release flag must clear after reading');
+    nearEntity.dispose();
+    farEntity.dispose();
+    gripEntity.dispose();
+    grip.near.geometry.dispose();
+    grip.material.dispose();
+  }
+  {
     const { roomModel } = await import('./src/weather/room.ts');
     const { Mesh, PlaneGeometry, MeshBasicMaterial, Vector3 } = await import('@iwsdk/core');
     const floor = new Mesh(new PlaneGeometry(3, 3, 40, 40), new MeshBasicMaterial());

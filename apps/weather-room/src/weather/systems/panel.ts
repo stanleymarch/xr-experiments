@@ -172,15 +172,22 @@ export class PanelSystem extends createSystem({
       tick();
       toggleLanguage();
     };
-    // Minimal preset cycler: each press advances the manual location through
-    // LOCATION_PRESETS and reloads (same path as Reload). Clearing back to
-    // auto lives in the browser DOM panel, which has room for a full picker.
+    // Location cycler: Авто (device/IP) -> each preset -> back to Авто.
+    // One press = one step plus reload, so the viewer can reach their own
+    // coordinates from inside XR where only the spatial panel exists.
     const cycleLocation = () => {
       tick();
       const currentManual = getManualLocation();
-      const index = LOCATION_PRESETS.findIndex((preset) => preset.label === currentManual?.label);
-      const next = LOCATION_PRESETS[(index + 1) % LOCATION_PRESETS.length];
-      setManualLocation({ latitude: next.latitude, longitude: next.longitude, label: next.label });
+      const index =
+        currentManual == null
+          ? -1
+          : LOCATION_PRESETS.findIndex((preset) => preset.label === currentManual.label);
+      const next = LOCATION_PRESETS[index + 1];
+      if (next == null) {
+        setManualLocation(null);
+      } else {
+        setManualLocation({ latitude: next.latitude, longitude: next.longitude, label: next.label });
+      }
       void reloadWeather();
     };
     backButton?.addEventListener('click', stepBack);
@@ -283,7 +290,9 @@ export class PanelSystem extends createSystem({
       movementMode: MovementMode.MoveAtSource,
       returnToOrigin: false,
     });
-    this.moveDriver = createGripDriver(this.world, this.moveNearEntity, this.moveFarEntity, grip);
+    this.moveDriver = createGripDriver(this.world, this.moveNearEntity, this.moveFarEntity, grip, {
+      yaw: true,
+    });
   }
 
   /** Re-seat beneath the panel on new-session placement. */
@@ -305,6 +314,10 @@ export class PanelSystem extends createSystem({
     const panelObject = this.world.getSceneObject<UIKitMLAsset>('weather-panel');
     if (this.moveDriver != null && panelObject != null) {
       this.moveDriver.update(panelObject);
+      // After a yawing hold the grip bar must follow the panel's new
+      // orientation; position is re-derived from the panel in the same
+      // pass so the bar always sits at the panel's bottom edge.
+      if (this.moveDriver.consumeReleased()) this.seatMoveGrip(panelObject);
     }
     if (this.needsPlacement) {
       const panel = panelObject ?? this.world.getSceneObject<UIKitMLAsset>('weather-panel');
@@ -444,10 +457,8 @@ export class PanelSystem extends createSystem({
     setLabel('exit-label', t('exit'));
     setLabel('lang-label', t('langName'));
     setLabel('timeline-hint', t('timelineHint'));
-    const manual = getManualLocation();
-    // Spatial cycler label stays one short token (70 px button): preset city
-    // short name or Loc/Место. The full manual/auto state lives in the DOM.
-    const shortCity = manual != null ? manual.label.split(/[ ,]/)[0] : null;
-    setLabel('location-label', shortCity ?? (getLanguage() === 'ru' ? 'Место' : 'Loc'));
+    // Spatial cycler label stays one short token (70 px button) while the
+    // location line carries the full manual/auto place with provenance.
+    setLabel('location-label', t('locationLabelPrefix'));
   }
 }

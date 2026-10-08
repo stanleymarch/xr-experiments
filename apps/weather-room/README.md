@@ -150,15 +150,37 @@ physical-device clicks remain unverified.
 The panel and the entire timeline each have a cyan move bar, separate from
 the panel buttons and time knob. Hold the bar with a nearby controller's
 squeeze or a hand pinch, move, then release. A controller ray can also move
-either bar by holding its trigger. Movement is translation-only: orientation
-stays stable, the other control stays put, and moving the rail does not scrub
-time. Hover/hold glow and controller haptics acknowledge the gesture.
+either bar by holding its trigger. The bar translates the control; on the
+panel the same hold also turns it in place by the hand's yaw (pitch and roll
+are ignored so the text never tips away), and the bar re-seats under the
+panel after release. Moving the rail never scrubs time. Hover/hold glow and
+controller haptics acknowledge the gesture.
 
 Released positions persist for the current XR session, including focus
 transitions. A new XR session places the panel 1.5 m forward / 0.3 m above
 the viewer and the rail at its placement described above; positions are not
 saved across sessions. Near and ray grab components use separate entities:
 the SDK installs only one grab handle per entity.
+
+### Showing the weather for your own place
+
+The location control cycles: **auto (device/IP)** -> each preset city ->
+back to auto. In immersive mode this is the spatial `Место` / `Location`
+button, so the viewer can reach their own coordinates without leaving XR; the
+browser HUD additionally has a `My location` (`Моё место`) button and a
+`lat, lon` entry with a hint line. The location line always names the
+provenance: `55.86°, -4.25° (вручную)` for manual coordinates, `По IP (Berlin)`
+for IP-based lookup, and `устройство` when the device geolocation
+answers. Auto lookups depend on the network: on the test headset network the
+IP lookup resolves to Berlin, which the label shows honestly rather than
+pretending it is the viewer's city.
+
+Short viewports: the browser HUD switches to a compact layout below 700 px
+height (the Quest Browser window is ~587 px tall), and the Reload / Enter AR
+row is sticky at the panel bottom, so the immersion button stays reachable
+without scrolling. The spatial panel splits its controls into two rows
+(Enter AR / Exit above Reload / Location / RU) so five 70 px buttons no
+longer overflow the 296 px content width.
 
 ## Typography
 
@@ -230,9 +252,33 @@ The first measured hit remained available after the probe sampler updated.
 
 Cloud fragment work was reduced from seven layers of nine simplex-noise
 evaluations per pixel to three layers sharing one RG texture sample. The
-room-grid rebuild is bounded too. The current device query returned no Quest,
-so disappearance of the reported cloud freezes, native passthrough visibility,
-and contact with the user's actual floor/table remain physical-device checks.
+room-grid rebuild is bounded too.
+
+### Physical Quest 3 check (2026-10-08, serial 2G0YC5ZG5203DD)
+
+Rain visibility was verified on the real headset in `immersive-ar` (Rome,
+`NOW`, thunderstorm, 2.9 mm/h live Open-Meteo). Three Meta Cam captures
+(`artifacts/xr-rome-rain-1..3.png`, JPEG payloads) were captured ~2 s apart
+and measured: 141-145 tall thin blue-bright vertical runs per frame (rain
+streaks), and 1.77% / 0.81% of pixels changing between frames with the same
+hot regions - animated falling streaks while the static room contributes
+almost nothing. Mean luma ~76 (normal passthrough view). Device logcat
+showed no render errors during the run. The earlier "no rain" report was a
+data state: the stored manual location showed 0.0 mm/h at that hour, so there
+was nothing to render.
+
+Local capture notes: Android `screencap` writes empty files on this device
+(VR compositor), so captures use Meta Cam through `metavr capture screenshot`
+and are written as JPEG with a `.png` extension. The headset sleeps on
+standby and ends the XR session; automation keeps it awake with
+`svc power stayon` plus proximity broadcasts. A wedged XR daemon (session
+ended by sleep) rejects session requests with "session configuration is not
+supported" until the browser process is restarted.
+
+Still unverified on hardware: disappearance of the reported cloud freezes,
+frame pacing/comfort during storm conditions, and splash contact against the
+user's own furniture (splashes use the sampled room grid; the capture room
+was not scanned in this run).
 
 ## Verified in this workstation session
 

@@ -254,6 +254,29 @@ const CSS = `
   color: #94aac8;
   font-variant-numeric: tabular-nums;
 }
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-utility {
+  position: sticky;
+  bottom: -1px;
+  z-index: 2;
+  margin-top: 8px;
+  padding: 8px 0 2px;
+  background: linear-gradient(to bottom, rgba(13, 25, 48, 0), rgba(13, 25, 48, 0.96) 30%);
+}
+@media (max-height: 700px) {
+  #${BROWSER_PANEL_ROOT_ID} {
+    padding: 10px 12px 10px;
+    font-size: 13px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="time-line"] {
+    font-size: 18px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="weather-hero"] {
+    font-size: 21px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="weather-line"] {
+    font-size: 14px;
+  }
+}
 @media (max-height: 500px) {
   #${BROWSER_PANEL_ROOT_ID} {
     width: min(340px, calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
@@ -303,6 +326,7 @@ export class BrowserPanelSystem extends createSystem({}) {
   private locationApply: HTMLButtonElement | null = null;
   private locationClear: HTMLButtonElement | null = null;
   private locationError: HTMLElement | null = null;
+  private locationHintEl: HTMLElement | null = null;
   private unsubscribeLanguage: (() => void) | null = null;
   private dirty = true;
   private scrubPointer: number | null = null;
@@ -640,10 +664,15 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.locationError.className = 'browser-panel-note';
     root.appendChild(this.locationError);
 
+    // One short hint line: how to show weather for your own place.
+    this.locationHintEl = el('p', 'location-hint', t('locationHint'));
+    this.locationHintEl.className = 'browser-panel-note';
+    root.appendChild(this.locationHintEl);
+
     // One small utility row (Reload + Enter/Exit): chrome reduction so the
     // hero readout, not buttons, dominates the panel. Testids preserved.
     const xrRow = document.createElement('div');
-    xrRow.className = 'browser-panel-row';
+    xrRow.className = 'browser-panel-row browser-panel-utility';
     xrRow.setAttribute('role', 'group');
     xrRow.setAttribute('aria-label', 'Immersive session controls');
     this.enterButton = document.createElement('button');
@@ -847,6 +876,7 @@ export class BrowserPanelSystem extends createSystem({}) {
     if (this.locationInput != null) this.locationInput.placeholder = t('locationPlaceholder');
     if (this.locationApply != null) this.locationApply.textContent = t('locationApply');
     if (this.locationClear != null) this.locationClear.textContent = t('locationClear');
+    if (this.locationHintEl != null) this.locationHintEl.textContent = t('locationHint');
     if (this.locationError != null && this.locationError.textContent !== '') {
       this.locationError.textContent = t('locationInvalid');
     }

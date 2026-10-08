@@ -220,20 +220,22 @@
     </Button>
   </div>
   <div class="xr-row">
-    <Button id="reload-button" class="control-button" variant="tertiary">
-      <ButtonLabel id="reload-label" class="button-label">Reload</ButtonLabel>
-    </Button>
     <Button id="xr-button" class="control-button" variant="primary">
       <ButtonLabel id="xr-label" class="button-label">Enter AR</ButtonLabel>
     </Button>
     <Button id="exit-button" class="control-button" variant="tertiary">
       <ButtonLabel id="exit-label" class="button-label">Exit</ButtonLabel>
     </Button>
-    <Button id="lang-button" class="control-button" variant="tertiary">
-      <ButtonLabel id="lang-label" class="button-label">RU</ButtonLabel>
+  </div>
+  <div class="xr-row">
+    <Button id="reload-button" class="control-button" variant="tertiary">
+      <ButtonLabel id="reload-label" class="button-label">Reload</ButtonLabel>
     </Button>
     <Button id="location-button" class="control-button" variant="tertiary">
-      <ButtonLabel id="location-label" class="button-label">Loc</ButtonLabel>
+      <ButtonLabel id="location-label" class="button-label">Location</ButtonLabel>
+    </Button>
+    <Button id="lang-button" class="control-button" variant="tertiary">
+      <ButtonLabel id="lang-label" class="button-label">RU</ButtonLabel>
     </Button>
   </div>
 </Panel>

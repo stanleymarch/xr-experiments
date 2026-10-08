@@ -130,6 +130,29 @@ export function buildMoveGrip(name: string, widthM: number, heightM: number, dep
  */
 export interface GripDriver {
   update(root: Object3D): void;
+  /**
+   * True exactly once after a grab ends, so the owner can re-seat visuals
+   * that follow a rotated root (e.g. rebuild the grip's rest yaw).
+   */
+  consumeReleased(): boolean;
+}
+
+/** Optional per-driver behaviour. Translation is always applied. */
+export interface GripDriverOptions {
+  /**
+   * Turn `root` in place by the held hand's yaw delta; pitch/roll stay
+   * fixed so a text panel never tips away from the reader.
+   */
+  readonly yaw?: boolean;
+}
+
+const yawAxis = new Vector3(0, 1, 0);
+const heldQuat = new Quaternion();
+const yawQuat = new Quaternion();
+
+/** Signed yaw (Y rotation) encoded in a quaternion. */
+function yawFromQuaternion(q: Quaternion): number {
+  return Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.x * q.x));
 }
 
 export function createGripDriver(
@@ -137,11 +160,25 @@ export function createGripDriver(
   nearEntity: Entity,
   farEntity: Entity,
   grip: MoveGrip,
+  options?: GripDriverOptions,
 ): GripDriver {
+  const yawEnabled = options?.yaw === true;
   const follow = createGripFollowState();
   captureGripRest(grip.near, follow);
+  // Grab applies per-frame deltas to the pinned rest pose (proven by the
+  // 1:1 translation path), so the measured yaw is compared against the
+  // pinned rest yaw and each frame contributes its own increment once.
+  const restQuat = new Quaternion();
+  grip.near.getWorldQuaternion(restQuat);
+  const restYaw = yawFromQuaternion(restQuat);
   let active: Mesh | null = null;
+  let released = false;
   return {
+    consumeReleased(): boolean {
+      const value = released;
+      released = false;
+      return value;
+    },
     update(root: Object3D): void {
       const held = nearEntity.hasComponent(Grabbed)
         ? grip.near
@@ -159,9 +196,20 @@ export function createGripDriver(
           grip.far.position.copy(follow.restPosition);
           grip.far.quaternion.copy(follow.restQuaternion);
           pulseHaptics(world, Haptics.settle.intensity, Haptics.settle.durationMs);
+          released = true;
         }
       }
       if (active != null) {
+        // Yaw first: read the hand's rotation before the grip is pinned
+        // back to its rest transform below.
+        if (yawEnabled) {
+          active.getWorldQuaternion(heldQuat);
+          const delta = yawFromQuaternion(heldQuat) - restYaw;
+          const wrapped = Math.atan2(Math.sin(delta), Math.cos(delta));
+          if (Math.abs(wrapped) > 0.0005) {
+            root.quaternion.multiply(yawQuat.setFromAxisAngle(yawAxis, wrapped));
+          }
+        }
         stepGripFollow(root, active, follow);
         // The panel grip is scene-level; the rail grip is a rail child.
         if (grip.group.parent !== root) {

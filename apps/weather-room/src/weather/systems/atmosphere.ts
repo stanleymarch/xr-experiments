@@ -29,7 +29,7 @@ import {
 import { Vector3 } from '@iwsdk/core';
 import type { Entity } from '@iwsdk/core';
 import { roomModel } from '../room.js';
-import { weatherStore } from '../weather-state.js';
+import { weatherEvents, weatherStore } from '../weather-state.js';
 import { windVectorFromFrame } from '../wind-shared.js';
  
 const FOG_CLEAR = 0.006;
@@ -313,6 +313,7 @@ export class AtmosphereSystem extends createSystem({}) {
       if (this.flashT < 0 && time >= this.nextFlashAt) {
         this.flashT = 0;
         this.flashPeak = 0.9 + Math.random() * 0.5;
+        weatherEvents.emit('thunder');
       }
       if (this.flashT >= 0) {
         this.flashT += delta;

@@ -321,7 +321,13 @@ export async function loadWeather(previous?: WeatherDataset): Promise<WeatherFet
       status: { kind: 'ready' },
     };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    // AbortError reads as "signal is aborted without reason" — say it plainly.
+    const reason =
+      error instanceof DOMException && error.name === 'AbortError'
+        ? 'weather service timed out'
+        : error instanceof Error
+          ? error.message
+          : String(error);
     return {
       dataset: {
         ...buildDemoDataset(),

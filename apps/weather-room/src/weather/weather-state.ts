@@ -336,5 +336,35 @@ class WeatherStore {
   }
 }
 
+type WeatherEventHandler = () => void;
+
+/**
+ * Tiny synchronous event bus for cross-cutting moments (thunder flash,
+ * timeline grab/snap) that audio and haptics subscribe to. Framework-neutral
+ * like the store itself.
+ */
+class WeatherEvents {
+  private readonly handlers = new Map<string, Set<WeatherEventHandler>>();
+
+  on(event: string, handler: WeatherEventHandler): () => void {
+    let set = this.handlers.get(event);
+    if (set == null) {
+      set = new Set();
+      this.handlers.set(event, set);
+    }
+    set.add(handler);
+    return () => set.delete(handler);
+  }
+
+  emit(event: string): void {
+    const set = this.handlers.get(event);
+    if (set == null) return;
+    for (const handler of set) handler();
+  }
+}
+
+/** App-wide singleton for scene moments. */
+export const weatherEvents = new WeatherEvents();
+
 /** App-wide singleton; the only shared mutable weather state. */
 export const weatherStore = new WeatherStore();

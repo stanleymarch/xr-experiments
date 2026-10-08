@@ -7,6 +7,7 @@
 import { World } from '@iwsdk/core';
 import projectOptions from 'virtual:iwsdk-project';
 import { AtmosphereSystem } from './weather/systems/atmosphere.js';
+import { WeatherAudioSystem } from './weather/systems/audio.js';
 import { BrowserPanelSystem } from './weather/systems/browser-panel.js';
 import { ScreenInputSystem } from './weather/systems/screen-input.js';
 import { PanelSystem } from './weather/systems/panel.js';
@@ -30,6 +31,7 @@ const boot = (world: World): void => {
   world.registerSystem(AtmosphereSystem, { priority: 34 });
   world.registerSystem(TemperatureSystem, { priority: 35 });
   world.registerSystem(TimelineSystem, { priority: 36 });
+  world.registerSystem(WeatherAudioSystem, { priority: 36.5 });
   world.registerSystem(PanelSystem, { priority: 37 });
   world.registerSystem(BrowserPanelSystem, { priority: 38 });
 };

@@ -33,7 +33,7 @@ import {
 } from '../../scene-assets/timeline-control.scene-asset.js';
 import { TimelineHandle } from '../components/timeline-handle.js';
 import { placeControlAtViewer } from '../control-placement.js';
-import { PLAYHEAD_MAX_H, PLAYHEAD_MIN_H, weatherStore } from '../weather-state.js';
+import { PLAYHEAD_MAX_H, PLAYHEAD_MIN_H, weatherEvents, weatherStore } from '../weather-state.js';
 
 const RAIL_HALF = TIMELINE_TRAVEL_HALF;
 const SNAP_HOURS = 0.75;
@@ -67,9 +67,12 @@ export class TimelineSystem extends createSystem({
       }),
       this.queries.grabbed.subscribe('qualify', (entity) => {
         this.grabbedHandle = entity;
+        weatherEvents.emit('timeline-grab');
+        this.pulseControllers(0.5, 40);
       }),
       this.queries.grabbed.subscribe('disqualify', () => {
         this.grabbedHandle = null;
+        weatherEvents.emit('timeline-release');
       }),
     );
     // elics `System.init()` is synchronous and never awaited (no official
@@ -161,8 +164,14 @@ export class TimelineSystem extends createSystem({
       const localX = Math.max(-RAIL_HALF, Math.min(RAIL_HALF, this.handleWorld.x));
       const t = (localX + RAIL_HALF) / (RAIL_HALF * 2);
       const hours = PLAYHEAD_MIN_H + t * (PLAYHEAD_MAX_H - PLAYHEAD_MIN_H);
-      if (Math.abs(hours) <= SNAP_HOURS) weatherStore.goLive();
-      else weatherStore.setPlayhead(hours);
+      if (Math.abs(hours) <= SNAP_HOURS) {
+        if (!state.isLive) {
+          weatherEvents.emit('timeline-snap');
+          this.pulseControllers(0.3, 25);
+          window.setTimeout(() => this.pulseControllers(0.6, 60), 70);
+        }
+        weatherStore.goLive();
+      } else weatherStore.setPlayhead(hours);
       knobX = localX;
     } else {
       // Released: keep the knob where the playhead says it is.
@@ -175,6 +184,20 @@ export class TimelineSystem extends createSystem({
     if (this.fillMesh != null) {
       const clamped = Math.max(-RAIL_HALF, Math.min(RAIL_HALF, knobX));
       this.fillMesh.scale.x = Math.abs(clamped) < 0.0001 ? 0.0001 : clamped;
+    }
+  }
+
+  /**
+   * Pulse every connected XR controller. WebXR gamepads expose
+   * hapticActuators[].pulse(); guarded because hands and desktop lack them.
+   */
+  private pulseControllers(intensity: number, durationMs: number): void {
+    const session = this.world.renderer.xr.getSession();
+    if (session == null) return;
+    for (const source of session.inputSources) {
+      const actuators = (source.gamepad as (Gamepad & { hapticActuators?: { pulse(v: number, ms: number): Promise<boolean> }[] }) | null)
+        ?.hapticActuators ?? [];
+      for (const actuator of actuators) void actuator.pulse(intensity, durationMs).catch(() => undefined);
     }
   }
 }

@@ -7,3 +7,5 @@ tools/
 apps/*/artifacts/
 
 .tmp
+
+apps/*/dev/

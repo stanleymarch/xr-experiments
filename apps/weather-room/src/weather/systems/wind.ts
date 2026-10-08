@@ -12,7 +12,7 @@
  */
 
 import {
-  AdditiveBlending,
+  NormalBlending,
   createSystem,
   DoubleSide,
   DynamicDrawUsage,
@@ -148,7 +148,7 @@ export class WindSystem extends createSystem({}) {
       transparent: true,
       depthWrite: false,
       side: DoubleSide,
-      blending: AdditiveBlending,
+      blending: NormalBlending,
     });
     this.streaks = new InstancedMesh(streakGeo, this.streakMat, STREAK_FULL);
     this.streaks.frustumCulled = false;
@@ -168,7 +168,7 @@ export class WindSystem extends createSystem({}) {
       transparent: true,
       depthWrite: false,
       side: DoubleSide,
-      blending: AdditiveBlending,
+      blending: NormalBlending,
     });
     this.sparks = new InstancedMesh(sparkGeo, this.sparkMat, SPARK_FULL);
     this.sparks.frustumCulled = false;
@@ -228,7 +228,7 @@ export class WindSystem extends createSystem({}) {
     const dirX = hasWind ? this.wind.x / dirLen : 1;
     const dirZ = hasWind ? this.wind.z / dirLen : 0;
     // Cylindrical-billboard basis: local X of the quad in world space.
-    this.world.camera.getWorldPosition(this.cameraPos);
+    (this.xrManager.isPresenting ? this.world.player.head : this.world.camera).getWorldPosition(this.cameraPos);
     const yaw = Math.atan2(
       this.cameraPos.x - (min.x + spanX / 2),
       this.cameraPos.z - (min.z + spanZ / 2),
@@ -274,6 +274,8 @@ export class WindSystem extends createSystem({}) {
       else if (this.streakHeads[hx + 2] > max.z) this.streakHeads[hx + 2] -= spanZ;
       if (this.streakHeads[hx + 1] < min.y + 0.15) this.streakHeads[hx + 1] = min.y + 0.15;
       else if (this.streakHeads[hx + 1] > max.y - 0.12) this.streakHeads[hx + 1] = max.y - 0.12;
+      const yaw = Math.atan2(this.cameraPos.x - this.streakHeads[hx], this.cameraPos.z - this.streakHeads[hx + 2]);
+      const cosYaw = Math.cos(yaw), sinYaw = Math.sin(yaw);
       // Roll the filament onto the flow as seen by the camera.
       const roll = Math.atan2(flowY, flowX * cosYaw - flowZ * sinYaw);
       const length = (0.3 + strength * 1.05) * (0.55 + 0.9 * ((seed * 13.7) % 1));
@@ -311,6 +313,7 @@ export class WindSystem extends createSystem({}) {
       else if (this.sparkPos[sx + 1] > max.y - 0.1) this.sparkPos[sx + 1] = max.y - 0.1;
       this.sparkAlphas[i] = sparkAlpha * (0.4 + 0.6 * ((seed * 5.7) % 1));
       this.dummy.position.set(this.sparkPos[sx], this.sparkPos[sx + 1], this.sparkPos[sx + 2]);
+      const yaw = Math.atan2(this.cameraPos.x - this.sparkPos[sx], this.cameraPos.z - this.sparkPos[sx + 2]);
       this.dummy.rotation.set(0, yaw, 0);
       this.dummy.scale.setScalar(0.012 + 0.014 * ((seed * 3.3) % 1));
       this.dummy.updateMatrix();

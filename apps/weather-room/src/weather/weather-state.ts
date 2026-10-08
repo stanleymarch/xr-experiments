@@ -256,8 +256,16 @@ function frameFromHour(dataset: WeatherDataset, hour: WeatherDataset['hours'][nu
 
 /** Neutral fallbacks mirror the visual systems' `??` defaults. */
 export function driversFromFrame(frame: WeatherFrame): WeatherDrivers {
-  const rain = frame.available.precipitationMm ? Math.min(1, frame.precipitationMm / 8) : 0;
-  const snow = frame.available.snowfallCm ? Math.min(1, frame.snowfallCm / 2) : 0;
+  const code = frame.available.weatherCode ? frame.weatherCode : 0;
+  const snowy = code === 71 || code === 73 || code === 75 || code === 77 || code === 85 || code === 86;
+  const precipitation = frame.available.precipitationMm ? Math.min(1, Math.max(0, frame.precipitationMm / 8)) : 0;
+  const rain = snowy ? 0 : precipitation;
+  // Some real providers report total precipitation + snow symbol but no
+  // snowfall depth. Use that measured rate for the visual driver only;
+  // the absent cm/h measurement remains absent in the dataset and panel.
+  const snow = frame.available.snowfallCm
+    ? Math.min(1, Math.max(0, frame.snowfallCm / 2))
+    : snowy ? precipitation : 0;
   const wind = frame.available.windSpeedKmh ? Math.min(1, frame.windSpeedKmh / 50) : 0;
   const gust = frame.available.windGustsKmh ? Math.min(1, frame.windGustsKmh / 80) : 0;
   const cloud = frame.available.cloudCoverPct ? Math.min(1, Math.max(0, frame.cloudCoverPct / 100)) : 0.3;
@@ -266,7 +274,6 @@ export function driversFromFrame(frame: WeatherFrame): WeatherDrivers {
   const pressure = frame.available.pressureHpa ? Math.min(1, Math.max(0, (frame.pressureHpa - 985) / 55)) : 0.5;
   const humidity = frame.available.humidityPct ? Math.min(1, Math.max(0, frame.humidityPct / 100)) : 0.5;
   const daylight = frame.available.isDay ? frame.isDay : 0.5;
-  const code = frame.available.weatherCode ? frame.weatherCode : 0;
   const lowVisibility = frame.available.visibilityM && frame.visibilityM <= 1200;
   return {
     rain, snow, wind, gust, cloud, warmth, pressure, humidity, daylight,

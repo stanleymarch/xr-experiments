@@ -6,6 +6,6 @@
  */
 
 import { defineComponents } from '@iwsdk/core';
-import { TimelineHandle } from './weather/components/timeline-handle.js';
+import { PanelMoveGrip, TimelineHandle, TimelineMoveGrip } from './weather/components/timeline-handle.js';
 
-export default defineComponents([TimelineHandle]);
+export default defineComponents([TimelineHandle, TimelineMoveGrip, PanelMoveGrip]);

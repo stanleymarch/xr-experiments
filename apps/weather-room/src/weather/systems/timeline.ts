@@ -25,10 +25,12 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
+  MovementMode,
   OneHandGrabbable,
   PlaneGeometry,
   RayInteractable,
   Vector3,
+  SphereGeometry,
   VisibilityState,
 } from '@iwsdk/core';
 import type { Entity, Object3D } from '@iwsdk/core';
@@ -38,8 +40,13 @@ import {
   TIMELINE_KNOB_REST_Z,
   TIMELINE_TRAVEL_HALF,
 } from '../../scene-assets/timeline-control.scene-asset.js';
-import { TimelineHandle } from '../components/timeline-handle.js';
-import { placeControlAtViewer } from '../control-placement.js';
+import { TimelineHandle, TimelineMoveGrip } from '../components/timeline-handle.js';
+import {
+  buildMoveGrip,
+  createGripDriver,
+  placeControlAtViewer,
+} from '../control-placement.js';
+import type { GripDriver, MoveGrip } from '../control-placement.js';
 import { PLAYHEAD_MAX_H, PLAYHEAD_MIN_H, WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
 import type { HourCrossedDetail } from '../weather-state.js';
 import { Haptics, pulseHaptics } from '../feedback.js';
@@ -62,15 +69,31 @@ const CUE_CARD_H = 0.028;
 const CUE_DOT_PITCH = 0.0075;
 const CUE_DOT_R = 0.0016;
 const CUE_TAG_OFFSET = new Vector3(0.0, 0.075, 0.055);
+/**
+ * Dedicated whole-rail move grip: a bar hung below the housing (clear of
+ * the TimeKnob travel band and the cue tag), sized for a comfortable pinch.
+ */
+const MOVE_GRIP_OFFSET = new Vector3(0.0, -0.075, 0.02);
+const MOVE_GRIP_SIZE: readonly [number, number, number] = [0.22, 0.03, 0.03];
 
 export class TimelineSystem extends createSystem({
   hovered: { required: [TimelineHandle, Hovered] },
   grabbed: { required: [TimelineHandle, Grabbed] },
   handles: { required: [TimelineHandle] },
+  moveHovered: { required: [TimelineMoveGrip, Hovered] },
+  moveGrabbed: { required: [TimelineMoveGrip, Grabbed] },
 }) {
   private railEntity: Entity | null = null;
   private handleEntity: Entity | null = null;
   private grabbedHandle: Entity | null = null;
+  /** Separate invisible ray target; never shares Object3D ownership. */
+  private scrubProxyEntity: Entity | null = null;
+  /** Dedicated whole-rail move grip (near + distance entities + driver). */
+  private moveGrip: MoveGrip | null = null;
+  private moveGripEntity: Entity | null = null;
+  private moveNearEntity: Entity | null = null;
+  private moveFarEntity: Entity | null = null;
+  private moveDriver: GripDriver | null = null;
   private needsPlacement = false;
   private placedInSession = false;
   private readonly handleWorld = new Vector3();
@@ -95,6 +118,11 @@ export class TimelineSystem extends createSystem({
         this.needsPlacement = state === VisibilityState.Visible && !this.placedInSession;
       }),
       this.queries.grabbed.subscribe('qualify', (entity) => {
+        // The shared `grabbed` query also matches the rail move-grip
+        // entities; only TimelineHandle holders (knob near entity or ray
+        // scrub proxy) drive the playhead. Move-grip feedback lives in its
+        // driver, so ignoring it here changes no bus behavior.
+        if (!entity.hasComponent(TimelineHandle)) return;
         this.grabbedHandle = entity;
         if (!this.cueRetired) {
           this.cueRetired = true;
@@ -182,10 +210,57 @@ export class TimelineSystem extends createSystem({
     this.handleEntity = this.world.createTransformEntity(knob, { parent: this.railEntity });
     this.handleEntity.addComponent(TimelineHandle, {});
     this.handleEntity.addComponent(RayInteractable, {});
-    this.handleEntity.addComponent(DistanceGrabbable, { rotate: false });
+    // SDK grab components are mutually exclusive on one entity.
     this.handleEntity.addComponent(OneHandGrabbable, { rotate: false });
+    const rayTarget = new Mesh(
+      new SphereGeometry(0.032, 12, 8),
+      new MeshBasicMaterial({ colorWrite: false, depthWrite: false }),
+    );
+    rayTarget.name = 'Weather Timeline Ray Handle';
+    rayTarget.position.copy(knob.position);
+    this.scrubProxyEntity = this.world.createTransformEntity(rayTarget, { parent: this.railEntity });
+    this.scrubProxyEntity.addComponent(TimelineHandle, {});
+    this.scrubProxyEntity.addComponent(RayInteractable, {});
+    this.scrubProxyEntity.addComponent(DistanceGrabbable, {
+      rotate: false,
+      scale: false,
+      movementMode: MovementMode.MoveAtSource,
+      returnToOrigin: false,
+    });
+    // Dedicated whole-rail move grip: hangs below the housing, clear of the
+    // knob travel band (|x| <= 0.45) and the cue tag above. Two coincident
+    // meshes because OneHandGrabbable (near: squeeze/pinch) and
+    // DistanceGrabbable (ray trigger) are mutually exclusive per entity.
+    const moveGrip = buildMoveGrip('Weather Timeline Move Grip', MOVE_GRIP_SIZE[0], MOVE_GRIP_SIZE[1], MOVE_GRIP_SIZE[2]);
+    moveGrip.group.position.copy(MOVE_GRIP_OFFSET);
+    moveGrip.near.name = 'Weather Timeline Move Grip Near';
+    moveGrip.far.name = 'Weather Timeline Move Grip Far';
+    this.moveGrip = moveGrip;
+    this.moveGripEntity = this.world.createTransformEntity(moveGrip.group, { parent: this.railEntity });
+    this.moveNearEntity = this.world.createTransformEntity(moveGrip.near, { parent: this.moveGripEntity });
+    this.moveFarEntity = this.world.createTransformEntity(moveGrip.far, { parent: this.moveGripEntity });
+    this.moveNearEntity.addComponent(TimelineMoveGrip, {});
+    this.moveFarEntity.addComponent(TimelineMoveGrip, {});
+    this.moveNearEntity.addComponent(RayInteractable, {});
+    this.moveFarEntity.addComponent(RayInteractable, {});
+    this.moveNearEntity.addComponent(OneHandGrabbable, { rotate: false });
+    this.moveFarEntity.addComponent(DistanceGrabbable, {
+      rotate: false,
+      scale: false,
+      movementMode: MovementMode.MoveAtSource,
+      returnToOrigin: false,
+    });
+    this.moveDriver = createGripDriver(this.world, this.moveNearEntity, this.moveFarEntity, moveGrip);
 
     this.cleanupFuncs.push(() => {
+      this.moveNearEntity?.dispose();
+      this.moveFarEntity?.dispose();
+      this.scrubProxyEntity?.dispose();
+      rayTarget.geometry.dispose();
+      rayTarget.material.dispose();
+      this.moveGripEntity?.dispose();
+      moveGrip.near.geometry.dispose();
+      moveGrip.material.dispose();
       this.handleEntity?.dispose();
       this.railEntity?.dispose();
     });
@@ -261,10 +336,18 @@ export class TimelineSystem extends createSystem({
 
   update(delta: number): void {
     if (this.railEntity == null || this.handleEntity == null) return;
+    // Dedicated whole-rail move grip runs before knob math: the rail (and
+    // therefore the knob constraint frame) may move under the hand. Moving
+    // the rail never writes the playhead; the knob pass below still maps the
+    // handle inside the moved frame.
+    if (this.moveDriver != null && this.railEntity.object3D != null) {
+      this.moveDriver.update(this.railEntity.object3D);
+    }
 
     if (this.needsPlacement && this.railEntity.object3D != null) {
       placeControlAtViewer(this.railEntity.object3D, this.world, PLACEMENT_DISTANCE, PLACEMENT_HEIGHT_OFFSET);
       this.railEntity.object3D.rotateX(FACE_TILT_X);
+      this.railEntity.object3D.updateMatrixWorld(true);
       this.needsPlacement = false;
       this.placedInSession = true;
       if (!this.cueRetired && this.cueTag == null) this.buildCueTag();
@@ -309,7 +392,7 @@ export class TimelineSystem extends createSystem({
 
     let knobX: number;
     if (grabbed) {
-      // While held: map handle world X (rail-local) to playhead hours.
+      // Map the held near knob or separate ray target into rail-local X.
       handle.object3D?.getWorldPosition(this.handleWorld);
       this.railEntity.object3D?.worldToLocal(this.handleWorld);
       const localX = Math.max(-RAIL_HALF, Math.min(RAIL_HALF, this.handleWorld.x));
@@ -325,10 +408,16 @@ export class TimelineSystem extends createSystem({
         this.fillMaterial.opacity = 1;
       }
     } else {
-      // Released: keep the knob where the playhead says it is.
+      // Released: keep the knob where the playhead says it is. The knob is
+      // authored to travel local X, so it inherently retains its X
+      // constraint after the parent rail was moved or rotated.
       const t = (state.playheadHours - PLAYHEAD_MIN_H) / (PLAYHEAD_MAX_H - PLAYHEAD_MIN_H);
       knobX = -RAIL_HALF + t * RAIL_HALF * 2;
-      this.handleEntity.object3D?.position.set(knobX, 0, TIMELINE_KNOB_REST_Z);
+    }
+    // The visible knob always stays on its rail, even during a hand drag.
+    this.handleEntity.object3D?.position.set(knobX, 0, TIMELINE_KNOB_REST_Z);
+    if (this.grabbedHandle !== this.scrubProxyEntity) {
+      this.scrubProxyEntity?.object3D?.position.set(knobX, 0, TIMELINE_KNOB_REST_Z);
     }
 
     // Luminous NOW→playhead segment follows the knob (transform only); on a

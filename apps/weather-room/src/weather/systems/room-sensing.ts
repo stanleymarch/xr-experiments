@@ -150,6 +150,8 @@ export class RoomSensingSystem extends createSystem({
       }
       return;
     }
+    this.world.player.head.getWorldPosition(headPosition);
+    if (!roomModel.contains(headPosition)) this.pendingRebuild = true;
     if (!this.pendingRebuild) return;
     if (time - this.lastRebuildAt < REBUILD_DEBOUNCE_S) return;
     const objects = this.currentObjects();

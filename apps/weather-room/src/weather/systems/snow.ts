@@ -1,10 +1,10 @@
 /**
  * Snow: soft instanced flakes with slow fall and wind-driven sway. Density and
- * fall speed follow Open-Meteo snowfall; flakes recycle at sensed surfaces.
+ * fall speed follow snowfall; flakes briefly settle on sensed surfaces.
  */
 
 import {
-  AdditiveBlending,
+  NormalBlending,
   createSystem,
   DoubleSide,
   DynamicDrawUsage,
@@ -65,6 +65,7 @@ export class SnowSystem extends createSystem({}) {
   private readonly sizes = new Float32Array(MAX_FLAKES);
   private readonly alphas = new Float32Array(MAX_FLAKES);
   private readonly seeds = new Float32Array(MAX_FLAKES);
+  private readonly settled = new Float32Array(MAX_FLAKES);
   private readonly dummy = new Object3D();
   private readonly wind = new Vector3();
   private readonly cameraPos = new Vector3();
@@ -85,7 +86,7 @@ export class SnowSystem extends createSystem({}) {
         transparent: true,
         depthWrite: false,
         side: DoubleSide,
-        blending: AdditiveBlending,
+        blending: NormalBlending,
       }),
       MAX_FLAKES,
     );
@@ -105,7 +106,7 @@ export class SnowSystem extends createSystem({}) {
     const current = weatherStore.current();
     const snow = current?.drivers.snow ?? 0;
     const budget = this.profile.peek().particleBudget === 'full' ? MAX_FLAKES : REDUCED_FLAKES;
-    const live = Math.floor(snow * budget);
+    const live = snow > 0 ? Math.max(1, Math.floor(Math.sqrt(snow) * budget)) : 0;
     this.flakes.count = live;
     if (current == null || live === 0) return;
 
@@ -117,26 +118,36 @@ export class SnowSystem extends createSystem({}) {
     windVectorFromFrame(current.frame, 0.12, this.wind);
     const time = performance.now() / 1000;
     (this.flakes.material as ShaderMaterial).uniforms.uTime.value = time;
-    this.world.camera.getWorldPosition(this.cameraPos);
-    const yaw = Math.atan2(this.cameraPos.x - (min.x + max.x) * 0.5, this.cameraPos.z - (min.z + max.z) * 0.5);
+    (this.xrManager.isPresenting ? this.world.player.head : this.world.camera).getWorldPosition(this.cameraPos);
 
     for (let i = 0; i < live; i += 1) {
       const ix = i * 3;
       if (this.alphas[i] <= 0) this.seed(i, min.x, min.y, min.z, spanX, spanZ, height, snow);
       const seed = this.seeds[i];
-      this.positions[ix] += (this.wind.x + Math.sin(time * 0.7 + seed * 6.28) * 0.08) * dt;
-      this.positions[ix + 1] -= this.speeds[i] * dt;
-      this.positions[ix + 2] += (this.wind.z + Math.cos(time * 0.6 + seed * 8.1) * 0.08) * dt;
-      if (this.positions[ix] < min.x) this.positions[ix] += spanX;
-      else if (this.positions[ix] > max.x) this.positions[ix] -= spanX;
-      if (this.positions[ix + 2] < min.z) this.positions[ix + 2] += spanZ;
-      else if (this.positions[ix + 2] > max.z) this.positions[ix + 2] -= spanZ;
-      const surface = roomModel.surfaceHeightAt(this.positions[ix], this.positions[ix + 2], this.positions[ix + 1] + this.speeds[i] * dt);
-      if (this.positions[ix + 1] <= min.y || (surface != null && this.positions[ix + 1] <= surface)) {
-        this.seed(i, min.x, min.y, min.z, spanX, spanZ, height, snow);
+      if (this.settled[i] > 0) {
+        this.settled[i] -= dt;
+        if (this.settled[i] <= 0) this.seed(i, min.x, min.y, min.z, spanX, spanZ, height, snow);
+      } else {
+        const previousY = this.positions[ix + 1];
+        this.positions[ix] += (this.wind.x + Math.sin(time * 0.7 + seed * 6.28) * 0.08) * dt;
+        this.positions[ix + 1] -= this.speeds[i] * dt;
+        this.positions[ix + 2] += (this.wind.z + Math.cos(time * 0.6 + seed * 8.1) * 0.08) * dt;
+        this.positions[ix] = min.x + ((this.positions[ix] - min.x) % spanX + spanX) % spanX;
+        this.positions[ix + 2] = min.z + ((this.positions[ix + 2] - min.z) % spanZ + spanZ) % spanZ;
+        const surface = roomModel.surfaceHeightAt(this.positions[ix], this.positions[ix + 2], previousY);
+        const contact = surface ?? min.y;
+        if (this.positions[ix + 1] <= contact) {
+          this.positions[ix + 1] = contact + 0.012;
+          this.settled[i] = 1.2;
+        }
       }
+      const yaw = Math.atan2(
+        this.cameraPos.x - this.positions[ix],
+        this.cameraPos.z - this.positions[ix + 2],
+      );
       this.dummy.position.set(this.positions[ix], this.positions[ix + 1], this.positions[ix + 2]);
-      this.dummy.rotation.set(0, yaw, Math.sin(time + seed * 6.28) * 0.2);
+      if (this.settled[i] > 0) this.dummy.rotation.set(-Math.PI / 2, 0, seed * Math.PI * 2);
+      else this.dummy.rotation.set(0, yaw, Math.sin(time + seed * 6.28) * 0.2);
       this.dummy.scale.setScalar(this.sizes[i]);
       this.dummy.updateMatrix();
       this.flakes.setMatrixAt(i, this.dummy.matrix);
@@ -150,6 +161,7 @@ export class SnowSystem extends createSystem({}) {
     const seed = ((this.cursor * 2654435761) % 10000) / 10000;
     const ix = i * 3;
     this.seeds[i] = seed;
+    this.settled[i] = 0;
     this.positions[ix] = minX + ((seed * 7.13) % 1) * spanX;
     this.positions[ix + 1] = minY + height * (0.65 + 0.35 * ((seed * 17.3) % 1));
     this.positions[ix + 2] = minZ + ((seed * 31.7) % 1) * spanZ;
@@ -163,6 +175,7 @@ export class SnowSystem extends createSystem({}) {
     this.positions.fill(0);
     this.speeds.fill(0);
     this.alphas.fill(0);
+    this.settled.fill(0);
     this.cursor = 0;
   }
 }

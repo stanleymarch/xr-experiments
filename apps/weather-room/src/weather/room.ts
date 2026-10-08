@@ -4,24 +4,21 @@
  * is tracked (see DepthSamplingSystem). Particle systems consume `bounds`
  * (placement volume) and `surfaceHeightAt` (splash/thermal anchoring).
  *
- * Cost model (device-critical): the height grid is filled from a bounded
- * vertex sample per frame instead of per-cell raycasts. A real room mesh has
- * hundreds of thousands of vertices; raycasting every grid cell against every
- * surface is O(cells x triangles) on the main thread and freezes the headset
- * during VR entry, when mesh detection first delivers geometry. Sampling
- * vertices is O(vertices) once, spread over frames, and never blocks a frame.
-
+ * Cost model: triangle interiors are rasterized into a 25 cm height grid.
+ * Triangle setup and cell tests share a 4096-work-unit budget per frame;
+ * large planes resume mid-triangle. No per-particle or per-cell mesh raycasts.
+ *
  * Hit-test probes (no planes/meshes) record at most one small lattice per
  * 0.5 s tick — no raycast storm either way.
  *
  * Viewer anchoring: a reported room mesh can sit far from the viewer (stale
  * or drifting tracking frame). Without anchoring, every particle system seeds
  * its field inside a volume the viewer never sees while the panel still shows
- * nonzero drivers. The capped volume is therefore translated to contain the
- * given viewer anchor (the XR head position) — translated, never inflated.
+ * nonzero drivers. The capped volume therefore grows toward the tracked
+ * viewer within its cap; distant geometry uses a head-centered fallback.
  */
 
-import { Box3, Matrix3, Vector3 } from '@iwsdk/core';
+import { Box3, Vector3 } from '@iwsdk/core';
 import type { BufferGeometry, Object3D } from '@iwsdk/core';
 
 /** Coarse height-grid cell size in meters. */
@@ -33,10 +30,8 @@ const FALLBACK_HEIGHT = 2.5;
  * and a 25 cm grid is meaningless. Far mesh geometry must not enlarge it. */
 const MAX_SPAN_XZ = 8;
 const MAX_SPAN_Y = 4;
-/** Vertices consumed per incremental build step (keeps frames cheap). */
-const VERTICES_PER_STEP = 4096;
-/** Voxel keep-step: sample every Nth component to bound dense meshes harder. */
-const VERTEX_STRIDE = 3;
+/** Bound triangle setup and raster-cell tests together on every build step. */
+const SURFACE_WORK_PER_STEP = 4096;
 /** Minimum world-space normal.y for a face to count as an upward surface. */
 const UPWARD_NORMAL_Y = 0.5;
 
@@ -44,7 +39,7 @@ type SurfaceEntry = {
   /** Owner of the geometry; carries the world matrix used for sampling. */
   readonly object: Object3D;
   readonly positions: ArrayLike<number> | null;
-  readonly normals: ArrayLike<number> | null;
+  readonly indices: ArrayLike<number> | null;
 };
 
 /**
@@ -64,10 +59,11 @@ class RoomModel {
   /** True while hit-test probe sampling owns the volume (no mesh knowledge). */
   private probing = false;
   private readonly box = new Box3();
-  private readonly normalMatrix = new Matrix3();
   private readonly surfaceNormal = new Vector3();
-  private readonly point = new Vector3();
-  private readonly corner = new Vector3();
+  private readonly triangleA = new Vector3();
+  private readonly triangleB = new Vector3();
+  private readonly triangleC = new Vector3();
+  private readonly triangleEdge = new Vector3();
   private readonly anchorPos = new Vector3();
   private hasAnchor = false;
   // Coarse top-surface height grid over [gridMinX, ...] (NaN = no hit).
@@ -78,8 +74,19 @@ class RoomModel {
   private gridMinZ = 0;
   private entries: SurfaceEntry[] = [];
   private entryIndex = 0;
-  private componentCursor = 0;
   private geometryCursor = 0;
+  private triangleReady = false;
+  private rasterCol = 0;
+  private rasterRow = 0;
+  private rasterMinCol = 0;
+  private rasterMaxCol = -1;
+  private rasterMaxRow = -1;
+  private triangleDenominator = 0;
+
+  /** Probe hits are not mesh ownership; the sampler must keep collecting. */
+  get hasMeshSurfaces(): boolean {
+    return this.hasSurfaces && !this.probing;
+  }
 
   /**
    * Start a rebuild from the currently tracked surface objects. Bounds are
@@ -93,8 +100,8 @@ class RoomModel {
     this.probing = false;
     this.entries = [];
     this.entryIndex = 0;
-    this.componentCursor = 0;
     this.geometryCursor = 0;
+    this.triangleReady = false;
     this.hasAnchor = anchor != null;
     if (anchor != null) this.anchorPos.copy(anchor);
     if (objects.length === 0) {
@@ -151,9 +158,9 @@ class RoomModel {
       const mesh = object as Object3D & { geometry?: BufferGeometry };
       const geometry = mesh.geometry;
       const positions = geometry?.getAttribute?.('position')?.array ?? null;
-      const normals = geometry?.getAttribute?.('normal')?.array ?? null;
+      const indices = geometry?.index?.array ?? null;
       if (positions == null) continue;
-      this.entries.push({ object, positions, normals });
+      this.entries.push({ object, positions, indices });
     }
     this.building = this.entries.length > 0;
     if (!this.building) {
@@ -227,7 +234,7 @@ class RoomModel {
    */
   step(): boolean {
     if (!this.building) return false;
-    let budget = VERTICES_PER_STEP;
+    let budget = SURFACE_WORK_PER_STEP;
     while (budget > 0 && this.entryIndex < this.entries.length) {
       const entry = this.entries[this.entryIndex];
       const consumed = this.consumeEntry(entry, budget);
@@ -235,7 +242,7 @@ class RoomModel {
       if (this.geometryCursor >= this.entryLength(entry)) {
         this.entryIndex += 1;
         this.geometryCursor = 0;
-        this.componentCursor = 0;
+        this.triangleReady = false;
       }
     }
     if (this.entryIndex >= this.entries.length) {
@@ -253,33 +260,72 @@ class RoomModel {
   }
 
   private entryLength(entry: SurfaceEntry): number {
-    return entry.positions?.length ?? 0;
+    return entry.indices?.length ?? (entry.positions?.length ?? 0) / 3;
   }
 
-  /** Feed up to `budget` vertex components from one entry into the grid. */
+  /** Rasterize actual triangle interiors, not just vertices at plane corners.
+   * Every triangle setup and cell test consumes the same bounded work budget. */
   private consumeEntry(entry: SurfaceEntry, budget: number): number {
+    const positions = entry.positions!;
     const total = this.entryLength(entry);
-    const step = VERTEX_STRIDE * 3;
     let consumed = 0;
-    this.normalMatrix.getNormalMatrix(entry.object.matrixWorld);
-    const positions = entry.positions as ArrayLike<number>;
-    const normals = entry.normals;
-    while (this.geometryCursor < total && consumed < budget) {
-      if (this.geometryCursor + 2 < positions.length) {
-        this.point.set(positions[this.geometryCursor], positions[this.geometryCursor + 1], positions[this.geometryCursor + 2]);
-        this.point.applyMatrix4(entry.object.matrixWorld);
-        let upward = true;
-        if (normals != null && this.geometryCursor + 2 < normals.length) {
-          this.surfaceNormal.set(normals[this.geometryCursor], normals[this.geometryCursor + 1], normals[this.geometryCursor + 2]);
-          this.surfaceNormal.applyMatrix3(this.normalMatrix);
-          upward = this.surfaceNormal.y >= UPWARD_NORMAL_Y;
+    while (this.geometryCursor + 2 < total && consumed < budget) {
+      if (!this.triangleReady) {
+        consumed += 1;
+        const ia = (entry.indices?.[this.geometryCursor] ?? this.geometryCursor) * 3;
+        const ib = (entry.indices?.[this.geometryCursor + 1] ?? this.geometryCursor + 1) * 3;
+        const ic = (entry.indices?.[this.geometryCursor + 2] ?? this.geometryCursor + 2) * 3;
+        this.triangleA.set(positions[ia], positions[ia + 1], positions[ia + 2]).applyMatrix4(entry.object.matrixWorld);
+        this.triangleB.set(positions[ib], positions[ib + 1], positions[ib + 2]).applyMatrix4(entry.object.matrixWorld);
+        this.triangleC.set(positions[ic], positions[ic + 1], positions[ic + 2]).applyMatrix4(entry.object.matrixWorld);
+        const a = this.triangleA, b = this.triangleB, c = this.triangleC;
+        this.surfaceNormal.subVectors(b, a);
+        this.triangleEdge.subVectors(c, a);
+        this.surfaceNormal.cross(this.triangleEdge).normalize();
+        if (this.surfaceNormal.y < UPWARD_NORMAL_Y) {
+          this.geometryCursor += 3;
+          continue;
         }
-        // Skip the mesh's own downward-facing geometry (ceilings, wall backs).
-        if (upward) this.record(this.point.x, this.point.y, this.point.z);
+        // Tiny triangles may contain no grid center; their vertices still
+        // contribute real heights rather than disappearing from the grid.
+        this.record(a.x, a.y, a.z);
+        this.record(b.x, b.y, b.z);
+        this.record(c.x, c.y, c.z);
+        this.triangleDenominator = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+        this.rasterMinCol = Math.max(0, Math.floor((Math.min(a.x, b.x, c.x) - this.gridMinX) / GRID_CELL));
+        this.rasterMaxCol = Math.min(this.gridCols - 1, Math.floor((Math.max(a.x, b.x, c.x) - this.gridMinX) / GRID_CELL));
+        this.rasterRow = Math.max(0, Math.floor((Math.min(a.z, b.z, c.z) - this.gridMinZ) / GRID_CELL));
+        this.rasterMaxRow = Math.min(this.gridRows - 1, Math.floor((Math.max(a.z, b.z, c.z) - this.gridMinZ) / GRID_CELL));
+        this.rasterCol = this.rasterMinCol;
+        if (Math.abs(this.triangleDenominator) < 1e-10 || this.rasterMinCol > this.rasterMaxCol || this.rasterRow > this.rasterMaxRow) {
+          this.geometryCursor += 3;
+          continue;
+        }
+        this.triangleReady = true;
       }
-      this.geometryCursor += step;
-      consumed += step;
+      const a = this.triangleA, b = this.triangleB, c = this.triangleC;
+      while (this.rasterRow <= this.rasterMaxRow && consumed < budget) {
+        const x = this.gridMinX + (this.rasterCol + 0.5) * GRID_CELL;
+        const z = this.gridMinZ + (this.rasterRow + 0.5) * GRID_CELL;
+        const u = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / this.triangleDenominator;
+        const v = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / this.triangleDenominator;
+        if (u >= -1e-6 && v >= -1e-6 && u + v <= 1 + 1e-6) {
+          this.record(x, u * a.y + v * b.y + (1 - u - v) * c.y, z);
+        }
+        consumed += 1;
+        this.rasterCol += 1;
+        if (this.rasterCol > this.rasterMaxCol) {
+          this.rasterCol = this.rasterMinCol;
+          this.rasterRow += 1;
+        }
+      }
+      if (this.rasterRow > this.rasterMaxRow) {
+        this.geometryCursor += 3;
+        this.triangleReady = false;
+      }
     }
+    // Skip incomplete trailing data rather than leaving a build pending.
+    if (this.geometryCursor + 2 >= total) this.geometryCursor = total;
     return consumed;
   }
 
@@ -320,9 +366,10 @@ class RoomModel {
     }
     // Vertical: extend toward the head within the span cap so the sensed
     // floor anchor survives; only shift off the floor when the cap forces it.
-    if (this.anchorPos.y > this.max.y) {
-      if (this.anchorPos.y - this.min.y > MAX_SPAN_Y) this.min.y = this.anchorPos.y - MAX_SPAN_Y;
-      this.max.y = this.anchorPos.y;
+    const rainTop = this.anchorPos.y + 1;
+    if (rainTop > this.max.y) {
+      if (rainTop - this.min.y > MAX_SPAN_Y) this.min.y = rainTop - MAX_SPAN_Y;
+      this.max.y = rainTop;
     } else if (this.anchorPos.y < this.min.y) {
       if (this.max.y - this.anchorPos.y > MAX_SPAN_Y) this.max.y = this.anchorPos.y + MAX_SPAN_Y;
       this.min.y = this.anchorPos.y;
@@ -344,7 +391,7 @@ class RoomModel {
     this.entries = [];
     this.entryIndex = 0;
     this.geometryCursor = 0;
-    this.componentCursor = 0;
+    this.triangleReady = false;
     this.grid = new Float32Array(0);
     this.gridCols = 0;
     this.gridRows = 0;

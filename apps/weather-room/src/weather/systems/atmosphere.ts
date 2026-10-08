@@ -1,6 +1,6 @@
 /**
- * Atmosphere: cloud cover -> FogExp2 density + a seven-layer sculpted cloud
- * deck hugging the ceiling (fbm billows with organic elliptical footprints,
+ * Atmosphere: cloud cover -> FogExp2 density + a three-layer sculpted cloud
+ * deck hugging the ceiling (tile-sampled billows with organic footprints,
  * fake thickness shading, opacity capped so passthrough stays comfortable)
  * + directional light dimming with a day/night palette. The deck advects
  * with the shared wind vector so overcast wind hours read as moving sky.
@@ -11,7 +11,7 @@
  */
 
 import {
-  AdditiveBlending,
+  NormalBlending,
   AmbientLightComponent,
   InstancedBufferAttribute,
   Color,
@@ -33,6 +33,7 @@ import { WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
 import type { HourCrossedDetail } from '../weather-state.js';
 import { Haptics, pulseHaptics } from '../feedback.js';
 import { windVectorFromFrame } from '../wind-shared.js';
+import { createCloudNoise } from '../cloud-noise.js';
  
 const FOG_CLEAR = 0.006;
 const CLOUD_VERTEX = /* glsl */ `
@@ -42,57 +43,28 @@ void main() {
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
-// MIT 2D simplex noise: https://github.com/stegu/webgl-noise.
-// Copyright (C) 2011 Ashima Arts; 2011-2016 Stefan Gustavson.
-// Full notice is shipped in public/licenses/webgl-noise.txt.
 const CLOUD_FRAGMENT = /* glsl */ `
 uniform float uCloud;
+uniform sampler2D uNoise;
 uniform float uTime;
 uniform float uFlash;
 uniform float uSeed;
 uniform float uSun;
 uniform vec3 uTint;
 varying vec2 vUv;
-vec3 permute(vec3 x) { return mod(((x * 34.0) + 1.0) * x, 289.0); }
-float snoise(vec2 v) {
-  const vec4 C = vec4(0.211324865405187, 0.366025403784439,
-                      -0.577350269189626, 0.024390243902439);
-  vec2 i = floor(v + dot(v, C.yy));
-  vec2 x0 = v - i + dot(i, C.xx);
-  vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-  vec4 x12 = x0.xyxy + C.xxzz;
-  x12.xy -= i1;
-  i = mod(i, 289.0);
-  vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0)) + i.x + vec3(0.0, i1.x, 1.0));
-  vec3 m = max(0.5 - vec3(dot(x0, x0), dot(x12.xy, x12.xy), dot(x12.zw, x12.zw)), 0.0);
-  m = m * m;
-  m = m * m;
-  vec3 x = 2.0 * fract(p * C.www) - 1.0;
-  vec3 h = abs(x) - 0.5;
-  vec3 ox = floor(x + 0.5);
-  vec3 a0 = x - ox;
-  m *= 1.79284291400159 - 0.85373472095314 * (a0 * a0 + h * h);
-  vec3 g;
-  g.x = a0.x * x0.x + h.x * x0.y;
-  g.yz = a0.yz * x12.xz + h.yz * x12.yw;
-  return 130.0 * dot(m, g);
-}
-float fbm(vec2 p) {
-  return snoise(p) * 0.5 + snoise(p * 2.13 + 11.3) * 0.27 +
-         snoise(p * 4.41 + 27.1) * 0.15 + snoise(p * 8.7 + 43.7) * 0.08;
-}
 void main() {
   // Sculpted billows: drifting fbm domain, coverage threshold <- cloud cover.
   vec2 p = vUv * vec2(3.1, 2.4) + uSeed * 19.7 + vec2(uTime * 0.016, uTime * -0.005);
-  float n = fbm(p) * 0.5 + 0.5;
+  vec2 billows = texture2D(uNoise, p * 0.25).rg;
+  float n = billows.r;
   float cover = 0.66 - uCloud * 0.36;
   float density = smoothstep(cover, cover + 0.4, n);
   // Organic elliptical footprint perturbed by noise: never a rectangle.
-  float rad = length((vUv - 0.5) * vec2(2.0, 2.35)) + snoise(vUv * 5.0 + uSeed * 31.0) * 0.2;
+  float rad = length((vUv - 0.5) * vec2(2.0, 2.35)) + (n - 0.5) * 0.4;
   float edge = 1.0 - smoothstep(0.5, 0.95, rad);
   float body = density * edge;
   // Fake thickness shading from a second offset sample: lit crowns, dark bases.
-  float lit = fbm(p + vec2(0.24, 0.16)) * 0.5 + 0.5;
+  float lit = billows.g;
   float shade = clamp((n - lit) * 2.4 + 0.66, 0.34, 1.18);
   shade *= mix(0.72, 1.1, vUv.y);
   float alpha = body * min(0.5, 0.05 + uCloud * 0.42);
@@ -110,7 +82,7 @@ void main() {
 const FOG_OVERCAST = 0.028;
 const FOG_HUMID = 0.008;
 const DUST_COUNT = 400;
-const PLATE_COUNT = 7;
+const PLATE_COUNT = 3;
 const SUN_BRIGHT = 1.0;
 const SUN_DIM = 0.35;
 const SUN_DAY_COLOR = new Color(0xffe8c4);
@@ -191,11 +163,18 @@ export class AtmosphereSystem extends createSystem({}) {
     this.world.scene.fog = this.fog;
 
     const plateGeo = new PlaneGeometry(1, 1);
+    const cloudNoise = createCloudNoise();
+    this.cleanupFuncs.push(() => {
+      cloudNoise.dispose();
+      plateGeo.dispose();
+      for (const material of this.plateMats) material.dispose();
+    });
     for (let i = 0; i < PLATE_COUNT; i += 1) {
       const mat = new ShaderMaterial({
         vertexShader: CLOUD_VERTEX,
         fragmentShader: CLOUD_FRAGMENT,
         uniforms: {
+          uNoise: { value: cloudNoise },
           uCloud: { value: 0.3 },
           uTime: { value: 0 },
           uFlash: { value: 0 },
@@ -239,7 +218,7 @@ export class AtmosphereSystem extends createSystem({}) {
         uniforms: { uColor: { value: new Color(0xcfd8e6) } },
         transparent: true,
         depthWrite: false,
-        blending: AdditiveBlending,
+        blending: NormalBlending,
       }),
       DUST_COUNT,
     );
@@ -386,7 +365,7 @@ export class AtmosphereSystem extends createSystem({}) {
     // Normalized wind phase so the mote field slides with the shared flow.
     this.dustPhaseX += (this.wind.x * dt * 0.04) / spanX;
     this.dustPhaseZ += (this.wind.z * dt * 0.04) / spanZ;
-    const camPos = this.world.camera.getWorldPosition(this.cameraPosition);
+    const camPos = (this.xrManager.isPresenting ? this.world.player.head : this.world.camera).getWorldPosition(this.cameraPosition);
     for (let i = 0; i < DUST_COUNT; i += 1) {
       const p = this.dustParts[i];
       const s = p.seed;

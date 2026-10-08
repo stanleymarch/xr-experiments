@@ -8,7 +8,7 @@
  */
 
 import {
-  AdditiveBlending,
+  NormalBlending,
   createSystem,
   DoubleSide,
   DynamicDrawUsage,
@@ -60,7 +60,7 @@ void main() {
   float a = (core + halo) * head * tail * vAlpha;
   if (a < 0.01) discard;
   vec3 col = mix(vec3(0.5, 0.66, 0.92), vec3(0.85, 0.92, 1.0), core);
-  gl_FragColor = vec4(col, a * 0.5);
+  gl_FragColor = vec4(col, a * 0.8);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -124,7 +124,7 @@ export class RainSystem extends createSystem({}) {
       transparent: true,
       depthWrite: false,
       side: DoubleSide,
-      blending: AdditiveBlending,
+      blending: NormalBlending,
     });
     this.streaks = new InstancedMesh(geo, material, MAX_FULL);
     this.streaks.frustumCulled = false;
@@ -150,7 +150,7 @@ export class RainSystem extends createSystem({}) {
       transparent: true,
       side: DoubleSide,
       depthWrite: false,
-      blending: AdditiveBlending,
+      blending: NormalBlending,
     });
     this.splashMesh = new InstancedMesh(splashGeo, splashMat, SPLASH_COUNT);
     this.splashMesh.frustumCulled = false;
@@ -172,13 +172,15 @@ export class RainSystem extends createSystem({}) {
     const current = weatherStore.current();
     const budget = this.profile.peek().particleBudget === 'full' ? MAX_FULL : MAX_REDUCED;
     const dt = Math.min(delta, 0.05);
-    if (current == null || current.drivers.rain <= 0.01) {
+    if (current == null || current.drivers.rain <= 0) {
       this.streaks.count = 0;
       this.updateSplashes(dt);
       return;
     }
     const { drivers, frame } = current;
-    const live = Math.floor(drivers.rain * budget);
+    // Compress the display density range so genuine drizzle remains visible;
+    // zero precipitation still produces zero drops.
+    const live = Math.max(1, Math.floor(Math.sqrt(drivers.rain) * budget));
     this.streaks.count = live;
     windVectorFromFrame(frame, 0.35, this.wind);
     this.wind.multiplyScalar(1 + Math.max(0, drivers.gust - drivers.wind) * 0.8);
@@ -188,7 +190,7 @@ export class RainSystem extends createSystem({}) {
     const height = Math.max(0.5, max.y - min.y);
     const floorY = min.y;
     const fallBase = FALL_BASE_SPEED + 8 * drivers.rain;
-    this.world.camera.getWorldPosition(this.cameraPos);
+    (this.xrManager.isPresenting ? this.world.player.head : this.world.camera).getWorldPosition(this.cameraPos);
 
     // Seed newly-visible particles at the top (deterministic hash from the
     // cursor keeps the hot loop allocation-free and Math.random-free).
@@ -202,22 +204,10 @@ export class RainSystem extends createSystem({}) {
         this.positions[ix + 2] = min.z + ((seed * 13) % 1) * spanZ;
         this.speeds[i] = fallBase * (0.85 + 0.3 * ((seed * 29) % 1));
         this.lengths[i] = STREAK_BASE_LEN * (0.7 + 0.6 * drivers.rain + 0.2 * ((seed * 31) % 1));
-        this.alphas[i] = 0.3 + 0.7 * drivers.rain;
+        this.alphas[i] = 0.55 + 0.35 * drivers.rain;
       }
     }
     // Simulate drops: recycle each one at the first surface it crosses.
-    const toCamYaw = Math.atan2(
-      this.cameraPos.x - (min.x + spanX / 2),
-      this.cameraPos.z - (min.z + spanZ / 2),
-    );
-    const cosYaw = Math.cos(toCamYaw);
-    const sinYaw = Math.sin(toCamYaw);
-    // Wind tilt expressed in each streak's camera-facing plane.
-    const tiltTan = Math.min(
-      1.2,
-      Math.abs((this.wind.x * cosYaw - this.wind.z * sinYaw) / Math.max(1, FALL_BASE_SPEED)),
-    );
-    const tiltZ = -Math.sign(this.wind.x * cosYaw - this.wind.z * sinYaw || 1) * Math.atan(tiltTan);
     for (let i = 0; i < live; i += 1) {
       if (this.alphas[i] <= 0) continue;
       const ix = i * 3;
@@ -226,10 +216,8 @@ export class RainSystem extends createSystem({}) {
       this.positions[ix + 2] += this.wind.z * dt;
       this.positions[ix + 1] -= this.speeds[i] * dt;
       // Wrap horizontally inside the volume.
-      if (this.positions[ix] < min.x) this.positions[ix] += spanX;
-      else if (this.positions[ix] > max.x) this.positions[ix] -= spanX;
-      if (this.positions[ix + 2] < min.z) this.positions[ix + 2] += spanZ;
-      else if (this.positions[ix + 2] > max.z) this.positions[ix + 2] -= spanZ;
+      this.positions[ix] = min.x + ((this.positions[ix] - min.x) % spanX + spanX) % spanX;
+      this.positions[ix + 2] = min.z + ((this.positions[ix + 2] - min.z) % spanZ + spanZ) % spanZ;
       const surfaceY = roomModel.surfaceHeightAt(this.positions[ix], this.positions[ix + 2], previousY);
       if (surfaceY != null && this.positions[ix + 1] <= surfaceY) {
         this.spawnSplash(this.positions[ix], this.positions[ix + 2], surfaceY);
@@ -238,6 +226,12 @@ export class RainSystem extends createSystem({}) {
         this.spawnSplash(this.positions[ix], this.positions[ix + 2], floorY);
         this.recycle(i, min, height);
       }
+      const toCamYaw = Math.atan2(
+        this.cameraPos.x - this.positions[ix],
+        this.cameraPos.z - this.positions[ix + 2],
+      );
+      const crossWind = this.wind.x * Math.cos(toCamYaw) - this.wind.z * Math.sin(toCamYaw);
+      const tiltZ = -Math.atan(crossWind / Math.max(1, this.speeds[i]));
       // Cylindrical billboard toward the camera, tilted into the wind.
       this.dummy.position.set(this.positions[ix], this.positions[ix + 1], this.positions[ix + 2]);
       this.dummy.rotation.set(0, toCamYaw, tiltZ);

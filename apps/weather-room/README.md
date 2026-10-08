@@ -122,10 +122,10 @@ switch, presentation layer only:
 
 | Variable | Source field | Scene behavior |
 |---|---|---|
-| Rain | `precipitation` mm/h → `drivers.rain` | Instanced soft-edged streak quads tilt with wind; short-lived splash rings use the sampled real-surface height grid. Rain accumulates into 14 shader-driven floor puddles with ripple/sheens. |
-| Snow | `snowfall` cm/h → `drivers.snow` | Capability-scaled instanced flakes drift under wind and recycle on detected upward-facing surfaces. |
+| Rain | `precipitation` mm/h → `drivers.rain` | Instanced, head-facing streaks tilt with wind; square-root display-density scaling keeps light rain legible. Normal alpha blending preserves coverage for passthrough composition. Splash rings terminate at sampled real-surface heights; puddles require mapped floor cells. |
+| Snow | `snowfall` cm/h → `drivers.snow` | Head-facing flakes drift under wind and settle for 1.2 s on mapped surfaces before recycling. Providers without snowfall use their snow weather code plus precipitation for visual classification only; the missing numeric snowfall still displays `--`. |
 | Wind | `wind_speed_10m`, `wind_direction_10m`, `wind_gusts_10m` | 120 advected ribbon streaks with riding motes show mean flow; gust excess intensifies flow and rain tilt. The shared vector maps meteorological “from” to world “to”; it is not north-aligned. |
-| Clouds / visibility | `cloud_cover`, `weather_code`, `relative_humidity_2m`, `visibility` | FogExp2 combines cloud, humidity and low-visibility/fog codes; a seven-layer sculpted cloud deck (400-pressure dust beneath it) drifts near the mapped room ceiling. Passthrough remains visible. |
+| Clouds / visibility | `cloud_cover`, `weather_code`, `relative_humidity_2m`, `visibility` | FogExp2 combines cloud, humidity and low-visibility/fog codes. Three sculpted cloud layers use one shared 128×128 noise tile instead of per-fragment simplex octaves; wind advects the cloud deck. The 400-mote pressure field sits beneath it. |
 
 This intentionally requests the main hourly scene variables, not every
 Open-Meteo variable. UV/radiation, snow depth, daily sunrise/sunset, soil
@@ -141,30 +141,54 @@ dished ceramic crown, emissive glow ring). The knob travels ±0.45 m ⇔
 −24…+24 h and supports hand/controller proximity grab and ray/distance grab;
 release within ±0.75 h snaps to NOW. Hover/grab states answer through the
 cloned glow-ring/crown emissive and guide-fill opacity. On XR entry it is
-placed once 0.8 m from the viewer, 0.4 m below the eyes, tilted up 16°, then
-stays room-fixed (no floor re-anchoring). The panel has −6h/+6h, NOW and
-Reload buttons as mouse/touch fallbacks; physical-device clicks remain
-unverified.
+placed once 0.9 m from the viewer, 0.22 m below the eyes, tilted up 16°.
+The panel has −6h/+6h, NOW and Reload buttons as mouse/touch fallbacks;
+physical-device clicks remain unverified.
+
+### Moving spatial controls
+
+The panel and the entire timeline each have a cyan move bar, separate from
+the panel buttons and time knob. Hold the bar with a nearby controller's
+squeeze or a hand pinch, move, then release. A controller ray can also move
+either bar by holding its trigger. Movement is translation-only: orientation
+stays stable, the other control stays put, and moving the rail does not scrub
+time. Hover/hold glow and controller haptics acknowledge the gesture.
+
+Released positions persist for the current XR session, including focus
+transitions. A new XR session places the panel 1.5 m forward / 0.3 m above
+the viewer and the rail at its placement described above; positions are not
+saved across sessions. Near and ray grab components use separate entities:
+the SDK installs only one grab handle per entity.
 
 ## Typography
 
 Brand typography matches staniverse.xyz: Unbounded (headings) and Geologica
-(body) are vendored as OFL-1.1 files in `public/fonts/` (woff2 for the browser
-DOM panel, ttf for the UIKitML spatial panel) with license texts in
-`public/licenses/`. The 3D timeline signposts are authored stroke-glyph
+(body) are vendored as OFL-1.1 files in `public/fonts/`, with license texts in
+`public/licenses/`. The DOM panel loads Latin and Cyrillic WOFF2 subsets by
+`unicode-range`. The spatial panel uses TTF faces with explicit Cyrillic-aware
+MSDF loaders in `src/weather/spatial-fonts.ts`; the SDK's default TTF loader
+otherwise generates an ASCII-only atlas, even from a Cyrillic-capable TTF.
+Russian copy was visually checked on both surfaces, not only in font files.
+The 3D timeline signposts are authored stroke-glyph
 geometry, not font rendering, so the manifest asset stays deterministic across
 editor and application realms.
 
 ## Spatial-surface limits
 
-Room sensing builds a 25 cm height grid from tracked XR planes/meshes. Rain
-and snow particles can react to the highest upward-facing hit in a cell;
-the grid is an approximation, not a rigid-body physics world or a complete
-collider for every room surface. Puddles query near the lowest mapped room
-height and appear only where an upward-facing floor cell was sampled.
-Ceiling clouds use mapped bounds, not ceiling collision. If room geometry
-is unavailable, the scene keeps its fallback volume; real-surface contact
-is not claimed.
+Room sensing rasterizes triangle interiors into a 25 cm height grid, including
+the interiors of sparse four-vertex XR planes. Triangle setup and cell tests
+share a 4096-work-unit frame budget; large triangles resume across frames.
+Rain splashes and briefly settled snow use the highest upward-facing height
+in each cell. This is an approximation, not a rigid-body collision world.
+Puddles require mapped floor cells; ceiling clouds use bounds, not collisions.
+A floor-only scan still leaves precipitation-source height above the viewer.
+
+Without tracked planes/meshes, five persistent, capability-gated hit-test
+probes sample nearby floor/table cells every 0.5 s. The first hit does not
+disable sampling. Only measured cells supply real-surface contact; unsampled
+space retains the explicit fallback. No public world-space depth API was
+found in this installed SDK, so this path uses environment hit-test, not
+invented camera/LiDAR geometry.
 
 ## Capability matrix + degradation policy
 
@@ -188,6 +212,28 @@ Measured in headless Chromium at exact CSS viewports against the managed runtime
 
 ARIA: panel `aria-label` localized, info group `aria-live="polite"`, timeline/step/reload/language buttons labelled, range `-24..24` with localized label; location Set/Auto now labelled (`Set manual location` / `Clear manual location`). Enter-AR probe in this Chromium reports `immersive-ar` support available with hint text; on phones/browsers without WebXR the same probe disables Enter and shows the honest `xrUnavailable` note — that disabled state is code-verified, not screenshot-verified here.
 
+Touch scrubbing was exercised with trusted Chromium touch events at 390×844
+and 844×390: tap into future time, drag to −24 h, and return to NOW. The range
+owns horizontal pointer gestures (`touch-action: none`, pointer capture);
+keyboard End still reaches +24 h. These are emulated-phone checks, not
+physical Android/iOS evidence.
+
+### Current weather-render fixes: local evidence, hardware limit
+
+An isolated run of the real RainSystem/SnowSystem/AtmosphereSystem verified
+0.3 mm/h rain produced 464 streaks, nonzero compositable pixels in four view
+directions, 48 splashes at a sparse table fixture's 0.7 m surface, and 31
+temporarily settled snowflakes. Rendered cloud alpha rose from 0 at 0% cover
+to 4,277,571 summed byte-alpha at 100% cover; wind moved the cloud deck.
+Those render-target totals describe that fixture, not headset performance.
+The first measured hit remained available after the probe sampler updated.
+
+Cloud fragment work was reduced from seven layers of nine simplex-noise
+evaluations per pixel to three layers sharing one RG texture sample. The
+room-grid rebuild is bounded too. The current device query returned no Quest,
+so disappearance of the reported cloud freezes, native passthrough visibility,
+and contact with the user's actual floor/table remain physical-device checks.
+
 ## Verified in this workstation session
 
 `npm run typecheck` and root `npm run build` passed. The build assembled
@@ -195,13 +241,24 @@ ARIA: panel `aria-label` localized, info group `aria-live="polite"`, timeline/st
 
 - Managed IWSDK runtime entered IWER `immersive-ar`; `xr status` reported
   emulated hand tracking, hit-test, plane detection, and mesh detection.
-- Distance grab on `Weather Timeline Handle`: an aimed emulated controller
-  trigger produced `Hovered`/`Pressed`/`Grabbed`; dragging the held knob
-  moved the panel playhead to `+24h` (read live from the spatial panel);
-  releasing re-seated the knob on the rail at the scrubbed hour. A release
-  outside the ±0.75 h snap zone stayed at `+3h`. Snap-to-live, exact X→hour
-  mapping, and re-seat are additionally proven deterministically by
-  `screen-input-smoke.html` through the real TimelineSystem.
+- The time knob's near controller squeeze, hand pinch, and separate
+  `Weather Timeline Ray Handle` trigger paths all produced `Grabbed`.
+  Near and ray controller drags each set `+12h`; hand and ray drags back
+  snapped to NOW. The visible knob remained on the rail after release.
+  `screen-input-smoke.html` additionally verifies exact X→hour mapping,
+  snap-to-live and re-seat through the real TimelineSystem.
+- Both whole-control bars were moved and released through controller
+  proximity grab, hand pinch, and ray grab. For example, a controller move
+  `(0.20, 0.10, 0.05)` moved the panel from `(0, 1.90, -1.50)` to
+  `(0.20, 2.00, -1.45)` without moving the rail; a rail move
+  `(-0.18, 0.07, -0.05)` left the panel and NOW playhead unchanged.
+  Later hand/ray moves also retained released positions. A real IWER
+  exit/re-entry restored both initial placements.
+- Russian glyphs rendered on the browser and spatial panels. App-only
+  captures: `artifacts/browser-ru-fixed.png`,
+  `artifacts/spatial-controls-ru-fixed.png`; compact two-surface evidence:
+  `artifacts/ui-runtime-review.jpg`. The managed console reported no font
+  or missing-glyph errors during the checks.
 - The spatial panel is a world-space UIKitML surface; the browser DOM panel
   is separate native HTML. `screen-input-smoke.html` proves a synthetic
   unhanded XR screen ray clicks the real UIKit `+6h` button (playhead 6),

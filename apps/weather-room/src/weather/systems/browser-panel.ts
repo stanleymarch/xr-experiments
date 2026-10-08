@@ -40,44 +40,50 @@ const CSS = `
 @font-face {
   font-family: Geologica;
   font-style: normal;
-  font-weight: 400;
+  font-weight: 100 900;
   font-display: swap;
-  src: url("${FONT_BASE}geologica-regular.woff2") format("woff2");
+  src: url("${FONT_BASE}geologica-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
   font-family: Geologica;
   font-style: normal;
-  font-weight: 500;
+  font-weight: 100 900;
   font-display: swap;
-  src: url("${FONT_BASE}geologica-medium.woff2") format("woff2");
+  src: url("${FONT_BASE}geologica-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
 }
 @font-face {
   font-family: Geologica;
   font-style: normal;
-  font-weight: 600;
+  font-weight: 100 900;
   font-display: swap;
-  src: url("${FONT_BASE}geologica-semibold.woff2") format("woff2");
-}
-@font-face {
-  font-family: Geologica;
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("${FONT_BASE}geologica-bold.woff2") format("woff2");
+  src: url("${FONT_BASE}geologica-cyrillic-ext.woff2") format("woff2");
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
 }
 @font-face {
   font-family: Unbounded;
   font-style: normal;
-  font-weight: 500;
+  font-weight: 200 900;
   font-display: swap;
-  src: url("${FONT_BASE}unbounded-medium.woff2") format("woff2");
+  src: url("${FONT_BASE}unbounded-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
   font-family: Unbounded;
   font-style: normal;
-  font-weight: 700;
+  font-weight: 200 900;
   font-display: swap;
-  src: url("${FONT_BASE}unbounded-bold.woff2") format("woff2");
+  src: url("${FONT_BASE}unbounded-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+2116;
+}
+@font-face {
+  font-family: Unbounded;
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url("${FONT_BASE}unbounded-cyrillic-ext.woff2") format("woff2");
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
 }
 #${BROWSER_PANEL_ROOT_ID}[hidden] {
   display: none !important;
@@ -239,7 +245,7 @@ const CSS = `
   width: 100%;
   min-height: 44px;
   margin: 0;
-  touch-action: pan-y;
+  touch-action: none;
   accent-color: #79d7f2;
 }
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-note {
@@ -299,6 +305,7 @@ export class BrowserPanelSystem extends createSystem({}) {
   private locationError: HTMLElement | null = null;
   private unsubscribeLanguage: (() => void) | null = null;
   private dirty = true;
+  private scrubPointer: number | null = null;
   private lastRenderAt = -Number.MAX_SAFE_INTEGER;
   private lastClockMinute = -1;
 
@@ -348,6 +355,39 @@ export class BrowserPanelSystem extends createSystem({}) {
     const scrub = (): void => {
       if (this.range == null) return;
       weatherStore.setPlayhead(Number(this.range.value));
+    };
+    // Own the touch gesture: native range handling varies on mobile and
+    // must not turn a horizontal scrub into panel scrolling or a canvas ray.
+    const scrubAtPointer = (event: PointerEvent): void => {
+      const range = this.range;
+      if (range == null) return;
+      const bounds = range.getBoundingClientRect();
+      const fraction = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+      const hours = PLAYHEAD_MIN_H + fraction * (PLAYHEAD_MAX_H - PLAYHEAD_MIN_H);
+      range.value = String(Math.round(hours * 2) / 2);
+      scrub();
+    };
+    const startScrub = (event: PointerEvent): void => {
+      if (!event.isPrimary || event.button !== 0 || this.scrubPointer != null || this.range == null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.scrubPointer = event.pointerId;
+      this.range.focus({ preventScroll: true });
+      this.range.setPointerCapture(event.pointerId);
+      scrubAtPointer(event);
+    };
+    const moveScrub = (event: PointerEvent): void => {
+      if (event.pointerId !== this.scrubPointer) return;
+      event.preventDefault();
+      event.stopPropagation();
+      scrubAtPointer(event);
+    };
+    const endScrub = (event: PointerEvent): void => {
+      if (event.pointerId !== this.scrubPointer) return;
+      event.stopPropagation();
+      this.scrubPointer = null;
+      if (this.range?.hasPointerCapture(event.pointerId)) this.range.releasePointerCapture(event.pointerId);
+      this.render();
     };
     const launchXR = (): void => {
       if (!this.world.xrEnabled) return;
@@ -399,6 +439,11 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.root?.querySelector('[data-testid="step-forward"]')?.addEventListener('click', stepForward);
     this.reloadButton?.addEventListener('click', reload);
     this.range?.addEventListener('input', scrub);
+    this.range?.addEventListener('pointerdown', startScrub);
+    this.range?.addEventListener('pointermove', moveScrub);
+    this.range?.addEventListener('pointerup', endScrub);
+    this.range?.addEventListener('pointercancel', endScrub);
+    this.range?.addEventListener('lostpointercapture', endScrub);
     this.enterButton?.addEventListener('click', launchXR);
     this.exitButton?.addEventListener('click', exitXR);
     this.langButton?.addEventListener('click', switchLanguage);
@@ -416,6 +461,11 @@ export class BrowserPanelSystem extends createSystem({}) {
       },
       () => this.reloadButton?.removeEventListener('click', reload),
       () => this.range?.removeEventListener('input', scrub),
+      () => this.range?.removeEventListener('pointerdown', startScrub),
+      () => this.range?.removeEventListener('pointermove', moveScrub),
+      () => this.range?.removeEventListener('pointerup', endScrub),
+      () => this.range?.removeEventListener('pointercancel', endScrub),
+      () => this.range?.removeEventListener('lostpointercapture', endScrub),
       () => this.enterButton?.removeEventListener('click', launchXR),
       () => this.exitButton?.removeEventListener('click', exitXR),
       () => this.langButton?.removeEventListener('click', switchLanguage),
@@ -680,8 +730,8 @@ export class BrowserPanelSystem extends createSystem({}) {
     const demoDataset = dataset?.source === 'demo';
     this.applyChromeLabels(lang);
 
-    if (this.range != null && document.activeElement !== this.range) {
-      this.range.value = String(playheadHours);
+    if (this.range != null) {
+      if (this.scrubPointer == null) this.range.value = String(playheadHours);
       this.range.setAttribute(
         'aria-valuetext',
         isLive ? t('ariaLiveNow') : formatHoursFromNow(Math.round(playheadHours * 2) / 2, lang),

@@ -1,5 +1,5 @@
 webgl-noise — https://github.com/stegu/webgl-noise
-Used by WEATHER//ROOM's cloud and puddle shaders.
+Used by WEATHER//ROOM's puddle shader.
 
 Copyright (C) 2011 by Ashima Arts (Simplex noise)
 Copyright (C) 2011-2016 by Stefan Gustavson (Classic noise and others)

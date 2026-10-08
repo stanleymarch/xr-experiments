@@ -6,8 +6,19 @@
  * via placeControlAtViewer; visibility handling is unchanged.
  */
 
-import { createSystem, UIKitMLAsset, VisibilityState } from '@iwsdk/core';
+import {
+  createSystem,
+  DistanceGrabbable,
+  Grabbed,
+  Hovered,
+  MovementMode,
+  OneHandGrabbable,
+  RayInteractable,
+  UIKitMLAsset,
+  VisibilityState,
+} from '@iwsdk/core';
 import type { Component as UIKitComponent } from '@pmndrs/uikit';
+import type { Entity, Object3D } from '@iwsdk/core';
 import { WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
 import type { HourCrossedDetail } from '../weather-state.js';
 import { playheadTime } from '../weather-state.js';
@@ -28,10 +39,25 @@ import {
 import { PROVIDER_DISPLAY } from '../providers.js';
 import { LOCATION_PRESETS, getManualLocation, setManualLocation } from '../weather-data.js';
 import { reloadWeather } from './weather-loader.js';
-import { placeControlAtViewer } from '../control-placement.js';
+import { PanelMoveGrip } from '../components/timeline-handle.js';
+import {
+  buildMoveGrip,
+  createGripDriver,
+  placeControlAtViewer,
+} from '../control-placement.js';
+import type { GripDriver, MoveGrip } from '../control-placement.js';
+import { installSpatialFonts } from '../spatial-fonts.js';
 
 /** Minimum seconds between panel text pushes (2 Hz ceiling). */
 const PANEL_PUSH_INTERVAL_S = 0.5;
+
+/**
+ * Dedicated whole-panel move grip: a bar hung below the UIKit panel, clear
+ * of every button row. Same dual-mesh pattern as the timeline rail grip:
+ * near-hand squeeze/pinch on one entity, distance ray trigger on the other.
+ */
+const PANEL_GRIP_OFFSET_Y = -0.42;
+const PANEL_GRIP_SIZE: readonly [number, number, number] = [0.22, 0.03, 0.03];
 
 const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const;
 
@@ -58,7 +84,10 @@ function asTextLine(el: UIKitComponent | null): TextLine | null {
   return typeof candidate.setProperties === 'function' ? candidate : null;
 }
 
-export class PanelSystem extends createSystem({}) {
+export class PanelSystem extends createSystem({
+  moveHovered: { required: [PanelMoveGrip, Hovered] },
+  moveGrabbed: { required: [PanelMoveGrip, Grabbed] },
+}) {
   private statusEl: TextLine | null = null;
   private locationEl: TextLine | null = null;
   private playheadEl: TextLine | null = null;
@@ -70,16 +99,22 @@ export class PanelSystem extends createSystem({}) {
   private lastText = '';
   private needsPlacement = false;
   private placedInSession = false;
-  /** NOW-pill snap flash: 0 = idle, otherwise seconds since the flash start. */
   private snapFlashT = -1;
-  /** Last snapped live-pill color so the flash can restore it. */
   private pillBase = '#79d7f2';
+  /** Dedicated whole-panel move grip (scene-level bar + driver). */
+  private moveGrip: MoveGrip | null = null;
+  private moveGripObject: Object3D | null = null;
+  private moveGripEntity: Entity | null = null;
+  private moveNearEntity: Entity | null = null;
+  private moveFarEntity: Entity | null = null;
+  private moveDriver: GripDriver | null = null;
 
   init(): void {
     const panel = this.world.getSceneObject<UIKitMLAsset>('weather-panel');
     const xrButton = panel?.requireElementById('xr-button');
     const exitButton = panel?.requireElementById('exit-button');
     if (panel == null) return;
+    installSpatialFonts(panel);
     const panelRoot = panel.requireElementById('weather-root');
     this.cleanupFuncs.push(this.world.visibilityState.subscribe((state) => {
       panel.visible = state !== VisibilityState.NonImmersive;
@@ -208,11 +243,75 @@ export class PanelSystem extends createSystem({}) {
       }),
     );
     this.applyStaticLabels(panel);
+    this.ensureMoveGrip(panel);
+    this.cleanupFuncs.push(() => {
+      this.moveNearEntity?.dispose();
+      this.moveFarEntity?.dispose();
+      this.moveGripEntity?.dispose();
+      this.moveGrip?.near.geometry.dispose();
+      this.moveGrip?.material.dispose();
+      if (this.moveGripObject?.parent != null) this.moveGripObject.parent.remove(this.moveGripObject);
+      this.moveGrip = null;
+      this.moveGripObject = null;
+      this.moveGripEntity = null;
+      this.moveNearEntity = null;
+      this.moveFarEntity = null;
+      this.moveDriver = null;
+    });
+  }
+
+  /** Scene-level grip group: entity parenting preserves mesh offsets. */
+  private ensureMoveGrip(panel: Object3D): void {
+    if (this.moveGrip != null) return;
+    const grip = buildMoveGrip('Weather Panel Move Grip', PANEL_GRIP_SIZE[0], PANEL_GRIP_SIZE[1], PANEL_GRIP_SIZE[2]);
+    grip.near.name = 'Weather Panel Move Grip Near';
+    grip.far.name = 'Weather Panel Move Grip Far';
+    this.moveGrip = grip;
+    this.moveGripObject = grip.group;
+    this.moveGripEntity = this.world.createTransformEntity(grip.group);
+    this.seatMoveGrip(panel);
+    this.moveNearEntity = this.world.createTransformEntity(grip.near, { parent: this.moveGripEntity });
+    this.moveFarEntity = this.world.createTransformEntity(grip.far, { parent: this.moveGripEntity });
+    this.moveNearEntity.addComponent(PanelMoveGrip, {});
+    this.moveFarEntity.addComponent(PanelMoveGrip, {});
+    this.moveNearEntity.addComponent(RayInteractable, {});
+    this.moveFarEntity.addComponent(RayInteractable, {});
+    this.moveNearEntity.addComponent(OneHandGrabbable, { rotate: false });
+    this.moveFarEntity.addComponent(DistanceGrabbable, {
+      rotate: false,
+      scale: false,
+      movementMode: MovementMode.MoveAtSource,
+      returnToOrigin: false,
+    });
+    this.moveDriver = createGripDriver(this.world, this.moveNearEntity, this.moveFarEntity, grip);
+  }
+
+  /** Re-seat beneath the panel on new-session placement. */
+  private seatMoveGrip(panel: Object3D): void {
+    const grip = this.moveGrip;
+    if (grip == null) return;
+    panel.updateWorldMatrix(true, false);
+    grip.group.position.set(0, PANEL_GRIP_OFFSET_Y, 0.02);
+    panel.localToWorld(grip.group.position);
+    grip.group.parent?.worldToLocal(grip.group.position);
+    panel.getWorldQuaternion(grip.group.quaternion);
+    grip.group.updateMatrixWorld(true);
   }
   update(delta: number, time: number): void {
+    // Dedicated whole-panel move grip drives the panel before any text
+    // work. Released transforms persist: the one-time session placement
+    // below only runs when the flag is set (new session), never as an
+    // overwrite after the user moved the panel.
+    const panelObject = this.world.getSceneObject<UIKitMLAsset>('weather-panel');
+    if (this.moveDriver != null && panelObject != null) {
+      this.moveDriver.update(panelObject);
+    }
     if (this.needsPlacement) {
-      const panel = this.world.getSceneObject<UIKitMLAsset>('weather-panel');
-      if (panel != null) placeControlAtViewer(panel, this.world, 1.5, 0.3);
+      const panel = panelObject ?? this.world.getSceneObject<UIKitMLAsset>('weather-panel');
+      if (panel != null) {
+        placeControlAtViewer(panel, this.world, 1.5, 0.3);
+        this.seatMoveGrip(panel);
+      }
       this.needsPlacement = false;
       this.placedInSession = true;
     }

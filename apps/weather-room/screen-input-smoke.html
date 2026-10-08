@@ -48,9 +48,8 @@ try {
   const panelSystem = world.getSystem(PanelSystem);
   const timelineSystem = world.getSystem(TimelineSystem);
   for (let i=0; i<60 && timelineSystem.queries.handles.entities.size===0; i++) await new Promise(requestAnimationFrame);
-  if (timelineSystem.queries.handles.entities.size!==1) throw new Error('Registered timeline asset did not create its handle');
-  const { Grabbed } = await import('@iwsdk/core');
-  const handleEntity = [...timelineSystem.queries.handles.entities][0];
+  const { Grabbed, OneHandGrabbable } = await import('@iwsdk/core');
+  const handleEntity = [...timelineSystem.queries.handles.entities].find(entity => entity.hasComponent(OneHandGrabbable));
   const knob = handleEntity.object3D;
   handleEntity.addComponent(Grabbed, {});
   timelineSystem.update();
@@ -80,6 +79,19 @@ try {
     if (sampled === null || Math.abs(sampled - 1.0) > 0.001) throw new Error(`Sampled floor height is wrong (got ${sampled})`);
     const ceilingSide = roomModel.surfaceHeightAt(0.5, -0.5, 0.9);
     if (ceilingSide !== null) throw new Error('Surface above the query point must not be reported');
+    // Real XR planes can have only four boundary vertices. Their center
+    // must still intercept precipitation; vertex-only sampling misses it.
+    const sparse = new Mesh(new PlaneGeometry(3, 3), new MeshBasicMaterial());
+    sparse.rotation.x = -Math.PI / 2;
+    sparse.position.set(0, 0.7, 0);
+    sparse.updateWorldMatrix(true, true);
+    roomModel.beginRebuild([sparse], new Vector3(0, 1.6, 0));
+    while (roomModel.building) roomModel.step();
+    for (const [x, z] of [[0.125, 0.125], [-0.625, 0.375], [0.875, -0.875]]) {
+      const y = roomModel.surfaceHeightAt(x, z, 1.8);
+      if (y == null || Math.abs(y - 0.7) > 0.001) throw new Error(`Sparse surface interior missed at ${x},${z}: ${y}`);
+    }
+    if (roomModel.max.y <= 1.6) throw new Error('Floor-only detection left rain source below the viewer');
     const dense = new Mesh(new PlaneGeometry(4, 4, 300, 300), new MeshBasicMaterial());
     dense.rotation.x = -Math.PI / 2;
     dense.position.set(0, 0.5, 0);

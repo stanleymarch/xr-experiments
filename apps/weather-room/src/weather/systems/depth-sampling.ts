@@ -9,9 +9,9 @@
  * is exactly today's fallback box with spawning particles.
  *
  * Fixed sampling contract: 5 rays (centre + four neighbours), one lattice
- * tick per 0.5 s. The centre ray tilts 30 degrees down from gaze and lands
- * on the floor ~3 m ahead of a 1.6 m head; neighbours yaw/pitch a further
- * ~7 degrees for a ~1x1.5 m patch. Per-tick cost is O(5) pose reads + O(5)
+ * tick per 0.5 s. The centre ray tilts 60 degrees down from gaze and lands
+ * near 0.9 m ahead of a 1.6 m head, inside the compact weather volume.
+ * Neighbours cover nearby floor/table cells. Per-tick cost is O(5) pose reads:
  * grid records; between ticks the per-frame cost is a single cheap
  * predicate (no surfaces, capability present, 0.5 s elapsed).
  */
@@ -36,9 +36,9 @@ import { roomModel } from '../room.js';
  */
 export const PROBE_RAY_COUNT = 5;
 /** Downward tilt of the centre probe ray from gaze, in radians. */
-const PROBE_TILT_RAD = Math.PI / 6;
-/** Neighbour-ray angular offset, in radians (~0.5 m lateral at 4 m). */
-const PROBE_NEIGHBOUR_RAD = Math.atan2(0.5, 4);
+const PROBE_TILT_RAD = Math.PI / 3;
+/** Neighbour rays cover the nearby floor/table patch inside the volume. */
+const PROBE_NEIGHBOUR_RAD = Math.atan2(0.25, 1);
 /** Seconds between resample ticks (matches the mesh-path debounce). */
 const SAMPLE_INTERVAL_S = 0.5;
 /** Hit-test hits farther than this from the head do not count as surfaces. */
@@ -64,7 +64,7 @@ export class DepthSamplingSystem extends createSystem({
   override update(_delta: number, time: number): void {
     // Cheap gate first: mesh/plane knowledge always wins, and probing is
     // pointless while a mesh build is still consuming its frame budget.
-    if (roomModel.hasSurfaces || roomModel.building) {
+    if (roomModel.hasMeshSurfaces || roomModel.building) {
       if (this.engaged) this.standDown();
       return;
     }
@@ -166,6 +166,9 @@ export class DepthSamplingSystem extends createSystem({
     // XRRigidTransform.matrix is column-major: translation is elements 12-14
     // (the same layout EnvironmentRaycastSystem decomposes in applyHitResult).
     const matrix = pose.transform.matrix;
+    // Hit-test +Y is the measured surface normal; walls are not horizontal
+    // splash planes at eye height.
+    if (matrix[5] < 0.5) return;
     hitPosition.set(matrix[12], matrix[13], matrix[14]);
     if (hitPosition.distanceTo(headPosition) > MAX_PROBE_DISTANCE) return;
     roomModel.recordProbePoint(hitPosition.x, hitPosition.y, hitPosition.z);

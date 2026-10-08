@@ -280,6 +280,13 @@ frame pacing/comfort during storm conditions, and splash contact against the
 user's own furniture (splashes use the sampled room grid; the capture room
 was not scanned in this run).
 
+A second device run on the published `9e39226` build re-checked the same
+scenario with a 3.9 mm/h thunderstorm: 161-172 vertical streak runs per frame
+and 1.29-1.42% inter-frame pixel change (denser than the 2.9 mm/h run, as the
+density ramp predicts). Device captures: `artifacts/device-rain-final-1..3.png`;
+the pre-fix layouts: `artifacts/device-panel-2d-new.png`,
+`artifacts/device-xr-new-ui-1..2.png`.
+
 ## Verified in this workstation session
 
 `npm run typecheck` and root `npm run build` passed. The build assembled

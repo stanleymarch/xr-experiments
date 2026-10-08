@@ -91,6 +91,23 @@ try {
     while (roomModel.building) roomModel.step();
     roomModel.beginRebuild([]);
     if (roomModel.hasSurfaces) throw new Error('Clearing tracked surfaces must drop room knowledge');
+    const ceilingOnly = new Mesh(new PlaneGeometry(3, 3, 8, 8), new MeshBasicMaterial());
+    ceilingOnly.rotation.x = Math.PI / 2;
+    ceilingOnly.position.set(0, 2.0, 0);
+    ceilingOnly.updateWorldMatrix(true, true);
+    roomModel.beginRebuild([ceilingOnly]);
+    while (roomModel.building) roomModel.step();
+    if (roomModel.hasSurfaces) throw new Error('Downward-only geometry must fall back to the default volume');
+    const huge = new Mesh(new PlaneGeometry(60, 60, 8, 8), new MeshBasicMaterial());
+    huge.rotation.x = -Math.PI / 2;
+    huge.updateWorldMatrix(true, true);
+    roomModel.beginRebuild([huge]);
+    const spanX = roomModel.max.x - roomModel.min.x;
+    const spanZ = roomModel.max.z - roomModel.min.z;
+    const spanY = roomModel.max.y - roomModel.min.y;
+    if (spanX > 8.01 || spanZ > 8.01 || spanY > 4.01) throw new Error(`Room volume span not capped (${spanX.toFixed(2)}x${spanY.toFixed(2)}x${spanZ.toFixed(2)})`);
+    while (roomModel.building) roomModel.step();
+    roomModel.beginRebuild([]);
   }
   world.player.head.position.set(0,1.6,0);
   world.visibilityState.value = VisibilityState.Visible;

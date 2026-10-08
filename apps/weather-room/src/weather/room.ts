@@ -20,6 +20,10 @@ const GRID_CELL = 0.25;
 /** Half-extent of the fallback volume (3 x 2.5 x 3 m box). */
 const FALLBACK_HALF_XZ = 1.5;
 const FALLBACK_HEIGHT = 2.5;
+/** Capped volume span: beyond a real room, particles spread invisible-thin
+ * and a 25 cm grid is meaningless. Far mesh geometry must not enlarge it. */
+const MAX_SPAN_XZ = 8;
+const MAX_SPAN_Y = 4;
 /** Vertices consumed per incremental build step (keeps frames cheap). */
 const VERTICES_PER_STEP = 4096;
 /** Voxel keep-step: sample every Nth component to bound dense meshes harder. */
@@ -89,6 +93,21 @@ class RoomModel {
     this.max.copy(this.box.max);
     // Keep the volume sane: never below the floor plane region, never huge.
     if (this.max.y - this.min.y < 0.5) this.max.y = this.min.y + 0.5;
+    // Cap the span around the box center: distant mesh outliers must not
+    // stretch the weather volume into an invisible thin haze.
+    for (const axis of ['x', 'z'] as const) {
+      const span = this.max[axis] - this.min[axis];
+      if (span > MAX_SPAN_XZ) {
+        const center = (this.max[axis] + this.min[axis]) / 2;
+        this.min[axis] = center - MAX_SPAN_XZ / 2;
+        this.max[axis] = center + MAX_SPAN_XZ / 2;
+      }
+    }
+    if (this.max.y - this.min.y > MAX_SPAN_Y) {
+      const centerY = (this.max.y + this.min.y) / 2;
+      this.min.y = centerY - MAX_SPAN_Y / 2;
+      this.max.y = centerY + MAX_SPAN_Y / 2;
+    }
     this.hasSurfaces = true;
 
     const spanX = Math.max(GRID_CELL, this.max.x - this.min.x);
@@ -112,7 +131,11 @@ class RoomModel {
       this.entries.push({ object, positions, normals });
     }
     this.building = this.entries.length > 0;
-    if (!this.building) this.hasSurfaces = this.grid.length > 0 && false;
+    if (!this.building) {
+      // Nothing sampleable arrived: keep the compact fallback volume instead
+      // of claiming an empty giant box.
+      this.reset();
+    }
   }
 
   /**
@@ -135,6 +158,13 @@ class RoomModel {
     if (this.entryIndex >= this.entries.length) {
       this.building = false;
       this.entries = [];
+      // Knowledge without a single mapped cell is useless: fall back to the
+      // compact default volume rather than an empty detected box.
+      let mapped = false;
+      for (let i = 0; i < this.grid.length; i += 1) {
+        if (Number.isFinite(this.grid[i])) { mapped = true; break; }
+      }
+      if (!mapped) this.reset();
     }
     return this.building;
   }

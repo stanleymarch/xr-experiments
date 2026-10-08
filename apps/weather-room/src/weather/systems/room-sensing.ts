@@ -4,9 +4,11 @@
  * Change signatures are sampled at 2 Hz; grid rebuilds are debounced likewise.
  */
 
-import { createSystem, Mesh, XRMesh, XRPlane } from '@iwsdk/core';
+import { createSystem, Mesh, Vector3, XRMesh, XRPlane } from '@iwsdk/core';
 import type { Entity, Object3D } from '@iwsdk/core';
 import { roomModel } from '../room.js';
+
+const headPosition = new Vector3();
 
 /** Minimum seconds between signature scans and grid rebuilds. */
 const REBUILD_DEBOUNCE_S = 0.5;
@@ -137,20 +139,36 @@ export class RoomSensingSystem extends createSystem({
     }
     // The grid build is incremental and frame-bounded: never raycast a whole
     // room mesh on one frame (that is what froze the headset on VR entry).
+    // The viewer may walk while a build is pending: keep the finished volume
+    // near the head by rebuilding once the head leaves it.
     if (roomModel.building) {
       roomModel.step();
+      this.world.player.head.getWorldPosition(headPosition);
+      if (!roomModel.contains(headPosition)) {
+        roomModel.beginRebuild(this.currentObjects(), headPosition);
+        roomModel.step();
+      }
       return;
     }
     if (!this.pendingRebuild) return;
     if (time - this.lastRebuildAt < REBUILD_DEBOUNCE_S) return;
-    const objects = [];
+    const objects = this.currentObjects();
+    this.pendingRebuild = false;
+    this.lastRebuildAt = time;
+    // The weather happens around the viewer: anchor the volume to the head so
+    // a room mesh reported far from the viewer cannot strand every particle
+    // system out of sight while the panel still shows nonzero drivers.
+    this.world.player.head.getWorldPosition(headPosition);
+    roomModel.beginRebuild(objects, headPosition);
+    roomModel.step();
+  }
+
+  private currentObjects(): Object3D[] {
+    const objects: Object3D[] = [];
     for (const entity of this.tracked) {
       if (entity.object3D != null) objects.push(entity.object3D);
     }
-    this.pendingRebuild = false;
-    this.lastRebuildAt = time;
-    roomModel.beginRebuild(objects);
-    roomModel.step();
+    return objects;
   }
 
   override destroy(): void {

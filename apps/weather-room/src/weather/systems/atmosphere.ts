@@ -29,7 +29,9 @@ import {
 import { Vector3 } from '@iwsdk/core';
 import type { Entity } from '@iwsdk/core';
 import { roomModel } from '../room.js';
-import { weatherEvents, weatherStore } from '../weather-state.js';
+import { WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
+import type { HourCrossedDetail } from '../weather-state.js';
+import { Haptics, pulseHaptics } from '../feedback.js';
 import { windVectorFromFrame } from '../wind-shared.js';
  
 const FOG_CLEAR = 0.006;
@@ -180,7 +182,10 @@ export class AtmosphereSystem extends createSystem({}) {
   private nextFlashAt = 0;
   private flashT = -1; // -1 = idle; otherwise seconds since flash start
   private flashPeak = 0;
-
+  /** Room-wide hour pulse: 0 = idle, otherwise seconds since the crossing. */
+  private hourPulseT = -1;
+  /** NOW snaps pulse slightly stronger than plain hour detents. */
+  private hourPulsePeak = 1.0;
   init(): void {
     this.fog = new FogExp2(0x9fb4cc, FOG_CLEAR);
     this.world.scene.fog = this.fog;
@@ -263,6 +268,17 @@ export class AtmosphereSystem extends createSystem({}) {
       this.fillEntity.dispose();
       if (this.world.scene.fog === this.fog) this.world.scene.fog = null;
     });
+    // Same shared hour moment as the guide fill, panels, detent haptic, and
+    // tick audio: a brief room pulse (light + fog + particles below). A NOW
+    // snap carries the same pulse at a slightly stronger peak so the room
+    // acknowledges the snap without a second channel.
+    this.cleanupFuncs.push(
+      weatherEvents.on(WeatherEvent.HourCrossed, (detail: unknown) => {
+        const crossed = detail as HourCrossedDetail | undefined;
+        this.hourPulseT = 0;
+        this.hourPulsePeak = crossed?.isLive === true ? 1.6 : 1.0;
+      }),
+    );
   }
 
   update(delta: number): void {
@@ -299,41 +315,33 @@ export class AtmosphereSystem extends createSystem({}) {
       this.lastSkyDay = this.daylightEase;
     }
 
+    // Room-wide hour pulse: a brief (~0.6 s) coordinated lift of the room
+    // light, fog density, and particle shimmer on the same shared hour
+    // moment as the guide fill, panels, detent haptic, and tick audio.
+    // Passthrough-safe by construction: no strobe (single soft Gaussian
+    // envelope, peak +18% sun / +12% fill / +10% fog), no geometry or
+    // placement changes, and the particle layer only brightens in place —
+    // the real room behind passthrough stays dominant and readable.
+    let hourPulse = 0;
+    if (this.hourPulseT >= 0) {
+      this.hourPulseT += dt;
+      hourPulse = this.hourPulsePeak * Math.exp(-((this.hourPulseT - 0.18) ** 2) * 60);
+      if (this.hourPulseT > 0.7) {
+        this.hourPulseT = -1;
+        hourPulse = 0;
+      }
+    }
     this.fog.density =
-      FOG_CLEAR + (FOG_OVERCAST - FOG_CLEAR) * cloud + FOG_HUMID * humidity + (fogCode ? 0.025 : 0);
+      (FOG_CLEAR + (FOG_OVERCAST - FOG_CLEAR) * cloud + FOG_HUMID * humidity + (fogCode ? 0.025 : 0)) *
+      (1 + hourPulse * 0.1);
     const baseSun =
       (SUN_BRIGHT - (SUN_BRIGHT - SUN_DIM) * cloud) * (0.22 + 0.78 * this.daylightEase);
     const baseFill = 0.18 + 0.3 * this.daylightEase;
 
     // Thunder: occasional short safe light pulses instead of strobe.
-    let sunIntensity = baseSun;
-    let fillIntensity = baseFill;
-    let plateFlash = 0;
-    if (thunder) {
-      if (this.flashT < 0 && time >= this.nextFlashAt) {
-        this.flashT = 0;
-        this.flashPeak = 0.9 + Math.random() * 0.5;
-        weatherEvents.emit('thunder');
-      }
-      if (this.flashT >= 0) {
-        this.flashT += delta;
-        // Double-pulse envelope over ~0.5 s.
-        const envelope =
-          Math.exp(-this.flashT * 9) * 0.8 + Math.exp(-((this.flashT - 0.22) ** 2) * 160) * 0.6;
-        sunIntensity += this.flashPeak * envelope * 1.2;
-        fillIntensity += this.flashPeak * envelope * 0.5;
-        plateFlash = Math.min(1, this.flashPeak * envelope);
-        if (this.flashT > 0.7) {
-          this.flashT = -1;
-          this.nextFlashAt = time + FLASH_MIN_INTERVAL_S + Math.random() * (FLASH_MAX_INTERVAL_S - FLASH_MIN_INTERVAL_S);
-        }
-      }
-    } else {
-      this.flashT = -1;
-    }
-    this.sunEntity.setValue(DirectionalLightComponent, 'intensity', sunIntensity);
-    this.sunEntity.setValue(DirectionalLightComponent, 'color', this.sunColor);
-    this.fillEntity.setValue(AmbientLightComponent, 'intensity', fillIntensity);
+    let sunIntensity = baseSun * (1 + hourPulse * 0.18);
+    let fillIntensity = baseFill * (1 + hourPulse * 0.12);
+    let plateFlash = hourPulse * 0.25;
 
     // Cloud deck: overlapping translucent layers hugging the ceiling (or the
     // fallback volume top). The whole deck advects with the shared wind,
@@ -394,14 +402,15 @@ export class AtmosphereSystem extends createSystem({}) {
         this.dustPos[ix + 1] += (((time * swirl * 0.05 + s) % 0.3) * colH) % (colH * 0.3);
         if (this.dustPos[ix + 1] > max.y) this.dustPos[ix + 1] = min.y + 0.1;
       }
-      // Cylindrical billboard toward the camera.
+      // Cylindrical billboard toward the camera. The hour pulse briefly
+      // swells mote size in place (no new drift, no geometry changes).
       this.dustDummy.position.set(this.dustPos[ix], this.dustPos[ix + 1], this.dustPos[ix + 2]);
       this.dustDummy.rotation.set(
         0,
         Math.atan2(camPos.x - this.dustPos[ix], camPos.z - this.dustPos[ix + 2]),
         0,
       );
-      this.dustDummy.scale.setScalar(p.size);
+      this.dustDummy.scale.setScalar(p.size * (1 + hourPulse * 0.35));
       this.dustDummy.updateMatrix();
       this.dust.setMatrixAt(i, this.dustDummy.matrix);
     }

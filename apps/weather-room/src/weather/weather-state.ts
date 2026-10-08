@@ -285,6 +285,8 @@ class WeatherStore {
   private cachedPlayheadHours = Number.NaN;
   private cachedMinute = Number.NaN;
   private cachedCurrent: { frame: WeatherFrame; drivers: WeatherDrivers } | null = null;
+  /** Last rounded hour already announced on the bus; init matches playhead 0. */
+  private lastHourCrossed = 0;
 
   readonly state = new Signal<WeatherStoreState>({
     status: { kind: 'idle' },
@@ -306,7 +308,24 @@ class WeatherStore {
     const playheadHours = Math.min(PLAYHEAD_MAX_H, Math.max(PLAYHEAD_MIN_H, hours));
     const prev = this.state.peek();
     if (prev.playheadHours === playheadHours) return;
-    this.state.set({ ...prev, playheadHours, isLive: playheadHours === 0 });
+    const wasLive = prev.isLive;
+    const isLive = playheadHours === 0;
+    this.state.set({ ...prev, playheadHours, isLive });
+    // The snap moment belongs to every arrival at live — knob drag, step
+    // buttons, or DOM scrub — so it is announced here, not in the grab
+    // path. Existing snap subscribers (snap audio + double pulse) now fire
+    // exactly once per live arrival, whatever the source.
+    if (isLive && !wasLive) weatherEvents.emit(WeatherEvent.TimelineSnap);
+    // Single room-wide hour event: every playhead source funnels through
+    // here, so one emit per newly entered rounded hour keeps the guide
+    // fill, panels, room pulse, detent haptic, and tick audio on the same
+    // moment.
+    const crossedHour = Math.round(playheadHours);
+    if (crossedHour !== this.lastHourCrossed) {
+      this.lastHourCrossed = crossedHour;
+      const detail: HourCrossedDetail = { hour: crossedHour, isLive };
+      weatherEvents.emit(WeatherEvent.HourCrossed, detail);
+    }
   }
 
   /** Jump back to NOW (used by the timeline's reset affordance). */
@@ -336,7 +355,7 @@ class WeatherStore {
   }
 }
 
-type WeatherEventHandler = () => void;
+type WeatherEventHandler = (detail?: unknown) => void;
 
 /**
  * Tiny synchronous event bus for cross-cutting moments (thunder flash,
@@ -356,12 +375,44 @@ class WeatherEvents {
     return () => set.delete(handler);
   }
 
-  emit(event: string): void {
+  emit(event: string, detail?: unknown): void {
     const set = this.handlers.get(event);
     if (set == null) return;
-    for (const handler of set) handler();
+    for (const handler of set) handler(detail);
   }
 }
+
+/**
+ * Canonical weatherEvents vocabulary. The bus above stays the single
+ * coordination point — emit and subscribe through these names, never a
+ * second bus:
+ * - Thunder: atmosphere lightning moment (audio rumble + deep haptic).
+ * - TimelineGrab / TimelineRelease / TimelineSnap: knob quilt moments
+ *   (audio ticks + grab/snap haptics).
+ * - HourCrossed: the single room-wide hour event, emitted from
+ *   WeatherStore.setPlayhead once per newly entered rounded hour with the
+ *   new hour and live flag. Guide fill, panels, room pulse, detent haptic,
+ *   and soft tick all subscribe to this same moment.
+ * - UiPress: any deliberate panel/button press, UIKit or DOM (audio tick;
+ *   haptics pulse at the press site, where the session is in reach).
+ */
+/** Payload carried on WeatherEvent.HourCrossed. */
+export interface HourCrossedDetail {
+  /** Newly entered playhead hour, rounded. */
+  readonly hour: number;
+  /** True when the crossing landed back on live (NOW snap). */
+  readonly isLive: boolean;
+}
+export const WeatherEvent = {
+  Thunder: 'thunder',
+  TimelineGrab: 'timeline-grab',
+  TimelineRelease: 'timeline-release',
+  TimelineSnap: 'timeline-snap',
+  HourCrossed: 'hour-crossed',
+  UiPress: 'ui-press',
+} as const;
+
+export type WeatherEventName = (typeof WeatherEvent)[keyof typeof WeatherEvent];
 
 /** App-wide singleton for scene moments. */
 export const weatherEvents = new WeatherEvents();

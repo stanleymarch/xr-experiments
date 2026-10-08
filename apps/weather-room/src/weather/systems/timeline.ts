@@ -3,23 +3,30 @@
  * (0.96 m exhibition instrument, knob travel ±0.45 m) and drives it.
  * While grabbed, handle X in [-0.45, 0.45] maps to playhead hours [-24, 24].
  * Releasing within +/-0.75 h of 0 snaps back to live. On XR entry the control
- * is placed in front of the tracked viewer once (0.8 m out, 0.4 m below the
- * eyes, face tilted up) then stays fixed in the room.
+ * is placed in front of the tracked viewer once (0.9 m out, 0.22 m below the
+ * eyes, face tilted up) so the panel and the full rail share one forward
+ * glance, then stays fixed in the room.
  *
  * Hover/grab feedback animates the cloned glow-ring/crown emissive and the
  * NOW→playhead light-guide fill on materials cloned once at setup — no
- * per-frame allocations, shared prototype materials untouched.
+ * per-frame allocations, shared prototype materials untouched. Until the
+ * first grab, the knob breathes and a small floating `timelineHint` tag
+ * hovers beside it; the first grab retires the cue permanently.
  */
 
 import {
+  BufferAttribute,
+  BufferGeometry,
   createSystem,
   DistanceGrabbable,
+  DoubleSide,
   Grabbed,
   Hovered,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
   OneHandGrabbable,
+  PlaneGeometry,
   RayInteractable,
   Vector3,
   VisibilityState,
@@ -33,15 +40,28 @@ import {
 } from '../../scene-assets/timeline-control.scene-asset.js';
 import { TimelineHandle } from '../components/timeline-handle.js';
 import { placeControlAtViewer } from '../control-placement.js';
-import { PLAYHEAD_MAX_H, PLAYHEAD_MIN_H, weatherEvents, weatherStore } from '../weather-state.js';
+import { PLAYHEAD_MAX_H, PLAYHEAD_MIN_H, WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
+import type { HourCrossedDetail } from '../weather-state.js';
+import { Haptics, pulseHaptics } from '../feedback.js';
+import { onLanguageChange, t } from '../i18n.js';
 
 const RAIL_HALF = TIMELINE_TRAVEL_HALF;
 const SNAP_HOURS = 0.75;
-const DEFAULT_POS = new Vector3(0, 1.05, -1.0);
-/** Comfortable reach: inside arm's length, below eye line, face tipped up. */
-const PLACEMENT_DISTANCE = 0.8;
-const PLACEMENT_HEIGHT_OFFSET = -0.4;
+const DEFAULT_POS = new Vector3(0, 1.2, -1.0);
+/**
+ * One-glance framing: panel (1.5 m out, +0.3 m) and timeline (0.9 m out,
+ * -0.22 m) sit in the same forward gaze; the rail stays well above the
+ * bottom frustum edge and inside comfortable reach. Face tipped up.
+ */
+const PLACEMENT_DISTANCE = 0.9;
+const PLACEMENT_HEIGHT_OFFSET = -0.22;
 const FACE_TILT_X = -0.28;
+/** Floating cue tag: compact authored-geometry card, no fonts/DOM. */
+const CUE_CARD_W = 0.16;
+const CUE_CARD_H = 0.028;
+const CUE_DOT_PITCH = 0.0075;
+const CUE_DOT_R = 0.0016;
+const CUE_TAG_OFFSET = new Vector3(0.0, 0.075, 0.055);
 
 export class TimelineSystem extends createSystem({
   hovered: { required: [TimelineHandle, Hovered] },
@@ -54,10 +74,19 @@ export class TimelineSystem extends createSystem({
   private needsPlacement = false;
   private placedInSession = false;
   private readonly handleWorld = new Vector3();
+  private readonly cueLocal = new Vector3();
   private glowMaterial: MeshStandardMaterial | null = null;
   private crownMaterial: MeshStandardMaterial | null = null;
   private fillMaterial: MeshBasicMaterial | null = null;
   private fillMesh: Object3D | null = null;
+  private cueTag: Object3D | null = null;
+  private cueDots: MeshBasicMaterial | null = null;
+  /** First successful grab retires the cue for the whole page lifetime. */
+  private cueRetired = false;
+  /** NOW-pill snap flash: 0 = idle, otherwise seconds since the flash start. */
+  private snapFlashT = -1;
+  /** Hour-crossing detent flash on the guide fill: 0..1 decay, no allocation. */
+  private hourPing = 0;
 
   init(): void {
     this.cleanupFuncs.push(
@@ -67,12 +96,45 @@ export class TimelineSystem extends createSystem({
       }),
       this.queries.grabbed.subscribe('qualify', (entity) => {
         this.grabbedHandle = entity;
-        weatherEvents.emit('timeline-grab');
-        this.pulseControllers(0.5, 40);
+        if (!this.cueRetired) {
+          this.cueRetired = true;
+          this.hideCueTag();
+        }
+        weatherEvents.emit(WeatherEvent.TimelineGrab);
+        pulseHaptics(this.world, Haptics.grab.intensity, Haptics.grab.durationMs);
       }),
       this.queries.grabbed.subscribe('disqualify', () => {
+        const wasLive = weatherStore.state.peek().isLive;
         this.grabbedHandle = null;
-        weatherEvents.emit('timeline-release');
+        weatherEvents.emit(WeatherEvent.TimelineRelease);
+        // Release outside the snap zone gets a subtle single settle tap so
+        // it still acknowledges; snap-to-live arrivals already got the
+        // double pulse via the store-emitted TimelineSnap.
+        if (!wasLive) {
+          pulseHaptics(this.world, Haptics.settle.intensity, Haptics.settle.durationMs);
+        }
+      }),
+      // The guide fill follows the same room-wide hour moment as the panels,
+      // room pulse, detent haptic, and tick audio: a brief ping on every
+      // crossing, and an unmistakable flash-and-collapse on the NOW snap.
+      // Snap haptics/audio ride the store-emitted TimelineSnap + HourCrossed
+      // events (one detent per hour, double pulse + two-tone on snap) so
+      // every playhead source shares one snap moment.
+      weatherEvents.on(WeatherEvent.HourCrossed, (detail: unknown) => {
+        const crossed = detail as HourCrossedDetail | undefined;
+        if (crossed?.isLive === true) this.snapFlashT = 0;
+        else {
+          this.hourPing = 1;
+          pulseHaptics(this.world, Haptics.hourTick.intensity, Haptics.hourTick.durationMs);
+        }
+      }),
+      weatherEvents.on(WeatherEvent.TimelineSnap, () => {
+        pulseHaptics(this.world, Haptics.snapFirst.intensity, Haptics.snapFirst.durationMs);
+        const world = this.world;
+        window.setTimeout(
+          () => pulseHaptics(world, Haptics.snapSecond.intensity, Haptics.snapSecond.durationMs),
+          70,
+        );
       }),
     );
     // elics `System.init()` is synchronous and never awaited (no official
@@ -129,7 +191,75 @@ export class TimelineSystem extends createSystem({
     });
   }
 
-  update(): void {
+  /**
+   * Floating first-use tag: a small cyan card + a `timelineHint`-length row of
+   * authored dots (pure geometry, no fonts/DOM), parented to the rail above
+   * the knob so it never covers the weather panel. The dot count tracks the
+   * hint length, so EN/RU both shape the tag without new dictionary keys.
+   */
+  private buildCueTag(): void {
+    const rail = this.railEntity?.object3D;
+    if (rail == null || this.cueTag != null) return;
+    const card = new Mesh(
+      new PlaneGeometry(CUE_CARD_W, CUE_CARD_H),
+      new MeshBasicMaterial({ color: 0x060b18, transparent: true, opacity: 0.82, side: DoubleSide }),
+    );
+    card.name = 'TimelineCueCard';
+    card.position.copy(CUE_TAG_OFFSET);
+    rail.add(card);
+    this.cueTag = card;
+    this.refreshCueDots();
+    const refresh = (): void => {
+      if (!this.cueRetired && this.cueTag != null) this.refreshCueDots();
+    };
+    this.cleanupFuncs.push(onLanguageChange(refresh));
+  }
+
+  /** Dot row length follows the active `timelineHint` string, wrapped in two rows. */
+  private refreshCueDots(): void {
+    const tag = this.cueTag;
+    if (tag == null) return;
+    const previous = tag.getObjectByName('TimelineCueDots');
+    if (previous != null) tag.remove(previous);
+    const hint = t('timelineHint');
+    const slots = Math.max(8, Math.min(28, hint.length));
+    const cols = Math.min(slots, 14);
+    const rows = Math.ceil(slots / cols);
+    const positions: number[] = [];
+    for (let i = 0; i < slots; i += 1) {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const cx = (col - (cols - 1) / 2) * CUE_DOT_PITCH;
+      const cy = rows === 1 ? 0 : ((rows - 1) / 2 - row) * CUE_DOT_PITCH * 1.6;
+      const segments = 8;
+      for (let s = 0; s < segments; s += 1) {
+        const a0 = (s / segments) * Math.PI * 2;
+        const a1 = ((s + 1) / segments) * Math.PI * 2;
+        positions.push(
+          cx, cy, 0.0008,
+          cx + Math.cos(a0) * CUE_DOT_R, cy + Math.sin(a0) * CUE_DOT_R, 0.0008,
+          cx + Math.cos(a1) * CUE_DOT_R, cy + Math.sin(a1) * CUE_DOT_R, 0.0008,
+        );
+      }
+    }
+    const dotsGeometry = new BufferGeometry();
+    dotsGeometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
+    dotsGeometry.computeVertexNormals();
+    if (this.cueDots == null) {
+      this.cueDots = new MeshBasicMaterial({ color: 0x79d7f2, side: DoubleSide });
+    }
+    const dots = new Mesh(dotsGeometry, this.cueDots);
+    dots.name = 'TimelineCueDots';
+    tag.add(dots);
+  }
+
+  private hideCueTag(): void {
+    const tag = this.cueTag;
+    if (tag != null && tag.parent != null) tag.parent.remove(tag);
+    this.cueTag = null;
+  }
+
+  update(delta: number): void {
     if (this.railEntity == null || this.handleEntity == null) return;
 
     if (this.needsPlacement && this.railEntity.object3D != null) {
@@ -137,23 +267,44 @@ export class TimelineSystem extends createSystem({
       this.railEntity.object3D.rotateX(FACE_TILT_X);
       this.needsPlacement = false;
       this.placedInSession = true;
+      if (!this.cueRetired && this.cueTag == null) this.buildCueTag();
     }
 
     const state = weatherStore.state.peek();
     const handle = this.grabbedHandle;
     const grabbed = handle != null;
     const hovered = this.queries.hovered.entities.size > 0 || grabbed;
+    const cueActive = !this.cueRetired && this.cueTag != null;
+
+    // NOW-snap flash: the store announces every live arrival on the shared
+    // hour bus (knob drag, step buttons, DOM scrub alike); the ring flashes
+    // bright once then decays over ~0.45 s. Decay from the passed delta so
+    // the flash reads identically at any frame rate. Direct update() calls
+    // without a delta (as in screen-input-smoke.html) fall back to 16 ms.
+    const dt = Number.isFinite(delta) ? Math.min(Math.max(delta, 0), 0.1) : 0.016;
+    if (this.snapFlashT >= 0) this.snapFlashT += dt;
+    if (this.snapFlashT > 0.45) this.snapFlashT = -1;
+    if (this.hourPing > 0) this.hourPing = Math.max(0, this.hourPing - dt * 3);
+    const snapFlash = this.snapFlashT >= 0 ? Math.exp(-this.snapFlashT * 7) : 0;
 
     // State feedback on the pre-cloned materials only.
     const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.008);
     if (this.glowMaterial != null) {
-      this.glowMaterial.emissiveIntensity = grabbed ? 2.2 + pulse * 0.6 : hovered ? 1.6 : 0.9;
+      this.glowMaterial.emissiveIntensity = grabbed
+        ? 3.2 + pulse * 0.8
+        : hovered ? 2.4 : cueActive ? 1.6 + pulse * 1.2 : 1.6;
+      // Unmistakable NOW snap: the glow ring carries the snap flash on top
+      // of hover/grab feedback for one shared moment.
+      this.glowMaterial.emissiveIntensity += snapFlash * 3.0;
     }
     if (this.crownMaterial != null) {
-      this.crownMaterial.emissiveIntensity = grabbed ? 0.5 : hovered ? 0.22 : 0.06;
+      this.crownMaterial.emissiveIntensity = grabbed ? 0.6 : hovered ? 0.35 : cueActive ? 0.15 + pulse * 0.35 : 0.15;
     }
     if (this.fillMaterial != null) {
-      this.fillMaterial.opacity = grabbed ? 0.95 : hovered ? 0.8 : 0.55;
+      this.fillMaterial.opacity = grabbed ? 1.0 : hovered ? 0.9 : 0.75;
+      // Same room-wide moment on the guide: detent ping per crossed hour,
+      // full-bright snap on live arrival.
+      this.fillMaterial.opacity = Math.min(1, this.fillMaterial.opacity + this.hourPing * 0.25 + snapFlash * 0.25);
     }
 
     let knobX: number;
@@ -164,15 +315,15 @@ export class TimelineSystem extends createSystem({
       const localX = Math.max(-RAIL_HALF, Math.min(RAIL_HALF, this.handleWorld.x));
       const t = (localX + RAIL_HALF) / (RAIL_HALF * 2);
       const hours = PLAYHEAD_MIN_H + t * (PLAYHEAD_MAX_H - PLAYHEAD_MIN_H);
-      if (Math.abs(hours) <= SNAP_HOURS) {
-        if (!state.isLive) {
-          weatherEvents.emit('timeline-snap');
-          this.pulseControllers(0.3, 25);
-          window.setTimeout(() => this.pulseControllers(0.6, 60), 70);
-        }
-        weatherStore.goLive();
-      } else weatherStore.setPlayhead(hours);
+      // Snap routing stays identical (±0.75 h zone collapses to live) but the
+      // snap haptics/audio now fire once from the store on live arrival, so
+      // knob drags, step buttons, and DOM scrubs share one snap moment.
+      if (Math.abs(hours) <= SNAP_HOURS) weatherStore.goLive();
+      else weatherStore.setPlayhead(hours);
       knobX = localX;
+      if (Math.abs(hours) <= SNAP_HOURS && this.fillMaterial != null) {
+        this.fillMaterial.opacity = 1;
+      }
     } else {
       // Released: keep the knob where the playhead says it is.
       const t = (state.playheadHours - PLAYHEAD_MIN_H) / (PLAYHEAD_MAX_H - PLAYHEAD_MIN_H);
@@ -180,24 +331,18 @@ export class TimelineSystem extends createSystem({
       this.handleEntity.object3D?.position.set(knobX, 0, TIMELINE_KNOB_REST_Z);
     }
 
-    // Luminous NOW→playhead segment follows the knob (transform only).
+    // Luminous NOW→playhead segment follows the knob (transform only); on a
+    // NOW snap it collapses to a dot so the snap reads as a collapse.
     if (this.fillMesh != null) {
       const clamped = Math.max(-RAIL_HALF, Math.min(RAIL_HALF, knobX));
-      this.fillMesh.scale.x = Math.abs(clamped) < 0.0001 ? 0.0001 : clamped;
+      const snapped = Math.abs(clamped) < 0.05 && state.isLive;
+      this.fillMesh.scale.x = snapped ? 0.0001 : (Math.abs(clamped) < 0.0001 ? 0.0001 : clamped);
+    }
+    // The cue tag rides above the knob and breathes with it — no allocation.
+    if (this.cueTag != null) {
+      this.cueLocal.set(knobX * 0.35, CUE_TAG_OFFSET.y + Math.sin(performance.now() * 0.0032) * 0.004, CUE_TAG_OFFSET.z);
+      this.cueTag.position.copy(this.cueLocal);
     }
   }
 
-  /**
-   * Pulse every connected XR controller. WebXR gamepads expose
-   * hapticActuators[].pulse(); guarded because hands and desktop lack them.
-   */
-  private pulseControllers(intensity: number, durationMs: number): void {
-    const session = this.world.renderer.xr.getSession();
-    if (session == null) return;
-    for (const source of session.inputSources) {
-      const actuators = (source.gamepad as (Gamepad & { hapticActuators?: { pulse(v: number, ms: number): Promise<boolean> }[] }) | null)
-        ?.hapticActuators ?? [];
-      for (const actuator of actuators) void actuator.pulse(intensity, durationMs).catch(() => undefined);
-    }
-  }
 }

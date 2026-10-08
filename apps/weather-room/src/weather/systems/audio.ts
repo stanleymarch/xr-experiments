@@ -7,8 +7,8 @@
  * satisfying autoplay policy in both flat and XR presentations.
  */
 
-import { createSystem } from '@iwsdk/core';
-import { weatherEvents, weatherStore } from '../weather-state.js';
+import { createSystem, VisibilityState } from '@iwsdk/core';
+import { WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
 
 /** Seconds of looped noise per buffer; short enough to stay cheap. */
 const NOISE_BUFFER_S = 2;
@@ -38,6 +38,14 @@ export class WeatherAudioSystem extends createSystem({}) {
   private rainLevel = 0;
   private windLevel = 0;
 
+  /**
+   * The AudioContext is created suspended and resumed on the first user
+   * gesture. Desktop unlocks on window pointerdown; immersive VR never gets
+   * a window pointerdown, so the app's own XR entry path — every
+   * VisibilityState.Visible transition, including the UIKit panel's Enter AR
+   * click that triggers it — also resumes. Either path calls the same
+   * unlock, so flat and XR entry both work.
+   */
   init(): void {
     if (typeof window === 'undefined') return;
     const unlock = (): void => {
@@ -46,14 +54,30 @@ export class WeatherAudioSystem extends createSystem({}) {
         .catch(() => undefined);
     };
     window.addEventListener('pointerdown', unlock, { passive: true });
+    // XR entry has no window pointerdown: the Enter AR click resolves into a
+    // session visibility transition, so unlock on the first Visible too.
+    // Harmless on flat (unlock is idempotent, resume resolves immediately).
+    const unlockOnVisible = (state: VisibilityState): void => {
+      if (state === VisibilityState.Visible) unlock();
+    };
+    const unsubscribeVisible = this.world.visibilityState.subscribe(unlockOnVisible);
     this.cleanupFuncs.push(
       () => window.removeEventListener('pointerdown', unlock),
-      weatherEvents.on('thunder', () => this.rumble()),
-      weatherEvents.on('timeline-grab', () => this.tick(520, 0.05, 0.03)),
-      weatherEvents.on('timeline-snap', () => {
+      unsubscribeVisible,
+      weatherEvents.on(WeatherEvent.Thunder, () => this.rumble()),
+      weatherEvents.on(WeatherEvent.TimelineGrab, () => this.tick(520, 0.05, 0.03)),
+      weatherEvents.on(WeatherEvent.TimelineSnap, () => {
         this.tick(660, 0.06, 0.03);
         window.setTimeout(() => this.tick(990, 0.08, 0.05), 90);
       }),
+      // Room-wide hour detent: one soft tick per crossed hour on the same
+      // shared moment as the guide fill, panels, room pulse, and haptic.
+      // Deliberately quieter and shorter than the snap double-tick above
+      // so scrubbing stays a calm instrument; the NOW snap keeps its
+      // unmistakable two-tone thunk.
+      weatherEvents.on(WeatherEvent.HourCrossed, () => this.tick(740, 0.03, 0.025)),
+      // UI tick: modest in level by design (gain 0.04, 30 ms).
+      weatherEvents.on(WeatherEvent.UiPress, () => this.tick(880, 0.04, 0.03)),
       () => {
         void this.ctx?.close().catch(() => undefined);
         this.ctx = null;

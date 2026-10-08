@@ -3,18 +3,19 @@
  *
  * A premium exhibition instrument for scrubbing the weather playhead:
  * one continuous chamfered/sloped satin-metal housing, a polished ceramic
- * bezel with an inset dark-glass travel channel, a restrained cyan light
- * guide with a luminous NOW→playhead segment, hairline tick marks, floating
- * -24 / NOW / +24 signposts, and a lathed fingertip knob (collar + dished
- * crown + glow ring in the negative space between them).
+ * bezel with an inset dark-glass travel channel, a luminous cyan light
+ * guide with a strong NOW→playhead segment, readable tick marks, floating
+ * -24 / NOW / +24 signposts, and an enlarged lathed fingertip knob (collar +
+ * dished crown + glow ring in the negative space between them) that reads
+ * at ~0.8 m over bright passthrough.
  *
  * Contract (all units meters):
  * - +Y up, front face toward +Z, knob travels local X in [-0.45, +0.45]
  *   (maps to playhead hours [-24, +24]).
  * - Origin: center of the housing on the rail axis (y = 0 mid-height,
  *   z = 0 mid-depth).
- * - Envelope: x ±0.48, y [-0.037, +0.078] incl. signposts,
- *   z [-0.024, +0.055] incl. the knob crown.
+ * - Envelope: x ±0.48, y [-0.037, +0.09] incl. signposts,
+ *   z [-0.024, +0.06] incl. the knob crown.
  * - Articulation: group `TimeKnob` (TimelineSystem renames the clone to
  *   `Weather Timeline Handle`) translates along local X; its origin is the
  *   grip center so OneHandGrabbable/DistanceGrabbable pivot at the crown.
@@ -93,11 +94,11 @@ const materials = {
     roughness: 0.14,
     envMapIntensity: 1.2,
   }),
-  /** Faint full-width light guide hairline. */
+  /** Light-guide hairline — lifted to survive bright passthrough. */
   guideBase: new MeshBasicMaterial({
     color: ACCENT,
     transparent: true,
-    opacity: 0.3,
+    opacity: 0.45,
     blending: AdditiveBlending,
     depthWrite: false,
   }),
@@ -105,7 +106,7 @@ const materials = {
   guideFill: new MeshBasicMaterial({
     color: ACCENT,
     transparent: true,
-    opacity: 0.55,
+    opacity: 0.75,
     blending: AdditiveBlending,
     depthWrite: false,
     side: DoubleSide,
@@ -121,7 +122,7 @@ const materials = {
   endPoint: new MeshBasicMaterial({
     color: ACCENT,
     transparent: true,
-    opacity: 0.9,
+    opacity: 1.0,
     blending: AdditiveBlending,
     depthWrite: false,
     side: DoubleSide,
@@ -138,14 +139,13 @@ const materials = {
     metalness: 0.15,
     roughness: 0.42,
     emissive: ACCENT,
-    emissiveIntensity: 0.06,
+    emissiveIntensity: 0.15,
   }),
   /** Emissive ring set into the collar/crown negative space. */
   glowRing: new MeshStandardMaterial({
     color: GROUND,
     emissive: ACCENT,
-    emissiveIntensity: 0.9,
-    metalness: 0.1,
+    emissiveIntensity: 1.6,
     roughness: 0.4,
   }),
 };
@@ -261,11 +261,11 @@ function pushQuadXY(positions: number[], cx: number, cy: number, cz: number, w: 
 /**
  * Labels are vector strokes merged into one geometry per signpost — no
  * canvas, no fonts, identical in every realm and preview. Geometric-sans
- * letterforms echo the site's Unbounded display voice at hairline weight,
- * consistent with the tick/stem marks. Cap height 9 mm, stroke 1.2 mm.
+ * letterforms echo the site's Unbounded display voice, consistent with the
+ * tick/stem marks. Cap height 14 mm, stroke 2.2 mm: legible at ~0.8 m.
  */
-const GLYPH_CAP = 0.009;
-const GLYPH_STROKE = 0.0012;
+const GLYPH_CAP = 0.014;
+const GLYPH_STROKE = 0.0022;
 /** Extra advance between glyphs, in units of cap height. */
 const GLYPH_TRACKING = 0.22;
 
@@ -391,7 +391,7 @@ function buildSignpostGeometry(text: string): BufferGeometry {
 function createSignpost(name: string, text: string, material: MeshBasicMaterial, x: number): Mesh {
   const mesh = new Mesh(buildSignpostGeometry(text), material);
   mesh.name = name;
-  mesh.position.set(x, 0.068, 0.005);
+  mesh.position.set(x, 0.075, 0.005);
   return mesh;
 }
 
@@ -413,16 +413,16 @@ function buildKnob(): Group {
   const collar = new Mesh(
     latheAlongZ(
       [
-        [0.0035, -0.016],
-        [0.0035, -0.006],
-        [0.0055, -0.0045],
-        [0.014, -0.0035],
-        [0.016, -0.0015],
-        [0.0155, 0.0005],
-        [0.011, 0.0015],
-        [0.0085, 0.0025],
+        [0.0042, -0.016],
+        [0.0042, -0.006],
+        [0.0068, -0.0045],
+        [0.019, -0.0035],
+        [0.0215, -0.0015],
+        [0.021, 0.0005],
+        [0.0145, 0.0015],
+        [0.011, 0.0025],
       ],
-      40,
+      48,
     ),
     materials.knobMetal,
   );
@@ -432,29 +432,28 @@ function buildKnob(): Group {
   const crown = new Mesh(
     latheAlongZ(
       [
-        [0.008, 0.0008],
-        [0.0105, 0.0025],
-        [0.0135, 0.0045],
-        [0.0145, 0.007],
-        [0.0135, 0.01],
-        [0.011, 0.0125],
-        [0.007, 0.0135],
-        [0.0045, 0.0127],
-        [0.0015, 0.0132],
-        [0.0, 0.0134],
+        [0.0105, 0.0008],
+        [0.014, 0.0028],
+        [0.018, 0.0055],
+        [0.0195, 0.009],
+        [0.018, 0.0135],
+        [0.0145, 0.017],
+        [0.009, 0.0185],
+        [0.0055, 0.0175],
+        [0.0018, 0.018],
+        [0.0, 0.0182],
       ],
-      40,
+      48,
     ),
     materials.knobCeramic,
   );
   crown.name = 'KnobCrown';
   knob.add(crown);
 
-  const ring = new Mesh(new TorusGeometry(0.0152, 0.0009, 10, 48), materials.glowRing);
+  const ring = new Mesh(new TorusGeometry(0.0205, 0.0014, 12, 56), materials.glowRing);
   ring.name = 'KnobGlowRing';
   ring.position.z = 0.0002;
   knob.add(ring);
-
   return knob;
 }
 
@@ -504,7 +503,7 @@ function buildTimelineControl(): Group {
   floor.position.set(0, 0, 0.0246);
   root.add(floor);
 
-  const guideBase = new Mesh(new PlaneGeometry(0.9, 0.0025), materials.guideBase);
+  const guideBase = new Mesh(new PlaneGeometry(0.9, 0.004), materials.guideBase);
   guideBase.name = 'LightGuideBase';
   guideBase.position.set(0, 0, 0.0258);
   root.add(guideBase);
@@ -512,7 +511,7 @@ function buildTimelineControl(): Group {
   // Unit-width strip anchored at x=0; the system sets scale.x = knob local X
   // so the luminous segment always spans NOW -> playhead. DoubleSided because
   // a negative scale flips winding when scrubbing into the past.
-  const fillGeo = new PlaneGeometry(1, 0.005);
+  const fillGeo = new PlaneGeometry(1, 0.008);
   fillGeo.translate(0.5, 0, 0);
   const guideFill = new Mesh(fillGeo, materials.guideFill);
   guideFill.name = 'LightGuideFill';
@@ -520,14 +519,14 @@ function buildTimelineControl(): Group {
   guideFill.scale.x = 0.0001;
   root.add(guideFill);
 
-  // Hairline ticks every 6 h (NOW has its own marker) + signpost stems.
+  // Readable ticks every 6 h (NOW has its own marker) + signpost stems.
   const tickPositions: number[] = [];
   for (let k = 0; k <= 8; k++) {
     if (k === 4) continue;
-    pushQuadXY(tickPositions, -TIMELINE_TRAVEL_HALF + k * 0.1125, 0, 0.0258, 0.0012, 0.007);
+    pushQuadXY(tickPositions, -TIMELINE_TRAVEL_HALF + k * 0.1125, 0, 0.0258, 0.002, 0.01);
   }
   for (const x of [-TIMELINE_TRAVEL_HALF, 0, TIMELINE_TRAVEL_HALF]) {
-    pushQuadXY(tickPositions, x, 0.047, 0.005, 0.001, 0.028);
+    pushQuadXY(tickPositions, x, 0.052, 0.005, 0.0016, 0.03);
   }
   const tickGeo = new BufferGeometry();
   tickGeo.setAttribute('position', new BufferAttribute(new Float32Array(tickPositions), 3));
@@ -536,16 +535,15 @@ function buildTimelineControl(): Group {
   ticks.name = 'TickMarks';
   root.add(ticks);
 
-  const nowMarker = new Mesh(bevelBox(0.0025, 0.014, 0.0008, 0.0004), materials.now);
+  const nowMarker = new Mesh(bevelBox(0.004, 0.018, 0.0008, 0.0004), materials.now);
   nowMarker.name = 'NowMarker';
   nowMarker.position.set(0, 0, 0.026);
-  root.add(nowMarker);
 
   for (const [name, x] of [
     ['EndPointPast', -TIMELINE_TRAVEL_HALF],
     ['EndPointFuture', TIMELINE_TRAVEL_HALF],
   ] as const) {
-    const point = new Mesh(new CircleGeometry(0.003, 20), materials.endPoint);
+    const point = new Mesh(new CircleGeometry(0.0045, 24), materials.endPoint);
     point.name = name;
     point.position.set(x, 0, 0.026);
     root.add(point);

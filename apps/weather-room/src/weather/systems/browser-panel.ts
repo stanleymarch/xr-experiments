@@ -1,7 +1,32 @@
 /** Native HTML controls for desktop/phone browsers; XR uses the spatial panel. */
 
 import { createSystem } from '@iwsdk/core';
-import { PLAYHEAD_MAX_H, PLAYHEAD_MIN_H, playheadTime, weatherStore } from '../weather-state.js';
+import { PLAYHEAD_MAX_H, PLAYHEAD_MIN_H, WeatherEvent, playheadTime, weatherEvents, weatherStore } from '../weather-state.js';
+import type { HourCrossedDetail } from '../weather-state.js';
+import { Haptics, pulseHaptics } from '../feedback.js';
+import {
+  formatHoursFromNow,
+  formatMissing,
+  getLanguage,
+  localizeDataPhrase,
+  localizeLoadingLabel,
+  localizePlaceLabel,
+  localizePresetLabel,
+  onLanguageChange,
+  providerOf,
+  sourceStatus,
+  t,
+  toggleLanguage,
+  weatherCodeName,
+  type Language,
+} from '../i18n.js';
+import { PROVIDER_DISPLAY } from '../providers.js';
+import {
+  LOCATION_PRESETS,
+  getManualLocation,
+  parseLatLon,
+  setManualLocation,
+} from '../weather-data.js';
 import { reloadWeather } from './weather-loader.js';
 
 /** Stable DOM id for the browser controls. */
@@ -61,10 +86,12 @@ const CSS = `
   position: fixed;
   left: calc(12px + env(safe-area-inset-left, 0px));
   right: auto;
+  top: auto;
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   width: min(400px, calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
-  max-height: calc(100dvh - 24px - env(safe-area-inset-bottom, 0px));
+  max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: 20;
   box-sizing: border-box;
   background: rgba(13, 25, 48, 0.88);
@@ -120,13 +147,32 @@ const CSS = `
 }
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="time-line"],
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="playhead-value"],
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="weather-hero"],
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="weather-line"] {
   font-variant-numeric: tabular-nums;
 }
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="time-line"] {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   color: #eef5ff;
+  line-height: 1.2;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="weather-hero"] {
+  font-size: 26px;
+  font-weight: 700;
+  color: #eef5ff;
+  line-height: 1.25;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="weather-line"] {
+  font-size: 15px;
+  font-weight: 600;
+  color: #eef5ff;
+  line-height: 1.55;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="status-line"] {
+  font-size: 11px;
+  color: #5f7896;
+  line-height: 1.4;
 }
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-row {
   display: flex;
@@ -147,8 +193,11 @@ const CSS = `
   cursor: pointer;
   touch-action: manipulation;
 }
-#${BROWSER_PANEL_ROOT_ID} button:hover {
+#${BROWSER_PANEL_ROOT_ID} button:hover,
+#${BROWSER_PANEL_ROOT_ID} button:focus-visible {
   border-color: rgba(121, 215, 242, 0.42);
+  outline: 2px solid rgba(121, 215, 242, 0.55);
+  outline-offset: 1px;
 }
 #${BROWSER_PANEL_ROOT_ID} button:disabled {
   opacity: 0.45;
@@ -166,6 +215,25 @@ const CSS = `
   font-size: 12px;
   letter-spacing: 0.08em;
   color: #94aac8;
+}
+#${BROWSER_PANEL_ROOT_ID} select,
+#${BROWSER_PANEL_ROOT_ID} input[type="text"] {
+  min-height: 44px;
+  min-width: 44px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(169, 216, 255, 0.19);
+  background: rgba(120, 184, 255, 0.07);
+  color: #eef5ff;
+  font: inherit;
+  font-size: 16px;
+  touch-action: manipulation;
+}
+#${BROWSER_PANEL_ROOT_ID} select option {
+  color: #060b18;
+  background: #eef5ff;
 }
 #${BROWSER_PANEL_ROOT_ID} input[type="range"] {
   width: 100%;
@@ -195,17 +263,6 @@ const CSS = `
 }
 `;
 
-function weatherCodeName(code: number): string {
-  if (code === 0) return 'Clear';
-  if (code <= 3) return 'Clouds';
-  if (code === 45 || code === 48) return 'Fog';
-  if (code >= 51 && code <= 57) return 'Drizzle';
-  if (code >= 61 && code <= 67) return 'Rain';
-  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'Snow';
-  if (code >= 80 && code <= 82) return 'Showers';
-  if (code >= 95) return 'Thunder';
-  return 'Weather';
-}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -226,12 +283,21 @@ export class BrowserPanelSystem extends createSystem({}) {
   private statusLine: HTMLElement | null = null;
   private locationLine: HTMLElement | null = null;
   private timeLine: HTMLElement | null = null;
+  private heroLine: HTMLElement | null = null;
   private weatherLine: HTMLElement | null = null;
   private badge: HTMLElement | null = null;
   private enterButton: HTMLButtonElement | null = null;
   private exitButton: HTMLButtonElement | null = null;
   private reloadButton: HTMLButtonElement | null = null;
   private xrNote: HTMLElement | null = null;
+  private langButton: HTMLButtonElement | null = null;
+  private locationWrap: HTMLElement | null = null;
+  private locationSelect: HTMLSelectElement | null = null;
+  private locationInput: HTMLInputElement | null = null;
+  private locationApply: HTMLButtonElement | null = null;
+  private locationClear: HTMLButtonElement | null = null;
+  private locationError: HTMLElement | null = null;
+  private unsubscribeLanguage: (() => void) | null = null;
   private dirty = true;
   private lastRenderAt = -Number.MAX_SAFE_INTEGER;
   private lastClockMinute = -1;
@@ -256,16 +322,27 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.xrManager.addEventListener('sessionstart', onSessionVisibility);
     this.xrManager.addEventListener('sessionend', onSessionVisibility);
 
+    const tick = (): void => {
+      weatherEvents.emit(WeatherEvent.UiPress);
+      pulseHaptics(this.world, Haptics.lightTap.intensity, Haptics.lightTap.durationMs);
+    };
+    const firmTap = (): void => {
+      pulseHaptics(this.world, Haptics.firmTap.intensity, Haptics.firmTap.durationMs);
+    };
     const stepBack = (): void => {
+      tick();
       weatherStore.setPlayhead(weatherStore.state.peek().playheadHours - 6);
     };
     const stepForward = (): void => {
+      tick();
       weatherStore.setPlayhead(weatherStore.state.peek().playheadHours + 6);
     };
     const goLive = (): void => {
+      tick();
       weatherStore.goLive();
     };
     const reload = (): void => {
+      tick();
       void reloadWeather();
     };
     const scrub = (): void => {
@@ -274,10 +351,47 @@ export class BrowserPanelSystem extends createSystem({}) {
     };
     const launchXR = (): void => {
       if (!this.world.xrEnabled) return;
+      tick();
+      firmTap();
       void this.world.launchXR();
     };
     const exitXR = (): void => {
+      tick();
+      firmTap();
       void this.world.exitXR();
+    };
+    const switchLanguage = (): void => {
+      tick();
+      toggleLanguage();
+    };
+    const applyManualInput = (): void => {
+      if (this.locationInput == null) return;
+      tick();
+      const parsed = parseLatLon(this.locationInput.value);
+      if (parsed == null) {
+        if (this.locationError != null) this.locationError.textContent = t('locationInvalid');
+        return;
+      }
+      if (this.locationError != null) this.locationError.textContent = '';
+      setManualLocation({
+        latitude: parsed.latitude,
+        longitude: parsed.longitude,
+        label: `${parsed.latitude.toFixed(2)}°, ${parsed.longitude.toFixed(2)}°`,
+      });
+      void reloadWeather();
+    };
+    const applyPreset = (): void => {
+      if (this.locationSelect == null) return;
+      tick();
+      const preset = LOCATION_PRESETS.find((item) => item.id === this.locationSelect?.value);
+      if (preset == null) return;
+      setManualLocation({ latitude: preset.latitude, longitude: preset.longitude, label: preset.label });
+      void reloadWeather();
+    };
+    const clearManual = (): void => {
+      tick();
+      setManualLocation(null);
+      void reloadWeather();
     };
 
     this.root?.querySelector('[data-testid="step-back"]')?.addEventListener('click', stepBack);
@@ -287,6 +401,10 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.range?.addEventListener('input', scrub);
     this.enterButton?.addEventListener('click', launchXR);
     this.exitButton?.addEventListener('click', exitXR);
+    this.langButton?.addEventListener('click', switchLanguage);
+    this.locationSelect?.addEventListener('change', applyPreset);
+    this.locationApply?.addEventListener('click', applyManualInput);
+    this.locationClear?.addEventListener('click', clearManual);
 
     this.cleanupFuncs.push(
       () => {
@@ -300,17 +418,38 @@ export class BrowserPanelSystem extends createSystem({}) {
       () => this.range?.removeEventListener('input', scrub),
       () => this.enterButton?.removeEventListener('click', launchXR),
       () => this.exitButton?.removeEventListener('click', exitXR),
+      () => this.langButton?.removeEventListener('click', switchLanguage),
+      () => this.locationSelect?.removeEventListener('change', applyPreset),
+      () => this.locationApply?.removeEventListener('click', applyManualInput),
+      () => this.locationClear?.removeEventListener('click', clearManual),
       unsubscribeStore,
       unsubscribeVisibility,
       () => this.xrManager.removeEventListener('sessionstart', onSessionVisibility),
       () => this.xrManager.removeEventListener('sessionend', onSessionVisibility),
+      () => {
+        this.unsubscribeLanguage?.();
+        this.unsubscribeLanguage = null;
+      },
       () => {
         this.disposed = true;
         this.root?.remove();
         document.getElementById(STYLE_ID)?.remove();
         this.root = null;
       },
+      // Same shared hour moment as the guide fill, spatial panel, room
+      // pulse, detent haptic, and tick audio: re-render immediately and
+      // flash the NOW badge on a snap arrival.
+      weatherEvents.on(WeatherEvent.HourCrossed, (detail: unknown) => {
+        const crossed = detail as HourCrossedDetail | undefined;
+        if (this.disposed) return;
+        if (crossed?.isLive === true) this.flashBadge();
+        if (this.root?.hidden) this.dirty = true;
+        else this.render();
+      }),
     );
+    this.unsubscribeLanguage = onLanguageChange(() => {
+      if (!this.disposed) this.render();
+    });
 
     this.applySessionVisibility();
     void this.probeXrSupport();
@@ -345,7 +484,10 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.badge.className = 'browser-panel-badge';
     const declaredRevision: unknown = typeof __WEATHER_ROOM_REVISION__ === 'string' ? __WEATHER_ROOM_REVISION__ : 'unknown';
     const version = el('span', 'version-label', `rev ${typeof declaredRevision === 'string' && declaredRevision.length > 0 ? declaredRevision : 'unknown'}`);
-    meta.append(this.badge, version);
+    this.langButton = document.createElement('button');
+    this.langButton.type = 'button';
+    this.langButton.dataset.testid = 'lang-toggle';
+    meta.append(this.badge, version, this.langButton);
     root.appendChild(meta);
 
     const info = document.createElement('div');
@@ -354,8 +496,11 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.statusLine = el('p', 'status-line', 'Starting…');
     this.locationLine = el('p', 'location-line', '--');
     this.timeLine = el('p', 'time-line', 'NOW');
+    this.heroLine = el('p', 'weather-hero', '--');
     this.weatherLine = el('p', 'weather-line', '--');
-    info.append(this.statusLine, this.locationLine, this.timeLine, this.weatherLine);
+    // Hero readout first (time + temp + condition), secondary diagnostics
+    // after the core precip/wind lines: DOM order matches visual hierarchy.
+    info.append(this.timeLine, this.heroLine, this.weatherLine, this.locationLine, this.statusLine);
     root.appendChild(info);
 
     const row = document.createElement('div');
@@ -382,7 +527,8 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.reloadButton.dataset.testid = 'reload';
     this.reloadButton.textContent = 'Reload';
     this.reloadButton.setAttribute('aria-label', 'Reload weather data');
-    row.append(back, now, forward, this.reloadButton);
+    // Timeline row keeps the scrub buttons; Reload joins the utility row below.
+    row.append(back, now, forward);
     root.appendChild(row);
 
     const scrubLabel = document.createElement('label');
@@ -404,6 +550,48 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.playheadValue.className = 'browser-panel-note';
     root.appendChild(this.playheadValue);
 
+    // Compact manual-location row: preset select + "lat,lon" field + Set/Auto.
+    // Same row/heading visual language; no new panel styling beyond layout
+    // of the row itself (flex wrap inherited from .browser-panel-row).
+    const locLabel = document.createElement('label');
+    locLabel.className = 'browser-panel-scrub';
+    locLabel.setAttribute('for', `${BROWSER_PANEL_ROOT_ID}-location`);
+    locLabel.dataset.testid = 'location-label';
+    locLabel.textContent = 'Location';
+    root.appendChild(locLabel);
+    this.locationWrap = document.createElement('div');
+    this.locationWrap.className = 'browser-panel-row';
+    this.locationWrap.dataset.testid = 'location-row';
+    this.locationSelect = document.createElement('select');
+    this.locationSelect.id = `${BROWSER_PANEL_ROOT_ID}-location`;
+    this.locationSelect.dataset.testid = 'location-presets';
+    for (const preset of LOCATION_PRESETS) {
+      const option = document.createElement('option');
+      option.value = preset.id;
+      option.textContent = preset.label;
+      this.locationSelect.appendChild(option);
+    }
+    this.locationInput = document.createElement('input');
+    this.locationInput.type = 'text';
+    this.locationInput.dataset.testid = 'location-input';
+    this.locationInput.placeholder = 'lat, lon';
+    this.locationInput.setAttribute('inputmode', 'decimal');
+    this.locationApply = document.createElement('button');
+    this.locationApply.type = 'button';
+    this.locationApply.dataset.testid = 'location-set';
+    this.locationApply.setAttribute('aria-label', 'Set manual location');
+    this.locationClear = document.createElement('button');
+    this.locationClear.type = 'button';
+    this.locationClear.dataset.testid = 'location-auto';
+    this.locationClear.setAttribute('aria-label', 'Clear manual location');
+    this.locationWrap.append(this.locationSelect, this.locationInput, this.locationApply, this.locationClear);
+    root.appendChild(this.locationWrap);
+    this.locationError = el('p', 'location-error', '');
+    this.locationError.className = 'browser-panel-note';
+    root.appendChild(this.locationError);
+
+    // One small utility row (Reload + Enter/Exit): chrome reduction so the
+    // hero readout, not buttons, dominates the panel. Testids preserved.
     const xrRow = document.createElement('div');
     xrRow.className = 'browser-panel-row';
     xrRow.setAttribute('role', 'group');
@@ -416,6 +604,9 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.exitButton.type = 'button';
     this.exitButton.dataset.testid = 'exit-xr';
     this.exitButton.textContent = 'Exit';
+    // Reload moves into the utility row (same testid/handlers, new parent).
+    const utilityReload = this.reloadButton;
+    if (utilityReload != null) xrRow.append(utilityReload);
     xrRow.append(this.enterButton, this.exitButton);
     root.appendChild(xrRow);
     this.xrNote = el('p', 'xr-note', 'Checking XR support…');
@@ -426,7 +617,6 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.root = root;
   }
 
-  /** Browser DOM is not an immersive WebXR layer. */
   private applySessionVisibility(): void {
     if (this.root == null) return;
     // The last XR visibility signal can outlive sessionend until the next render frame.
@@ -436,7 +626,7 @@ export class BrowserPanelSystem extends createSystem({}) {
     if (this.enterButton != null) this.enterButton.hidden = !is2D || !this.world.xrEnabled;
     if (this.exitButton != null) this.exitButton.hidden = is2D;
     if (this.xrNote != null && !this.world.xrEnabled) {
-      this.xrNote.textContent = 'XR is not enabled in this build. Timeline and reload work in the browser.';
+      this.xrNote.textContent = t('xrDisabled');
     }
     if (!this.root.hidden) this.dirty = true;
   }
@@ -456,8 +646,7 @@ export class BrowserPanelSystem extends createSystem({}) {
   private async probeXrSupport(): Promise<void> {
     if (!this.world.xrEnabled) {
       if (!this.disposed && this.xrNote != null) {
-        this.xrNote.textContent =
-          'XR is not enabled in this build. Timeline and reload work in the browser.';
+        this.xrNote.textContent = t('xrDisabled');
       }
       return;
     }
@@ -473,9 +662,7 @@ export class BrowserPanelSystem extends createSystem({}) {
     if (this.disposed) return;
     if (this.enterButton != null) this.enterButton.disabled = !supported;
     if (this.xrNote != null && this.world.xrEnabled) {
-      this.xrNote.textContent = supported
-        ? 'Enter AR: use controller rays, hand pinch, or tap the spatial buttons on a phone.'
-        : 'AR is not available in this browser. Timeline and reload work here; use a WebXR browser or headset for immersion.';
+      this.xrNote.textContent = supported ? t('xrEnterHint') : t('xrUnavailable');
     }
     this.applySessionVisibility();
   }
@@ -485,69 +672,169 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.lastRenderAt = performance.now();
     this.dirty = false;
     this.lastClockMinute = new Date().getMinutes();
+    const lang = getLanguage();
     const state = weatherStore.state.peek();
     const { status, dataset, playheadHours, isLive } = state;
     const current = weatherStore.current();
     // A retained synthetic dataset stays DEMO even while a reload is loading.
     const demoDataset = dataset?.source === 'demo';
+    this.applyChromeLabels(lang);
 
     if (this.range != null && document.activeElement !== this.range) {
       this.range.value = String(playheadHours);
       this.range.setAttribute(
         'aria-valuetext',
-        isLive ? 'live, now' : `${playheadHours > 0 ? '+' : ''}${playheadHours} hours from now`,
+        isLive ? t('ariaLiveNow') : formatHoursFromNow(Math.round(playheadHours * 2) / 2, lang),
       );
     }
 
     if (this.badge != null) {
       const demo = demoDataset || status.kind === 'demo';
-      this.badge.textContent = demo ? 'DEMO' : 'LIVE';
+      this.badge.textContent = demo ? t('badgeDemo') : t('badgeLive');
       this.badge.dataset.mode = demo ? 'demo' : 'live';
     }
     if (this.reloadButton != null) {
       const loading = status.kind === 'loading' || status.kind === 'locating';
       this.reloadButton.disabled = loading;
-      this.reloadButton.textContent = loading ? 'Loading…' : 'Reload';
+      this.reloadButton.textContent = loading ? t('reloading') : t('reload');
     }
 
     if (current == null || dataset == null) {
       if (this.statusLine != null) {
         this.statusLine.textContent =
-          status.kind === 'loading' ? `Loading: ${status.label}` : 'Loading weather…';
+          status.kind === 'loading'
+            ? `${t('loadingPrefix')}${localizeLoadingLabel(status.label, lang)}`
+            : t('statusLoading');
       }
-      if (this.locationLine != null) this.locationLine.textContent = 'Locating…';
-      if (this.timeLine != null) this.timeLine.textContent = isLive ? 'NOW' : `${playheadHours}h`;
-      if (this.weatherLine != null) this.weatherLine.textContent = '--';
-      if (this.playheadValue != null) this.playheadValue.textContent = isLive ? 'NOW' : `${playheadHours}h`;
+      if (this.locationLine != null) this.locationLine.textContent = t('locatingShort');
+      const early = isLive ? t('playheadNow') : `${playheadHours}h`;
+      if (this.timeLine != null) this.timeLine.textContent = early;
+      if (this.heroLine != null) this.heroLine.textContent = t('missingValue');
+      if (this.weatherLine != null) this.weatherLine.textContent = t('missingValue');
+      if (this.playheadValue != null) this.playheadValue.textContent = early;
       return;
     }
 
     const { frame } = current;
-    const staleSuffix = frame.stale ? ' (cached)' : '';
+    const staleSuffix = frame.stale ? t('staleSuffixParen') : '';
+    const providerDisplay =
+      !demoDataset
+        ? (PROVIDER_DISPLAY[providerOf(dataset.source) as keyof typeof PROVIDER_DISPLAY] ?? providerOf(dataset.source))
+        : '';
+    // One dim secondary line: honest status core (already names the provider
+    // when live) plus a token only when it adds information.
     if (this.statusLine != null) {
-      this.statusLine.textContent =
+      const statusCore =
         status.kind === 'demo'
-          ? `Demo data: ${status.reason}`
+          ? `${t('demoDataPrefix')}${localizeDataPhrase(status.reason, lang)}`
           : demoDataset
-            ? `Demo data — retained while reloading${staleSuffix}`
-            : `Live from Open-Meteo${staleSuffix}`;
+            ? `${t('statusDemoRetained')}${staleSuffix}`
+            : `${sourceStatus(providerDisplay, staleSuffix, lang)}`;
+      const extraToken =
+        providerDisplay !== '' && (status.kind === 'loading' || status.kind === 'locating')
+          ? ` · ${providerDisplay}`
+          : '';
+      this.statusLine.textContent = `${statusCore}${extraToken}`;
     }
-    if (this.locationLine != null) this.locationLine.textContent = dataset.label;
+    if (this.locationLine != null) {
+      this.locationLine.textContent = localizePlaceLabel(
+        dataset.label.split(' · ').slice(1).join(' · ') || dataset.label,
+        lang,
+      );
+    }
 
     const at = playheadTime(dataset, playheadHours, new Date());
-    const beyond = frame.outOfCoverage ? ' — beyond data' : '';
+    const beyond = frame.outOfCoverage ? t('beyondSuffixDash') : '';
     const hours = at.getHours() < 10 ? `0${at.getHours()}` : `${at.getHours()}`;
     const minutes = at.getMinutes() < 10 ? `0${at.getMinutes()}` : `${at.getMinutes()}`;
-    const label = isLive ? `NOW${beyond}` : `${hours}:${minutes} (${playheadHours > 0 ? '+' : ''}${playheadHours}h)${beyond}`;
+    const label = isLive
+      ? `${t('playheadNow')}${beyond}`
+      : `${hours}:${minutes} (${playheadHours > 0 ? '+' : ''}${playheadHours}h)${beyond}`;
     if (this.timeLine != null) this.timeLine.textContent = label;
     if (this.playheadValue != null) this.playheadValue.textContent = label;
 
-    if (this.weatherLine != null) {
-      const temp = Number.isFinite(frame.temperatureC) ? `${frame.temperatureC.toFixed(1)} C` : '-- C';
-      const code = frame.available.weatherCode ? weatherCodeName(frame.weatherCode) : '--';
-      const rain = Number.isFinite(frame.precipitationMm) ? `${frame.precipitationMm.toFixed(1)} mm/h` : '-- mm/h';
-      const wind = Number.isFinite(frame.windSpeedKmh) ? `${Math.round(frame.windSpeedKmh)} km/h` : '-- km/h';
-      this.weatherLine.textContent = `${temp} | ${code} | rain ${rain} | wind ${wind}`;
+    if (this.heroLine != null) {
+      const temp = Number.isFinite(frame.temperatureC) ? `${frame.temperatureC.toFixed(1)} C` : formatMissing('C');
+      const code = frame.available.weatherCode ? weatherCodeName(frame.weatherCode, lang) : t('missingValue');
+      this.heroLine.textContent = `${temp} · ${code}`;
     }
+    if (this.weatherLine != null) {
+      const rain = Number.isFinite(frame.precipitationMm)
+        ? `${frame.precipitationMm.toFixed(1)} mm/h`
+        : formatMissing('mm/h');
+      const prob = Number.isFinite(frame.precipitationProbabilityPct)
+        ? `${Math.round(frame.precipitationProbabilityPct)} %`
+        : formatMissing('%');
+      const wind = Number.isFinite(frame.windSpeedKmh)
+        ? `${Math.round(frame.windSpeedKmh)} km/h`
+        : formatMissing('km/h');
+      this.weatherLine.textContent = `${t('rain')} ${rain} (${prob}) · ${t('wind')} ${wind}`;
+    }
+    this.syncLocationRow(lang);
+  }
+
+  /** Static chrome: buttons, labels, aria, and the location picker skeleton. */
+  private applyChromeLabels(lang: Language): void {
+    this.root?.setAttribute('aria-label', t('ariaPanel'));
+    this.root?.querySelector('[data-testid="step-back"]')?.setAttribute('aria-label', t('ariaStepBack'));
+    this.root?.querySelector('[data-testid="go-live"]')?.setAttribute('aria-label', t('ariaGoLive'));
+    this.root?.querySelector('[data-testid="step-forward"]')?.setAttribute('aria-label', t('ariaStepForward'));
+    const back = this.root?.querySelector('[data-testid="step-back"]');
+    const now = this.root?.querySelector('[data-testid="go-live"]');
+    const forward = this.root?.querySelector('[data-testid="step-forward"]');
+    if (back != null) back.textContent = t('stepBack');
+    if (now != null) now.textContent = t('goLive');
+    if (forward != null) forward.textContent = t('stepForward');
+    if (this.reloadButton != null) this.reloadButton.setAttribute('aria-label', t('ariaReload'));
+    if (this.range != null) this.range.setAttribute('aria-label', t('ariaScrub'));
+    if (this.langButton != null) {
+      this.langButton.textContent = t('langName');
+      this.langButton.setAttribute('aria-label', t('ariaSwitchLanguage'));
+    }
+    if (this.enterButton != null) this.enterButton.textContent = t('enterAr');
+    if (this.exitButton != null) this.exitButton.textContent = t('exit');
+    this.root?.querySelector('[data-testid="location-label"]')?.replaceChildren(t('locationLabelPrefix'));
+    if (this.locationInput != null) this.locationInput.placeholder = t('locationPlaceholder');
+    if (this.locationApply != null) this.locationApply.textContent = t('locationApply');
+    if (this.locationClear != null) this.locationClear.textContent = t('locationClear');
+    if (this.locationError != null && this.locationError.textContent !== '') {
+      this.locationError.textContent = t('locationInvalid');
+    }
+    void lang;
+  }
+
+  /** Keep the preset select in sync with the persisted manual location. */
+  private syncLocationRow(lang: Language): void {
+    const manual = getManualLocation();
+    if (this.locationSelect != null) {
+      const options = this.locationSelect.querySelectorAll('option');
+      LOCATION_PRESETS.forEach((preset, index) => {
+        const option = options.item(index);
+        if (option != null) option.textContent = localizePresetLabel(preset.label, lang);
+      });
+      if (manual != null) {
+        const match = LOCATION_PRESETS.find((preset) => preset.label === manual.label);
+        if (match != null) this.locationSelect.value = match.id;
+      }
+    }
+    if (this.locationInput != null && document.activeElement !== this.locationInput) {
+      this.locationInput.value = manual != null ? `${manual.latitude}, ${manual.longitude}` : '';
+    }
+  }
+
+  /**
+   * Unmistakable NOW snap on the DOM surface: briefly invert the badge to
+   * white-on-dark, then restore the live/demo pill. Timer-owned, no layout
+   * change, same shared hour moment as the spatial pill flash.
+   */
+  private flashBadge(): void {
+    if (this.badge == null || this.disposed) return;
+    const badge = this.badge;
+    const previous = badge.style.background;
+    badge.style.background = '#ffffff';
+    window.setTimeout(() => {
+      if (this.disposed) return;
+      badge.style.background = previous;
+    }, 450);
   }
 }

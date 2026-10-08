@@ -97,14 +97,27 @@
   .playhead {
     font-family: "Geologica";
     color: #eef5ff;
-    font-size: 30px;
+    font-size: 34px;
     font-weight: 700;
-    line-height: 32px;
+    line-height: 38px;
     width: 100%;
     margin-top: 8px;
     text-align: center;
   }
   .playhead:dark {
+    color: #eef5ff;
+  }
+  .hero-temp {
+    font-family: "Geologica";
+    color: #eef5ff;
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 30px;
+    width: 100%;
+    margin-top: 4px;
+    text-align: center;
+  }
+  .hero-temp:dark {
     color: #eef5ff;
   }
   .subhead {
@@ -114,7 +127,7 @@
     font-weight: 500;
     line-height: 15px;
     width: 100%;
-    margin-top: 2px;
+    margin-top: 4px;
     text-align: center;
   }
   .subhead:dark {
@@ -123,11 +136,11 @@
   .values {
     font-family: "Geologica";
     color: #eef5ff;
-    font-size: 13px;
-    font-weight: 500;
-    line-height: 19px;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 23px;
     width: 100%;
-    margin-top: 8px;
+    margin-top: 6px;
     text-align: center;
   }
   .values:dark {
@@ -135,16 +148,16 @@
   }
   .status {
     font-family: "Geologica";
-    color: #94aac8;
-    font-size: 11px;
+    color: #5f7896;
+    font-size: 10px;
     font-weight: 500;
     line-height: 14px;
     width: 100%;
-    margin-top: 8px;
+    margin-top: 10px;
     text-align: center;
   }
   .status:dark {
-    color: #94aac8;
+    color: #5f7896;
   }
   .timeline-hint {
     font-family: "Geologica";
@@ -189,31 +202,38 @@
       <div id="revision-label" class="revision">rev --</div>
     </div>
     <div id="playhead-line" class="playhead">NOW</div>
+    <div id="hero-line" class="hero-temp">--</div>
     <div id="location-line" class="subhead">Locating...</div>
     <div id="values-line" class="values">--</div>
     <div id="status-line" class="status">Loading...</div>
-    <div class="timeline-hint">-24H &lt; GRAB KNOB / TAP BUTTONS &gt; +24H</div>
+    <div id="timeline-hint" class="timeline-hint">-24H &lt; GRAB KNOB / TAP BUTTONS &gt; +24H</div>
   </div>
   <div class="controls-row">
     <Button id="back-button" class="control-button" variant="secondary">
-      <ButtonLabel class="button-label">-6h</ButtonLabel>
+      <ButtonLabel id="back-label" class="button-label">-6h</ButtonLabel>
     </Button>
     <Button id="now-button" class="control-button" variant="primary">
-      <ButtonLabel class="button-label">NOW</ButtonLabel>
+      <ButtonLabel id="now-label" class="button-label">NOW</ButtonLabel>
     </Button>
     <Button id="forward-button" class="control-button" variant="secondary">
-      <ButtonLabel class="button-label">+6h</ButtonLabel>
-    </Button>
-    <Button id="reload-button" class="control-button" variant="tertiary">
-      <ButtonLabel class="button-label">Reload</ButtonLabel>
+      <ButtonLabel id="forward-label" class="button-label">+6h</ButtonLabel>
     </Button>
   </div>
   <div class="xr-row">
+    <Button id="reload-button" class="control-button" variant="tertiary">
+      <ButtonLabel id="reload-label" class="button-label">Reload</ButtonLabel>
+    </Button>
     <Button id="xr-button" class="control-button" variant="primary">
-      <ButtonLabel class="button-label">Enter AR</ButtonLabel>
+      <ButtonLabel id="xr-label" class="button-label">Enter AR</ButtonLabel>
     </Button>
     <Button id="exit-button" class="control-button" variant="tertiary">
-      <ButtonLabel class="button-label">Exit</ButtonLabel>
+      <ButtonLabel id="exit-label" class="button-label">Exit</ButtonLabel>
+    </Button>
+    <Button id="lang-button" class="control-button" variant="tertiary">
+      <ButtonLabel id="lang-label" class="button-label">RU</ButtonLabel>
+    </Button>
+    <Button id="location-button" class="control-button" variant="tertiary">
+      <ButtonLabel id="location-label" class="button-label">Loc</ButtonLabel>
     </Button>
   </div>
 </Panel>

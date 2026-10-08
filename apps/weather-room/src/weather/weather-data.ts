@@ -1,11 +1,24 @@
 /**
  * Framework-neutral weather data layer for WEATHER//ROOM.
  *
- * Fetches ~24h before NOW through ~24h after NOW from Open-Meteo in one
- * request, normalizes the hourly series, and provides a clearly-labeled
- * fallback location plus a synthetic demo scenario when the network is
- * unavailable. No IWSDK/three imports: pure browser + fetch + geolocation.
+ * Loads ~now-24h through ~now+24h through an ordered no-key provider chain
+ * (Open-Meteo -> MET Norway -> wttr.in, see providers.ts), normalizes the
+ * hourly series, and falls back to a manual, IP-based, or fixed location
+ * plus a synthetic demo scenario when every provider is unreachable.
+ * Open-Meteo leads as the reference source; on networks where it is blocked
+ * (measured: the Quest headset network times it out) the chain falls
+ * through to MET Norway automatically.
+ * No IWSDK/three imports: pure browser + fetch + geolocation.
  */
+
+import {
+  PROVIDER_DISPLAY,
+  PROVIDER_ORDER,
+  fetchMetNorway,
+  fetchWttr,
+  getCachedIpLocation,
+  refreshIpLocationCache,
+} from './providers.js';
 
 export interface WeatherHour {
   /** Hour start, UTC-based Date. */
@@ -33,7 +46,20 @@ export interface WeatherHour {
   readonly windGustsKmh: number | null;
 }
 
-export type WeatherSource = 'open-meteo' | 'open-meteo-fallback-location' | 'demo';
+export type WeatherSource =
+  | 'met-no'
+  | 'met-no-manual-location'
+  | 'met-no-ip-location'
+  | 'met-no-fallback-location'
+  | 'open-meteo'
+  | 'open-meteo-manual-location'
+  | 'open-meteo-ip-location'
+  | 'open-meteo-fallback-location'
+  | 'wttr'
+  | 'wttr-manual-location'
+  | 'wttr-ip-location'
+  | 'wttr-fallback-location'
+  | 'demo';
 
 export interface WeatherDataset {
   readonly source: WeatherSource;
@@ -222,12 +248,114 @@ export function buildDemoDataset(now = new Date()): WeatherDataset {
   };
 }
 
+export type LocationOrigin = 'device' | 'manual' | 'ip' | 'fallback';
+
 export interface GeolocationResult {
   latitude: number;
   longitude: number;
   label: string;
+  origin: LocationOrigin;
+  /** Kept for the previous `fallback: boolean` contract. */
   fallback: boolean;
   fallbackReason?: string;
+  /** IANA-offset minutes east of UTC, from IP lookup when known. */
+  utcOffsetMin?: number;
+}
+
+/** City presets offered to the manual-location picker (owned by the panels). */
+export interface LocationPreset {
+  readonly id: string;
+  readonly label: string;
+  readonly latitude: number;
+  readonly longitude: number;
+}
+
+export const LOCATION_PRESETS: readonly LocationPreset[] = [
+  { id: 'moscow', label: 'Moscow', latitude: 55.7558, longitude: 37.6173 },
+  { id: 'saint-petersburg', label: 'Saint Petersburg', latitude: 59.9343, longitude: 30.3351 },
+  { id: 'london', label: 'London', latitude: 51.5074, longitude: -0.1278 },
+  { id: 'berlin', label: 'Berlin', latitude: 52.52, longitude: 13.405 },
+  { id: 'new-york', label: 'New York', latitude: 40.7128, longitude: -74.006 },
+  { id: 'tokyo', label: 'Tokyo', latitude: 35.6762, longitude: 139.6503 },
+];
+
+const MANUAL_LOCATION_KEY = 'weather-room:manual-location';
+
+export interface ManualLocation {
+  readonly latitude: number;
+  readonly longitude: number;
+  readonly label: string;
+}
+
+const validCoords = (latitude: unknown, longitude: unknown): boolean =>
+  typeof latitude === 'number' &&
+  typeof longitude === 'number' &&
+  Number.isFinite(latitude) &&
+  Number.isFinite(longitude) &&
+  Math.abs(latitude) <= 90 &&
+  Math.abs(longitude) <= 180;
+
+/** Persisted manual override; null when the user never set one. */
+export function getManualLocation(): ManualLocation | null {
+  try {
+    const raw = localStorage.getItem(MANUAL_LOCATION_KEY);
+    if (raw == null) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<ManualLocation>;
+    if (!validCoords(parsed.latitude, parsed.longitude)) {
+      return null;
+    }
+    return {
+      latitude: parsed.latitude as number,
+      longitude: parsed.longitude as number,
+      label: typeof parsed.label === 'string' && parsed.label.trim() !== ''
+        ? parsed.label
+        : `${(parsed.latitude as number).toFixed(2)}°, ${(parsed.longitude as number).toFixed(2)}°`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist a manual location override. Pass null to clear it. Throws on
+ * out-of-range coordinates so the picker can report the mistake.
+ */
+export function setManualLocation(location: ManualLocation | null): void {
+  if (location == null) {
+    try {
+      localStorage.removeItem(MANUAL_LOCATION_KEY);
+    } catch {
+      // Private mode: clearing is best-effort.
+    }
+    return;
+  }
+  if (!validCoords(location.latitude, location.longitude)) {
+    throw new Error(`Invalid coordinates ${location.latitude}, ${location.longitude}`);
+  }
+  const label = location.label.trim() === ''
+    ? `${location.latitude.toFixed(2)}°, ${location.longitude.toFixed(2)}°`
+    : location.label;
+  try {
+    localStorage.setItem(
+      MANUAL_LOCATION_KEY,
+      JSON.stringify({ latitude: location.latitude, longitude: location.longitude, label }),
+    );
+  } catch {
+    // Private mode: the override applies to this load only.
+  }
+}
+
+/** Parse a "lat,lon" text field into coordinates; null when not parseable. */
+export function parseLatLon(text: string): { latitude: number; longitude: number } | null {
+  const parts = text.split(/[;,\s]+/).filter((part) => part !== '');
+  if (parts.length !== 2) {
+    return null;
+  }
+  const latitude = Number(parts[0]);
+  const longitude = Number(parts[1]);
+  return validCoords(latitude, longitude) ? { latitude, longitude } : null;
 }
 
 /** One Open-Meteo request covering at least now-24h .. now+24h. */
@@ -251,41 +379,94 @@ export interface WeatherFetchOutcome {
   status: WeatherLoadStatus;
 }
 
-/** Browser geolocation with a bounded wait; falls back to a fixed location.
+const withOrigin = (
+  latitude: number,
+  longitude: number,
+  label: string,
+  origin: LocationOrigin,
+  fallbackReason?: string,
+  utcOffsetMin?: number,
+): GeolocationResult => ({
+  latitude,
+  longitude,
+  label,
+  origin,
+  fallback: origin !== 'device',
+  fallbackReason,
+  utcOffsetMin,
+});
+
+/** Browser geolocation with a bounded wait; rejects nowhere, reports origin.
  * Hand-rolled resolve (not Promise.withResolvers): Quest Browser builds on
  * Chromium < 119 lack that ES2024 API and the loader must not crash on boot. */
 export function resolveLocation(): Promise<GeolocationResult> {
+  // A stored manual override wins before geolocation is even attempted: on
+  // networks where device location always times out (Quest), the user picks
+  // once and every load uses it. Labeled honestly — never as device.
+  const manual = getManualLocation();
+  if (manual != null) {
+    return Promise.resolve(withOrigin(manual.latitude, manual.longitude, manual.label, 'manual'));
+  }
   let resolve!: (result: GeolocationResult) => void;
   const promise = new Promise<GeolocationResult>((res) => {
     resolve = res;
   });
+  const cachedIpResult = (): GeolocationResult | null => {
+    // Cached IP coords (best-effort, labeled as such) beat the fixed point;
+    // a refresh for the NEXT load is already in flight from loadWeather.
+    const cached = getCachedIpLocation();
+    if (cached == null) {
+      return null;
+    }
+    const place = cached.place === '' ? 'IP-based location' : `IP-based location (${cached.place})`;
+    return withOrigin(cached.latitude, cached.longitude, place, 'ip', undefined, cached.utcOffsetMin);
+  };
+  const fixedResult = (): GeolocationResult => ({
+    ...FALLBACK_LOCATION,
+    origin: 'fallback',
+    fallback: true,
+    fallbackReason: 'device location unavailable',
+  });
   const geolocation = navigator.geolocation;
   if (geolocation == null) {
-    resolve({ ...FALLBACK_LOCATION, fallback: true, fallbackReason: 'browser location unavailable' });
+    resolve(cachedIpResult() ?? fixedResult());
     return promise;
   }
+  // Safety net: some engines never invoke either callback (Quest Browser).
+  const safety = setTimeout(() => settle(cachedIpResult() ?? fixedResult()), GEOLOCATION_TIMEOUT_MS + 2_000);
+  let settled = false;
+  const settle = (result: GeolocationResult): void => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    clearTimeout(safety);
+    resolve(result);
+  };
   geolocation.getCurrentPosition(
     (position) => {
       const { latitude, longitude } = position.coords;
-      resolve({ latitude, longitude, label: `${latitude.toFixed(2)}°, ${longitude.toFixed(2)}°`, fallback: false });
+      settle(withOrigin(latitude, longitude, `${latitude.toFixed(2)}°, ${longitude.toFixed(2)}°`, 'device'));
     },
-    (error) => {
-      const reason =
-        error.code === error.PERMISSION_DENIED
-          ? 'permission denied'
-          : error.code === error.POSITION_UNAVAILABLE
-            ? 'device location unavailable'
-            : 'location request timed out';
-      resolve({ ...FALLBACK_LOCATION, fallback: true, fallbackReason: reason });
+    () => {
+      settle(cachedIpResult() ?? fixedResult());
     },
     { timeout: GEOLOCATION_TIMEOUT_MS, maximumAge: 5 * 60 * 1000 },
   );
   return promise;
 }
 
+const sourceFor = (provider: (typeof PROVIDER_ORDER)[number], origin: LocationOrigin): WeatherSource => {
+  if (origin === 'device') {
+    return provider;
+  }
+  return `${provider}-${origin === 'manual' ? 'manual' : origin === 'ip' ? 'ip' : 'fallback'}-location` as WeatherSource;
+};
+
 /**
  * Loads weather with the full fallback chain:
- * geolocation (else fixed location) -> Open-Meteo (else synthetic demo).
+ * device geolocation (else manual override, else cached IP, else fixed) ->
+ * Open-Meteo -> MET Norway -> wttr.in -> synthetic demo.
  * `previous` enables a TTL check so refresh actions do not hammer the API.
  */
 export async function loadWeather(previous?: WeatherDataset): Promise<WeatherFetchOutcome> {
@@ -297,43 +478,64 @@ export async function loadWeather(previous?: WeatherDataset): Promise<WeatherFet
     return { dataset: previous, status: { kind: 'ready' } };
   }
 
+  // Best-effort IP refresh for the NEXT load. The current load proceeds with
+  // manual/cached/fallback coordinates immediately instead of blocking.
+  void refreshIpLocationCache();
+
   let location: GeolocationResult;
   try {
     location = await resolveLocation();
   } catch {
     // Legacy engines (Quest Browser < Chromium 119) lack ES2024 APIs used
     // above; degrade to the fixed location instead of rejecting the chain.
-    location = { ...FALLBACK_LOCATION, fallback: true, fallbackReason: 'location unavailable on this browser' };
+    location = withOrigin(FALLBACK_LOCATION.latitude, FALLBACK_LOCATION.longitude, FALLBACK_LOCATION.label, 'fallback', 'location unavailable on this browser');
   }
-  try {
-    const hours = await fetchOpenMeteo(location.latitude, location.longitude);
-    return {
-      dataset: {
-        source: location.fallback ? 'open-meteo-fallback-location' : 'open-meteo',
-        label: location.fallback
-          ? `${location.label} (${location.fallbackReason})`
-          : location.label,
-        fetchedAt: Date.now(),
-        latitude: location.latitude,
-        longitude: location.longitude,
-        hours,
-      },
-      status: { kind: 'ready' },
-    };
-  } catch (error) {
-    // AbortError reads as "signal is aborted without reason" — say it plainly.
-    const reason =
-      error instanceof DOMException && error.name === 'AbortError'
-        ? 'weather service timed out'
-        : error instanceof Error
-          ? error.message
-          : String(error);
-    return {
-      dataset: {
-        ...buildDemoDataset(),
-        label: `DEMO - ${location.fallback ? `${location.label} (${location.fallbackReason})` : location.label}`,
-      },
-      status: { kind: 'demo', reason },
-    };
+  const providerFailures: string[] = [];
+  for (const provider of PROVIDER_ORDER) {
+    try {
+      const hours = provider === 'open-meteo'
+        ? await fetchOpenMeteo(location.latitude, location.longitude)
+        : provider === 'met-no'
+          ? await fetchMetNorway(location.latitude, location.longitude)
+          : await fetchWttr(location.latitude, location.longitude, location.utcOffsetMin);
+      // The ip branch already reads "IP-based location (…)" from
+      // resolveLocation; repeating the qualifier here is redundant.
+      const place = location.origin === 'manual'
+        ? `${location.label} (manual location)`
+        : location.origin === 'ip'
+          ? location.label
+          : location.origin === 'fallback'
+            ? `${location.label} (${location.fallbackReason ?? 'fallback location'})`
+            : location.label;
+      return {
+        dataset: {
+          source: sourceFor(provider, location.origin),
+          // Provider first: sibling panels hardcode their status line, so the
+          // location line they render verbatim is the only honest source tag.
+          label: `${PROVIDER_DISPLAY[provider]} · ${place}`,
+          fetchedAt: Date.now(),
+          latitude: location.latitude,
+          longitude: location.longitude,
+          hours,
+        },
+        status: { kind: 'ready' },
+      };
+    } catch (error) {
+      // AbortError reads as "signal is aborted without reason" — say it plainly.
+      const detail =
+        error instanceof DOMException && error.name === 'AbortError'
+          ? 'weather service timed out'
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      providerFailures.push(`${PROVIDER_DISPLAY[provider]}: ${detail}`);
+    }
   }
+  return {
+    dataset: {
+      ...buildDemoDataset(),
+      label: `DEMO - ${location.label}`,
+    },
+    status: { kind: 'demo', reason: `all providers failed (${providerFailures.join('; ')})` },
+  };
 }

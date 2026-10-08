@@ -107,9 +107,87 @@ try {
     const spanY = roomModel.max.y - roomModel.min.y;
     if (spanX > 8.01 || spanZ > 8.01 || spanY > 4.01) throw new Error(`Room volume span not capped (${spanX.toFixed(2)}x${spanY.toFixed(2)}x${spanZ.toFixed(2)})`);
     while (roomModel.building) roomModel.step();
+    // Viewer anchoring: a room mesh reported far from the head (+12 m, beyond
+    // the 8 m span cap) is useless as local surface knowledge — the volume
+    // falls back head-centered instead of stranding weather out of sight.
+    const farFloor = new Mesh(new PlaneGeometry(3, 3, 8, 8), new MeshBasicMaterial());
+    farFloor.rotation.x = -Math.PI / 2;
+    farFloor.position.set(12, 0, 0);
+    farFloor.updateWorldMatrix(true, true);
+    roomModel.beginRebuild([farFloor], new Vector3(0, 1.6, 0));
+    while (roomModel.building) roomModel.step();
+    if (roomModel.hasSurfaces) throw new Error('Far mesh beyond the span cap must fall back, not claim surfaces');
+    if (!roomModel.contains(new Vector3(0, 1.6, 0))) throw new Error('Fallback volume does not contain the viewer head');
+    // Near-but-offset mesh (inside the span cap): the volume grows to cover
+    // both the sensed floor and the head, keeping the mapped surface.
+    const nearFloor = new Mesh(new PlaneGeometry(3, 3, 8, 8), new MeshBasicMaterial());
+    nearFloor.rotation.x = -Math.PI / 2;
+    nearFloor.position.set(4, 0, 0);
+    nearFloor.updateWorldMatrix(true, true);
+    roomModel.beginRebuild([nearFloor], new Vector3(0, 1.6, 0));
+    while (roomModel.building) roomModel.step();
+    if (!roomModel.hasSurfaces) throw new Error('Near offset mesh must still mark surfaces');
+    if (!roomModel.contains(new Vector3(0, 1.6, 0))) throw new Error('Anchored volume does not contain the viewer head');
+    const anchoredSpanX = roomModel.max.x - roomModel.min.x;
+    const anchoredSpanY = roomModel.max.y - roomModel.min.y;
+    const anchoredSpanZ = roomModel.max.z - roomModel.min.z;
+    if (anchoredSpanX > 8.01 || anchoredSpanZ > 8.01 || anchoredSpanY > 4.01) throw new Error(`Anchored volume inflated past the cap (${anchoredSpanX.toFixed(2)}x${anchoredSpanY.toFixed(2)}x${anchoredSpanZ.toFixed(2)})`);
+    const farCeiling = new Mesh(new PlaneGeometry(3, 3, 8, 8), new MeshBasicMaterial());
+    farCeiling.rotation.x = Math.PI / 2;
+    farCeiling.position.set(12, 2.0, 0);
+    farCeiling.updateWorldMatrix(true, true);
+    roomModel.beginRebuild([farCeiling], new Vector3(0, 1.6, 0));
+    while (roomModel.building) roomModel.step();
+    if (roomModel.hasSurfaces) throw new Error('Downward-only geometry must fall back even with an anchor');
+    if (!roomModel.contains(new Vector3(0, 1.6, 0))) throw new Error('Fallback volume does not contain the viewer head');
     roomModel.beginRebuild([]);
   }
-  world.player.head.position.set(0,1.6,0);
+  {
+    // Hit-test probe path (no planes/meshes): the sampler owns a head-centred
+    // probe volume, measured points flip hasSurfaces, mesh knowledge refuses
+    // probes and ends probe ownership, and standing down restores the box.
+    const { roomModel: probeRoom, } = await import('./src/weather/room.ts');
+    const { Vector3: V3b } = await import('@iwsdk/core');
+    const head = new V3b(0, 1.6, 0);
+    probeRoom.beginRebuild([]);
+    if (!probeRoom.beginProbeVolume(head)) throw new Error('Probe volume refused with no mesh knowledge');
+    if (probeRoom.hasSurfaces) throw new Error('Empty probe volume must not claim surfaces');
+    if (!probeRoom.contains(head)) throw new Error('Probe volume does not contain the viewer head');
+    const probeSpanX = probeRoom.max.x - probeRoom.min.x;
+    const probeSpanY = probeRoom.max.y - probeRoom.min.y;
+    const probeSpanZ = probeRoom.max.z - probeRoom.min.z;
+    if (probeSpanX > 8.01 || probeSpanZ > 8.01 || probeSpanY > 4.01) throw new Error(`Probe volume past the cap (${probeSpanX.toFixed(2)}x${probeSpanY.toFixed(2)}x${probeSpanZ.toFixed(2)})`);
+    // Unmeasured points never count: an in-volume NaN cell keeps hasSurfaces false.
+    if (probeRoom.surfaceHeightAt(head.x, head.z, 2.5) !== null) throw new Error('Empty probe grid must return null');
+    // First measured point maps its cell and flips hasSurfaces (floor at y=0).
+    probeRoom.recordProbePoint(head.x, 0, head.z);
+    if (!probeRoom.hasSurfaces) throw new Error('Measured probe point did not mark surfaces');
+    const probed = probeRoom.surfaceHeightAt(head.x, head.z, 2.5);
+    if (probed === null || Math.abs(probed - 0) > 0.26) throw new Error(`Probed floor height is wrong (got ${probed})`);
+    if (probeRoom.surfaceHeightAt(head.x, head.z, -0.1) !== null) throw new Error('Probe surface above the query point must not be reported');
+    // A contained head keeps sampled cells (no re-anchor wipe mid-tick).
+    if (!probeRoom.beginProbeVolume(head)) throw new Error('Contained re-anchor must keep the probe volume');
+    if (!probeRoom.hasSurfaces) throw new Error('Contained re-anchor dropped measured probe knowledge');
+    // Mesh knowledge refuses probes: the sampler must yield, never fight it.
+    const { Mesh: PMesh, PlaneGeometry: PGeo, MeshBasicMaterial: PMat } = await import('@iwsdk/core');
+    const sensed = new PMesh(new PGeo(3, 3, 8, 8), new PMat());
+    sensed.rotation.x = -Math.PI / 2;
+    sensed.updateWorldMatrix(true, true);
+    probeRoom.beginRebuild([sensed], head);
+    while (probeRoom.building) probeRoom.step();
+    if (!probeRoom.hasSurfaces) throw new Error('Sensed floor setup failed before the probe-refusal check');
+    if (probeRoom.beginProbeVolume(head)) throw new Error('Probe volume must refuse while mesh knowledge owns the model');
+    probeRoom.endProbing();
+    if (!probeRoom.hasSurfaces) throw new Error('endProbing must not clear mesh knowledge it never owned');
+    // No-capability path: standing down restores exactly today's fallback box.
+    probeRoom.beginRebuild([]);
+    if (!probeRoom.beginProbeVolume(head)) throw new Error('Probe re-engage failed');
+    probeRoom.recordProbePoint(head.x, 0, head.z);
+    probeRoom.endProbing();
+    if (probeRoom.hasSurfaces) throw new Error('endProbing must restore the no-surface fallback');
+    if (probeRoom.surfaceHeightAt(head.x, head.z, 2.5) !== null) throw new Error('Fallback box must report no surface heights');
+    probeRoom.beginRebuild([]);
+  }
   world.visibilityState.value = VisibilityState.Visible;
   panelSystem.update(0.016, 10);
   timelineSystem.update();

@@ -15,6 +15,7 @@ import {
   ShaderMaterial,
 } from '@iwsdk/core';
 import type { Entity } from '@iwsdk/core';
+import { enableBeamLighting } from '../light-shared.js';
 import { roomModel } from '../room.js';
 import { weatherStore } from '../weather-state.js';
 
@@ -81,11 +82,23 @@ void main() {
     float ph = fract(r * 2.2 - uTime * (0.6 + uRain * 1.8) + wob * 0.35);
     rings = smoothstep(0.0, 0.1, ph) * (1.0 - smoothstep(0.1, 0.32, ph)) * uRain;
   }
-  // Restrained moving sky sheen, brighter toward the middle.
-  float sheen = pow(max(0.0, sin(vUv.x * 5.0 + vUv.y * 8.0 + uTime * 0.12)), 8.0) *
-                (0.3 + 0.45 * inner);
-  vec3 col = mix(uSky * 0.18, uSky * 0.95, clamp(sheen + rings * 0.8, 0.0, 1.0));
-  float alpha = body * vWetness * min(0.55, 0.16 + sheen * 0.3 + rings * 0.4);
+  // A puddle is a mirror of the sky, not a grey plate. Two world-space noise
+  // taps build the water normal, the view vector reflects off it, and the
+  // reflection is graded from the horizon tone to the zenith tone. This is
+  // analytic — one noise field, no render target and no SSR pass.
+  vec2 w = vBeamWorld.xz * 3.0 + vec2(uTime * 0.05, uTime * -0.03);
+  float h0 = snoise(w);
+  float dhx = snoise(w + vec2(0.035, 0.0)) - h0;
+  float dhz = snoise(w + vec2(0.0, 0.035)) - h0;
+  vec3 n = normalize(vec3(-dhx * 42.0, 1.0, -dhz * 42.0));
+  vec3 viewDir = normalize(cameraPosition - vBeamWorld);
+  vec3 reflected = reflect(-viewDir, n);
+  vec3 reflection = mix(uSky * 0.4, uSky, clamp(reflected.y, 0.0, 1.0));
+  // One narrow sun specular from the same shared shaft the rain is lit by.
+  float spec = pow(max(dot(reflected, -uBeamDir), 0.0), 80.0) * uBeamIntensity;
+  float fres = pow(1.0 - max(dot(n, viewDir), 0.0), 3.0);
+  vec3 col = reflection * (0.45 + 0.55 * fres + 0.25 * inner) + uSky * spec * 2.4;
+  float alpha = body * vWetness * clamp(0.2 + 0.45 * fres + rings * 0.3 + spec, 0.0, 0.6);
   if (alpha < 0.008) discard;
   gl_FragColor = vec4(col, alpha);
   #include <tonemapping_fragment>
@@ -117,6 +130,8 @@ export class PuddlesSystem extends createSystem({}) {
       transparent: true,
       depthWrite: false,
     });
+    // Puddles are mirrors of the same shaft the sun specular comes from.
+    enableBeamLighting(this.material);
     this.patches = new InstancedMesh(geo, this.material, PATCH_COUNT);
     this.patches.frustumCulled = false;
     this.patches.instanceMatrix.setUsage(DynamicDrawUsage);

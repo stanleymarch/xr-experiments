@@ -117,6 +117,12 @@ export interface WeatherStoreState {
   readonly playheadHours: number;
   /** True while the playhead sits at 0 (live "now"). */
   readonly isLive: boolean;
+  /**
+   * Hand-gesture sandbox: while true a detected clap forces a thunder
+   * moment regardless of the WMO code at the playhead. Outside the mode
+   * thunder keeps coming only from storm hours (WMO >= 95).
+   */
+  readonly sandbox: boolean;
 }
 
 
@@ -300,6 +306,7 @@ class WeatherStore {
     dataset: null,
     playheadHours: 0,
     isLive: true,
+    sandbox: false,
   });
   setStatus(status: WeatherLoadStatus): void {
     const prev = this.state.peek();
@@ -338,6 +345,14 @@ class WeatherStore {
   /** Jump back to NOW (used by the timeline's reset affordance). */
   goLive(): void {
     this.setPlayhead(0);
+  }
+
+  /** Toggle the clap-sandbox mode; announces the flip on the bus. */
+  setSandbox(on: boolean): void {
+    const prev = this.state.peek();
+    if (prev.sandbox === on) return;
+    this.state.set({ ...prev, sandbox: on });
+    weatherEvents.emit(WeatherEvent.SandboxToggle, { on } satisfies SandboxToggleDetail);
   }
 
   /** Current frame + drivers; same cached object is returned within a minute. */
@@ -402,6 +417,10 @@ class WeatherEvents {
  *   and soft tick all subscribe to this same moment.
  * - UiPress: any deliberate panel/button press, UIKit or DOM (audio tick;
  *   haptics pulse at the press site, where the session is in reach).
+ * - SandboxToggle: the clap-sandbox mode flip, emitted from
+ *   WeatherStore.setSandbox with the new flag. The panel restyles its
+ *   toggle row and answers with an audio + visual impulse (hands have no
+ *   haptics).
  */
 /** Payload carried on WeatherEvent.HourCrossed. */
 export interface HourCrossedDetail {
@@ -410,6 +429,11 @@ export interface HourCrossedDetail {
   /** True when the crossing landed back on live (NOW snap). */
   readonly isLive: boolean;
 }
+/** Payload carried on WeatherEvent.SandboxToggle. */
+export interface SandboxToggleDetail {
+  /** True when the clap-sandbox mode was switched on. */
+  readonly on: boolean;
+}
 export const WeatherEvent = {
   Thunder: 'thunder',
   TimelineGrab: 'timeline-grab',
@@ -417,6 +441,7 @@ export const WeatherEvent = {
   TimelineSnap: 'timeline-snap',
   HourCrossed: 'hour-crossed',
   UiPress: 'ui-press',
+  SandboxToggle: 'sandbox-toggle',
 } as const;
 
 export type WeatherEventName = (typeof WeatherEvent)[keyof typeof WeatherEvent];

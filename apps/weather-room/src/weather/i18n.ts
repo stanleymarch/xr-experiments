@@ -31,7 +31,7 @@ const en = {
   statusWaiting: 'Waiting for device location / forecast...',
   statusRequestingLocation: 'Requesting device location...',
   statusStarting: 'Starting…',
-  statusLive: 'Live from Open-Meteo',
+  statusLive: 'Source: Open-Meteo',
   statusDemoRetained: 'Demo data — retained while reloading',
   statusDemoSynthetic: 'DEMO synthetic data',
   loadingPrefix: 'Loading: ',
@@ -53,17 +53,16 @@ const en = {
   night: 'night',
   lightUnknown: 'light --',
   // Timeline hint + buttons (both surfaces).
-  timelineHint: '-24H < GRAB KNOB / TAP BUTTONS > +24H',
+  timelineHint: '-24H < KNOB / BUTTONS > +24H',
   stepBack: '-6h',
   stepForward: '+6h',
   goLive: 'NOW',
   reload: 'Reload',
-  reloading: 'Loading…',
   enterAr: 'Enter AR',
   exit: 'Exit',
   langName: 'RU',
   // Honest provider source rendered from dataset.source via PROVIDER_DISPLAY.
-  sourceLiveFrom: 'Live from',
+  sourceLiveFrom: 'Source:',
   sourceManualSuffix: '(manual location)',
   sourceIpPrefix: 'IP-based location',
   locationLabelPrefix: 'Location',
@@ -71,10 +70,13 @@ const en = {
   locationUnsupported: 'manual entry only',
   locationPlaceholder: 'lat, lon',
   locationApply: 'Set',
-  locationClear: 'My location',
-  locationHint: 'Pick a city, enter "lat, lon", or tap My location (device/IP).',
+  locationClear: 'Locate me',
+  locationHint: 'Pick a city, enter "lat, lon", or tap Locate me (device, else IP).',
+  locationChoose: 'Choose a city',
+  locationPickerHint: 'Locate me uses device/IP. Enter exact coordinates in the browser.',
+  locationBack: 'Back',
+  presetPetersburgShort: 'St Petersburg',
   locationInvalid: 'Enter as lat, lon',
-  timelineLabel: 'Timeline',
   xrChecking: 'Checking XR support…',
   xrDisabled: 'XR is not enabled in this build. Timeline and reload work in the browser.',
   xrEnterHint: 'Enter AR: use controller rays, hand pinch, or tap the spatial buttons on a phone.',
@@ -87,10 +89,23 @@ const en = {
   ariaGoLive: 'Return to live time',
   ariaStepForward: 'Forward 6 hours',
   ariaReload: 'Reload weather data',
-  ariaScrub: 'Timeline offset in hours from now',
-  ariaLiveNow: 'live, now',
   ariaSwitchLanguage: 'Switch language',
   locatingShort: 'Locating…',
+  // Honest location origin states (device / manual / IP / fixed) + errors.
+  locationOriginDevice: 'My location',
+  locationOriginManual: 'Manual location',
+  locationOriginIp: 'Approximate, by IP (city precision)',
+  locationOriginFallback: 'Moscow (not determined)',
+  /** `{m}` is replaced with the measured accuracy in metres. */
+  locationAccuracyM: '±{m} m',
+  locationDetecting: 'Locating…',
+  geoDenied: 'Location permission denied. Approximate place (IP) instead.',
+  geoUnavailable: 'Device has no location fix (no GPS or Wi-Fi). Approximate place (IP) instead.',
+  geoTimeout: 'Location request timed out. Approximate place (IP) instead.',
+  geoUnsupported: 'This browser exposes no location. Pick a city or enter "lat, lon".',
+  toastDeviceToIp: 'Device location unavailable: showing approximate place by IP.',
+  toastDeviceToFixed: 'Device location unavailable: showing the fixed fallback (Moscow).',
+  ariaDetectLocation: 'Detect my location',
 } as const;
 
 export type StringKey = keyof typeof en;
@@ -105,7 +120,7 @@ const ru: Record<StringKey, string> = {
   statusWaiting: 'Ожидание геопозиции / прогноза...',
   statusRequestingLocation: 'Запрос геопозиции…',
   statusStarting: 'Запуск…',
-  statusLive: 'Open-Meteo · эфир',
+  statusLive: 'Источник: Open-Meteo',
   statusDemoRetained: 'Демо-данные · идёт обновление',
   statusDemoSynthetic: 'ДЕМО · синтетические данные',
   loadingPrefix: 'Загрузка: ',
@@ -129,11 +144,10 @@ const ru: Record<StringKey, string> = {
   stepForward: '+6 ч',
   goLive: 'СЕЙЧАС',
   reload: 'Обновить',
-  reloading: 'Загрузка…',
   enterAr: 'Войти в AR',
   exit: 'Выйти',
   langName: 'EN',
-  sourceLiveFrom: 'Эфир:',
+  sourceLiveFrom: 'Источник:',
   sourceManualSuffix: '(вручную)',
   sourceIpPrefix: 'По IP',
   locationLabelPrefix: 'Место',
@@ -141,10 +155,13 @@ const ru: Record<StringKey, string> = {
   locationUnsupported: 'только вручную',
   locationPlaceholder: 'шир., долг.',
   locationApply: 'ОК',
-  locationClear: 'Моё место',
-  locationHint: 'Выберите город, введите «шир., долг.» или нажмите «Моё место» (устройство/IP).',
+  locationClear: 'Найти меня',
+  locationHint: 'Город, «шир., долг.» или «Найти меня» (устройство, иначе IP).',
+  locationChoose: 'Выберите город',
+  locationPickerHint: '«Найти меня»: устройство/IP. Точные координаты задайте в браузере.',
+  locationBack: 'Назад',
+  presetPetersburgShort: 'Петербург',
   locationInvalid: 'Формат: шир., долг.',
-  timelineLabel: 'Шкала времени',
   xrChecking: 'Проверка XR…',
   xrDisabled: 'XR выключен в этой сборке. Шкала и обновление работают в браузере.',
   xrEnterHint: 'Войти в AR: лучи контроллеров, щипок или кнопки панели на телефоне.',
@@ -157,10 +174,21 @@ const ru: Record<StringKey, string> = {
   ariaGoLive: 'Вернуться к текущему времени',
   ariaStepForward: 'Вперёд на 6 часов',
   ariaReload: 'Обновить данные погоды',
-  ariaScrub: 'Смещение шкалы в часах от текущего времени',
-  ariaLiveNow: 'эфир, сейчас',
   ariaSwitchLanguage: 'Переключить язык',
   locatingShort: 'Поиск…',
+  locationOriginDevice: 'Моё местоположение',
+  locationOriginManual: 'Указано вручную',
+  locationOriginIp: 'Примерно, по IP (точность города)',
+  locationOriginFallback: 'Москва (не определено)',
+  locationAccuracyM: '±{m} м',
+  locationDetecting: 'Поиск…',
+  geoDenied: 'Доступ к геолокации запрещён. Показываю примерное место (IP).',
+  geoUnavailable: 'На устройстве нет определения места (нет GPS или Wi-Fi). Показываю примерное место (IP).',
+  geoTimeout: 'Запрос местоположения истёк. Показываю примерное место (IP).',
+  geoUnsupported: 'Браузер не даёт геопозицию. Выберите город или введите «шир., долг.».',
+  toastDeviceToIp: 'Геопозиция устройства недоступна: показываю примерное место по IP.',
+  toastDeviceToFixed: 'Геопозиция устройства недоступна: показываю фиксированное место (Москва).',
+  ariaDetectLocation: 'Определить моё местоположение',
 };
 
 const STRINGS: Record<Language, Record<StringKey, string>> = {
@@ -269,23 +297,6 @@ export function weatherCodeName(code: number, lang: Language = current): string 
   if (code >= 95) return 'Thunder';
   return 'Weather';
 }
-/** Russian hour plural in aria text: 1 час, 3 часа, 5 часов. */
-export function formatHoursFromNow(hours: number, lang: Language = current): string {
-  const signed = `${hours > 0 ? '+' : ''}${hours}`;
-  if (lang === 'ru') {
-    const abs = Math.abs(Math.round(hours));
-    const mod10 = abs % 10;
-    const mod100 = abs % 100;
-    const noun =
-      mod10 === 1 && mod100 !== 11
-        ? 'час'
-        : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)
-          ? 'часа'
-          : 'часов';
-    return `${signed} ${noun} от сейчас`;
-  }
-  return `${signed} hours from now`;
-}
 
 // ---------------------------------------------------------------------------
 // Data-layer phrase mapping (presentation boundary only).
@@ -305,6 +316,10 @@ const DATA_PHRASE_BY_EN: Record<string, string> = {
   'Moscow (fallback)': 'Москва (запасная)',
   'browser location unavailable': 'геопозиция недоступна в браузере',
   'location unavailable on this browser': 'геопозиция недоступна в этом браузере',
+  // Device-specific reasons first so the generic 'permission denied' below
+  // does not partially substitute inside them.
+  'device location permission denied': 'геопозиция устройства: доступ запрещён',
+  'device location request timed out': 'геопозиция устройства: таймаут',
   'permission denied': 'доступ запрещён',
   'device location unavailable': 'геопозиция недоступна',
   'location request timed out': 'таймаут геопозиции',
@@ -359,6 +374,27 @@ export function localizePlaceLabel(place: string, lang: Language = current): str
     .join(STRINGS.ru.sourceManualSuffix)
     .split('IP-based location')
     .join(STRINGS.ru.sourceIpPrefix);
+}
+
+/**
+ * Honest origin token for the location line. Device fixes show the measured
+ * accuracy (so the user knows it is a rough fix, not street precision); IP and
+ * fixed fallbacks say so explicitly instead of looking like a device reading.
+ */
+export function locationOriginLabel(
+  origin: 'device' | 'manual' | 'ip' | 'fallback',
+  lang: Language = current,
+  accuracyM?: number,
+): string {
+  if (origin === 'device') {
+    const base = STRINGS[lang].locationOriginDevice;
+    return accuracyM != null && Number.isFinite(accuracyM)
+      ? `${base} (${STRINGS[lang].locationAccuracyM.replace('{m}', String(Math.round(accuracyM)))})`
+      : base;
+  }
+  if (origin === 'manual') return STRINGS[lang].locationOriginManual;
+  if (origin === 'ip') return STRINGS[lang].locationOriginIp;
+  return STRINGS[lang].locationOriginFallback;
 }
 
 /** Localized preset names for the manual-location picker. */

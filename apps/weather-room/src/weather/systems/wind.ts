@@ -26,6 +26,9 @@ import {
 import type { Entity, ReadonlySignal } from '@iwsdk/core';
 import { capabilityProfile } from '../capabilities.js';
 import type { CapabilityProfile } from '../capabilities.js';
+import { enableDepthOcclusion } from '../depth-occlusion.js';
+import { enableHandField, HAND_FIELD_LAYERS } from '../hand-field.js';
+import { enableBeamLighting } from '../light-shared.js';
 import { roomModel } from '../room.js';
 import { weatherStore } from '../weather-state.js';
 import { windVectorFromFrame } from '../wind-shared.js';
@@ -59,15 +62,22 @@ varying float vAlpha;
 varying float vSeed;
 varying vec2 vUv;
 void main() {
-  // Luminous air filament: gaussian core across the width, both ends
-  // dissolved, and a brightness pulse travelling along the flow.
+  // Luminous air filament: gaussian core across the width and a brightness
+  // pulse travelling along the flow. The smooth end dissolve is replaced by
+  // moving fract bands, so the fibre tears into ragged pieces the way visible
+  // air does instead of reading as one drawn stroke.
   float across = (vUv.y - 0.5) * 2.0;
   float core = exp(-across * across * 7.0);
-  float ends = smoothstep(0.0, 0.22, vUv.x) * (1.0 - smoothstep(0.78, 1.0, vUv.x));
+  float bands = fract(vUv.x * 3.2 - uTime * (0.25 + vSeed * 0.5) + vSeed * 10.0);
+  float torn = smoothstep(0.0, 0.18, bands) * (1.0 - smoothstep(0.6, 0.92, bands));
+  float tips = smoothstep(0.0, 0.08, vUv.x) * (1.0 - smoothstep(0.9, 1.0, vUv.x));
   float pulse = 0.55 + 0.45 * sin(vUv.x * 8.0 - uTime * (1.5 + vSeed * 2.0) + vSeed * 40.0);
-  float a = core * ends * pulse * vAlpha;
+  // Air is only visible where the light crosses it.
+  float beam = rBeamFactor(vBeamWorld);
+  float a = core * torn * tips * pulse * vAlpha * beam;
   if (a < 0.01) discard;
-  gl_FragColor = vec4(0.66, 0.86, 1.0, a * 0.6);
+  float outA = a * 0.6;
+  gl_FragColor = vec4(vec3(0.66, 0.86, 1.0) * outA, outA);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -91,13 +101,17 @@ varying float vAlpha;
 varying float vSeed;
 varying vec2 vUv;
 void main() {
-  // Granular mote riding the flow: round soft dot with a slow twinkle.
+  // Granular mote riding the flow: round soft dot with a slow twinkle, dimmed
+  // outside the light and lifted inside it, so the field reads as seeds and
+  // leaves carried by air rather than as a uniform sprinkle.
   float d = length((vUv - 0.5) * 2.0);
   float dot_ = exp(-d * d * 5.0);
   float twinkle = 0.55 + 0.45 * sin(uTime * (2.0 + vSeed * 3.0) + vSeed * 80.0);
+  float beam = rBeamFactor(vBeamWorld);
   float a = dot_ * twinkle * vAlpha;
   if (a < 0.01) discard;
-  gl_FragColor = vec4(0.72, 0.88, 1.0, a * 0.55);
+  float outA = a * 0.55 * beam;
+  gl_FragColor = vec4(vec3(0.72, 0.88, 1.0) * outA, outA);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -150,6 +164,14 @@ export class WindSystem extends createSystem({}) {
       side: DoubleSide,
       blending: NormalBlending,
     });
+    // Wind streaks and sparks are part of the same room-filling volume and
+    // read the shared light shaft, with the depth test layered on top.
+    enableBeamLighting(this.streakMat);
+    enableDepthOcclusion(this.streakMat);
+    // Staged rollout: implemented, off until the rain/dust wave is verified
+    // on hardware (flag in hand-field.ts). With the flag false the shader
+    // source is untouched and the field costs nothing.
+    if (HAND_FIELD_LAYERS.wind) enableHandField(this.streakMat);
     this.streaks = new InstancedMesh(streakGeo, this.streakMat, STREAK_FULL);
     this.streaks.frustumCulled = false;
     this.streaks.instanceMatrix.setUsage(DynamicDrawUsage);
@@ -170,6 +192,9 @@ export class WindSystem extends createSystem({}) {
       side: DoubleSide,
       blending: NormalBlending,
     });
+    enableBeamLighting(this.sparkMat);
+    enableDepthOcclusion(this.sparkMat);
+    if (HAND_FIELD_LAYERS.wind) enableHandField(this.sparkMat);
     this.sparks = new InstancedMesh(sparkGeo, this.sparkMat, SPARK_FULL);
     this.sparks.frustumCulled = false;
     this.sparks.instanceMatrix.setUsage(DynamicDrawUsage);
@@ -314,7 +339,9 @@ export class WindSystem extends createSystem({}) {
       this.sparkAlphas[i] = sparkAlpha * (0.4 + 0.6 * ((seed * 5.7) % 1));
       this.dummy.position.set(this.sparkPos[sx], this.sparkPos[sx + 1], this.sparkPos[sx + 2]);
       const yaw = Math.atan2(this.cameraPos.x - this.sparkPos[sx], this.cameraPos.z - this.sparkPos[sx + 2]);
-      this.dummy.rotation.set(0, yaw, 0);
+      // Seeds and leaves tumble as they ride the flow.
+      const spin = time * (0.5 + seed * 1.4) + seed * 6.28;
+      this.dummy.rotation.set(0, yaw, spin);
       this.dummy.scale.setScalar(0.012 + 0.014 * ((seed * 3.3) % 1));
       this.dummy.updateMatrix();
       this.sparks.setMatrixAt(i, this.dummy.matrix);

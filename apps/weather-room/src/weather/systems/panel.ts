@@ -13,22 +13,25 @@ import {
   Hovered,
   MovementMode,
   OneHandGrabbable,
+  PokeInteractable,
+  Pressed,
   RayInteractable,
   UIKitMLAsset,
   VisibilityState,
+  Vector3,
 } from '@iwsdk/core';
 import type { Component as UIKitComponent } from '@pmndrs/uikit';
 import type { Entity, Object3D } from '@iwsdk/core';
 import { WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
-import type { HourCrossedDetail } from '../weather-state.js';
+import type { HourCrossedDetail, SandboxToggleDetail } from '../weather-state.js';
 import { playheadTime } from '../weather-state.js';
 import { Haptics, pulseHaptics } from '../feedback.js';
 import {
   formatMissing,
   getLanguage,
-  localizeDataPhrase,
   localizeLoadingLabel,
   localizePlaceLabel,
+  localizePresetLabel,
   onLanguageChange,
   providerOf,
   sourceStatus,
@@ -37,29 +40,48 @@ import {
   weatherCodeName,
 } from '../i18n.js';
 import { PROVIDER_DISPLAY } from '../providers.js';
-import { LOCATION_PRESETS, getManualLocation, setManualLocation } from '../weather-data.js';
+import { LOCATION_PRESETS, setManualLocation } from '../weather-data.js';
 import { reloadWeather } from './weather-loader.js';
 import { PanelMoveGrip } from '../components/timeline-handle.js';
 import {
-  buildMoveGrip,
+  baselineAngularSize,
+  buildAffordance,
+  collectHoverHands,
+  ContactImpulse,
+  createAngularSizeState,
   createGripDriver,
+  createSurfaceGrab,
+  createViewPullState,
+  faceViewer,
   placeControlAtViewer,
+  playSandboxCue,
+  stepAngularSize,
+  stepViewDistance,
+  thumbstickY,
+  unlockGripAudio,
 } from '../control-placement.js';
-import type { GripDriver, MoveGrip } from '../control-placement.js';
+import type { Affordance, AngularSizeState, GripDriver, Handedness, SurfaceGrab, ViewPullState } from '../control-placement.js';
 import { installSpatialFonts } from '../spatial-fonts.js';
 
 /** Minimum seconds between panel text pushes (2 Hz ceiling). */
 const PANEL_PUSH_INTERVAL_S = 0.5;
 
-/**
- * Dedicated whole-panel move grip: a bar hung below the UIKit panel, clear
- * of every button row. Same dual-mesh pattern as the timeline rail grip:
- * near-hand squeeze/pinch on one entity, distance ray trigger on the other.
- */
-const PANEL_GRIP_OFFSET_Y = -0.42;
-const PANEL_GRIP_SIZE: readonly [number, number, number] = [0.22, 0.03, 0.03];
-
 const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const;
+
+/** Mode-pill surfaces: live cyan / demo amber (existing panel tokens). */
+const PILL_BASE_LIVE = '#79d7f2';
+const PILL_BASE_DEMO = '#f2b63d';
+/** Hover highlight = base lightened ~30 %; precomputed, no per-frame mix. */
+const PILL_HOVER_LIVE = '#a5e5f7';
+const PILL_HOVER_DEMO = '#f7d084';
+const PILL_FLASH = '#ffffff';
+/** Sandbox toggle row: hint palette (cyan) flips to amber while armed. */
+const SANDBOX_HINT_COLOR_OFF = '#79d7f2';
+const SANDBOX_HINT_COLOR_ON = '#f2b63d';
+const SANDBOX_HINT_EN = 'CLAP = THUNDER · TAP TO TURN OFF';
+const SANDBOX_HINT_RU = 'ХЛОПОК = ГРОМ · КОСНИТЕСЬ: ВЫКЛ';
+/** Poke impulse color: icy white-cyan. */
+const POKE_IMPULSE_COLOR = 0xbfe9ff;
 
 function compassFrom(metDegrees: number): string {
   const to = (((metDegrees + 180) % 360) + 360) % 360;
@@ -84,54 +106,98 @@ function asTextLine(el: UIKitComponent | null): TextLine | null {
   return typeof candidate.setProperties === 'function' ? candidate : null;
 }
 
-export class PanelSystem extends createSystem({
-  moveHovered: { required: [PanelMoveGrip, Hovered] },
-  moveGrabbed: { required: [PanelMoveGrip, Grabbed] },
-}) {
+export class PanelSystem extends createSystem({}) {
   private statusEl: TextLine | null = null;
   private locationEl: TextLine | null = null;
   private playheadEl: TextLine | null = null;
   private heroEl: TextLine | null = null;
   private valuesEl: TextLine | null = null;
   private modeEl: TextLine | null = null;
-  private revisionEl: TextLine | null = null;
   private lastPushAt = -PANEL_PUSH_INTERVAL_S;
+  private reloadBusy = false;
   private lastText = '';
   private needsPlacement = false;
   private placedInSession = false;
   private snapFlashT = -1;
   private pillBase = '#79d7f2';
-  /** Dedicated whole-panel move grip (scene-level bar + driver). */
-  private moveGrip: MoveGrip | null = null;
-  private moveGripObject: Object3D | null = null;
-  private moveGripEntity: Entity | null = null;
-  private moveNearEntity: Entity | null = null;
-  private moveFarEntity: Entity | null = null;
+  /** Whole-panel move affordance (Control Bar + edge handles). */
+  private affordance: Affordance | null = null;
+  private affordanceEntity: Entity | null = null;
+  private affordanceNearEntity: Entity | null = null;
+  private affordanceFarEntity: Entity | null = null;
   private moveDriver: GripDriver | null = null;
+  private surfaceGrab: SurfaceGrab | null = null;
+  private pickerLocationEl: TextLine | null = null;
+  private needsAffordanceSeat = true;
+  private affordanceBaseScale = 1;
+  private panelObject: UIKitMLAsset | null = null;
+  private wasCarried = false;
+  private readonly angularSize: AngularSizeState = createAngularSizeState();
+  private readonly viewPull: ViewPullState = createViewPullState();
+  private readonly gripWorldScale = new Vector3();
+  private readonly probeTargets: Object3D[] = [];
+  /** Panel scene entity carrying PokeInteractable for touch input. */
+  private pokeEntity: Entity | null = null;
+  /** Raw pill element, the anchor for the poke impulse flash. */
+  private modeElement: Object3D | null = null;
+  /** Raw hint row element: sandbox toggle anchor + impulse site. */
+  private hintElement: Object3D | null = null;
+  /** Hint row as a text line for the sandbox toggle copy. */
+  private hintTextEl: TextLine | null = null;
+  /** Paired visual for poke presses and sandbox flips. */
+  private pokeImpulse: ContactImpulse | null = null;
+  /** Poke/ray press flash on the pill: 0 = idle, seconds since start. */
+  private pressFlashT = -1;
+  private wasPressed = false;
+  /** Last pill background written; dedupes the per-frame color path. */
+  private lastPillBg: string | null = null;
+  private readonly impulseAt = new Vector3();
 
   init(): void {
     const panel = this.world.getSceneObject<UIKitMLAsset>('weather-panel');
-    const xrButton = panel?.requireElementById('xr-button');
     const exitButton = panel?.requireElementById('exit-button');
     if (panel == null) return;
     installSpatialFonts(panel);
+    this.enableSurfaceDepth(panel);
     const panelRoot = panel.requireElementById('weather-root');
     this.cleanupFuncs.push(this.world.visibilityState.subscribe((state) => {
       panel.visible = state !== VisibilityState.NonImmersive;
       panelRoot.setProperties({ display: panel.visible ? 'flex' : 'none' });
       if (state === VisibilityState.NonImmersive) this.placedInSession = false;
+      if (state === VisibilityState.Visible) unlockGripAudio();
       this.needsPlacement = state === VisibilityState.Visible && !this.placedInSession;
     }));
     this.statusEl = asTextLine(panel.getElementById('status-line'));
     this.locationEl = asTextLine(panel.getElementById('location-line'));
+    this.pickerLocationEl = asTextLine(panel.getElementById('picker-location-line'));
     this.playheadEl = asTextLine(panel.getElementById('playhead-line'));
     this.heroEl = asTextLine(panel.getElementById('hero-line'));
     this.valuesEl = asTextLine(panel.getElementById('values-line'));
     this.modeEl = asTextLine(panel.getElementById('mode-badge'));
-    this.revisionEl = asTextLine(panel.getElementById('revision-label'));
-    // Fold provider/fallback/timeout provenance into the one dim secondary
-    // line: revision keeps the build id plus a short provider token.
-    this.revisionEl?.setProperties({ text: `rev ${__WEATHER_ROOM_REVISION__}` });
+    // Poke: the panel scene entity gains PokeInteractable, so the framework
+    // InputSystem enables touch-under-fingertip pointers, computes BVH over
+    // the UI meshes in this subtree, and routes contact into the same
+    // Hovered/Pressed + UIKit click path the ray pointer already uses.
+    const pokeEntity = this.world.getSceneEntity('weather-panel');
+    if (pokeEntity != null) {
+      pokeEntity.addComponent(PokeInteractable, {});
+      this.pokeEntity = pokeEntity;
+    }
+    this.modeElement = panel.requireElementById('mode-badge');
+    this.hintElement = panel.requireElementById('timeline-hint');
+    this.hintTextEl = asTextLine(panel.getElementById('timeline-hint'));
+    this.pokeImpulse = new ContactImpulse(this.world, POKE_IMPULSE_COLOR, 'Panel Poke Impulse');
+    this.cleanupFuncs.push(
+      () => {
+        const entity = this.pokeEntity;
+        if (entity != null && entity.active) entity.removeComponent(PokeInteractable);
+        this.pokeEntity = null;
+      },
+      () => {
+        this.pokeImpulse?.dispose();
+        this.pokeImpulse = null;
+      },
+    );
 
     const backButton = panel.requireElementById('back-button');
     const forwardButton = panel.requireElementById('forward-button');
@@ -172,59 +238,71 @@ export class PanelSystem extends createSystem({
       tick();
       toggleLanguage();
     };
-    // Location cycler: Авто (device/IP) -> each preset -> back to Авто.
-    // One press = one step plus reload, so the viewer can reach their own
-    // coordinates from inside XR where only the spatial panel exists.
-    const cycleLocation = () => {
+    const openLocations = () => {
       tick();
-      const currentManual = getManualLocation();
-      const index =
-        currentManual == null
-          ? -1
-          : LOCATION_PRESETS.findIndex((preset) => preset.label === currentManual.label);
-      const next = LOCATION_PRESETS[index + 1];
-      if (next == null) {
-        setManualLocation(null);
-      } else {
-        setManualLocation({ latitude: next.latitude, longitude: next.longitude, label: next.label });
-      }
+      this.showLocationPicker(panel, true);
+    };
+    const closeLocations = () => {
+      tick();
+      this.showLocationPicker(panel, false);
+    };
+    for (const preset of LOCATION_PRESETS) {
+      const button = panel.requireElementById(`location-${preset.id}`);
+      button.name = `weather-location-${preset.id}`;
+      const chooseLocation = () => {
+        tick();
+        setManualLocation({ latitude: preset.latitude, longitude: preset.longitude, label: preset.label });
+        this.showLocationPicker(panel, false);
+        void reloadWeather();
+      };
+      button.addEventListener('click', chooseLocation);
+      this.cleanupFuncs.push(() => button.removeEventListener('click', chooseLocation));
+    }
+    const autoButton = panel.requireElementById('location-auto-button');
+    autoButton.name = 'weather-location-auto';
+    const chooseAuto = () => {
+      tick();
+      setManualLocation(null);
+      this.showLocationPicker(panel, false);
       void reloadWeather();
     };
+    const closeButton = panel.requireElementById('location-back-button');
+    closeButton.name = 'weather-location-back';
+    autoButton.addEventListener('click', chooseAuto);
+    closeButton.addEventListener('click', closeLocations);
+    this.cleanupFuncs.push(
+      () => autoButton.removeEventListener('click', chooseAuto),
+      () => closeButton.removeEventListener('click', closeLocations),
+    );
     backButton?.addEventListener('click', stepBack);
     forwardButton?.addEventListener('click', stepForward);
     nowButton?.addEventListener('click', goLive);
     reloadButton?.addEventListener('click', reload);
     langButton?.addEventListener('click', switchLanguage);
     const locationButton = panel.getElementById('location-button');
-    if (locationButton != null) locationButton.name = 'weather-cycle-location';
-    locationButton?.addEventListener('click', cycleLocation);
-    if (xrButton != null && exitButton != null) {
-      if (!this.world.xrEnabled) {
-        xrButton.setProperties({ display: 'none' });
-        exitButton.setProperties({ display: 'none' });
-      } else {
-        const launchXR = () => {
-          tick();
-          firmTap();
-          void this.world.launchXR();
-        };
-        const exitXR = () => {
-          tick();
-          firmTap();
-          void this.world.exitXR();
-        };
-        xrButton.addEventListener('click', launchXR);
-        exitButton.addEventListener('click', exitXR);
-        this.cleanupFuncs.push(
-          () => xrButton.removeEventListener('click', launchXR),
-          () => exitButton.removeEventListener('click', exitXR),
-          this.world.visibilityState.subscribe((visibilityState) => {
-            const is2D = visibilityState === VisibilityState.NonImmersive;
-            xrButton.setProperties({ display: is2D ? 'flex' : 'none' });
-            exitButton.setProperties({ display: is2D ? 'none' : 'flex' });
-          }),
-        );
-      }
+    if (locationButton != null) locationButton.name = 'weather-open-locations';
+    locationButton?.addEventListener('click', openLocations);
+    // Clap-sandbox toggle: the timeline hint row doubles as the tappable
+    // switch (weather.uikitml is owned by another slice, so the toggle is
+    // wired from the existing element set). The row's text/color flip is
+    // the mode indicator; the clap detector lives in gesture-sandbox.ts.
+    const hintToggle = panel.requireElementById('timeline-hint');
+    hintToggle.name = 'weather-toggle-sandbox';
+    const toggleSandbox = () => {
+      tick();
+      weatherStore.setSandbox(!weatherStore.state.peek().sandbox);
+    };
+    hintToggle.addEventListener('click', toggleSandbox);
+    this.cleanupFuncs.push(() => hintToggle.removeEventListener('click', toggleSandbox));
+    if (exitButton != null && this.world.xrEnabled) {
+      exitButton.name = 'weather-exit-xr';
+      const exitXR = () => {
+        tick();
+        firmTap();
+        void this.world.exitXR();
+      };
+      exitButton.addEventListener('click', exitXR);
+      this.cleanupFuncs.push(() => exitButton.removeEventListener('click', exitXR));
     }
     this.cleanupFuncs.push(
       () => backButton?.removeEventListener('click', stepBack),
@@ -232,7 +310,7 @@ export class PanelSystem extends createSystem({
       () => nowButton?.removeEventListener('click', goLive),
       () => reloadButton?.removeEventListener('click', reload),
       () => langButton?.removeEventListener('click', switchLanguage),
-      () => locationButton?.removeEventListener('click', cycleLocation),
+      () => locationButton?.removeEventListener('click', openLocations),
       // Instant re-render on language switch: drop the dedupe cache so the
       // next update() push goes through even when the weather is unchanged.
       onLanguageChange(() => {
@@ -248,106 +326,217 @@ export class PanelSystem extends createSystem({
         if (crossed?.isLive === true) this.snapFlashT = 0;
         this.lastPushAt = -PANEL_PUSH_INTERVAL_S;
       }),
+      // Sandbox flip: restyle the toggle row immediately and answer with
+      // the gesture cue pair (audio sweep + impulse at the row) and a
+      // controller haptic — hands get the cue pair instead.
+      weatherEvents.on(WeatherEvent.SandboxToggle, (detail: unknown) => {
+        const on = (detail as SandboxToggleDetail | undefined)?.on === true;
+        this.applySandboxHint(on);
+        playSandboxCue(on);
+        pulseHaptics(this.world, Haptics.sandboxToggle.intensity, Haptics.sandboxToggle.durationMs);
+        const hint = this.hintElement;
+        if (hint != null && this.pokeImpulse != null) {
+          hint.getWorldPosition(this.impulseAt);
+          this.pokeImpulse.trigger(this.impulseAt);
+        }
+        this.lastText = '';
+        this.lastPushAt = -PANEL_PUSH_INTERVAL_S;
+      }),
     );
     this.applyStaticLabels(panel);
-    this.ensureMoveGrip(panel);
+    this.ensureAffordance(panel);
+    const stopSizeWatch = panel.document.rootElement.size?.subscribe(() => {
+      this.needsAffordanceSeat = true;
+      // A layout pass can replace or add surface meshes; keep their depth
+      // writes on so the panel always resolves depth against the rail.
+      this.enableSurfaceDepth(panel);
+    });
+    if (stopSizeWatch != null) this.cleanupFuncs.push(stopSizeWatch);
     this.cleanupFuncs.push(() => {
-      this.moveNearEntity?.dispose();
-      this.moveFarEntity?.dispose();
-      this.moveGripEntity?.dispose();
-      this.moveGrip?.near.geometry.dispose();
-      this.moveGrip?.material.dispose();
-      if (this.moveGripObject?.parent != null) this.moveGripObject.parent.remove(this.moveGripObject);
-      this.moveGrip = null;
-      this.moveGripObject = null;
-      this.moveGripEntity = null;
-      this.moveNearEntity = null;
-      this.moveFarEntity = null;
+      this.affordanceNearEntity?.dispose();
+      this.affordanceFarEntity?.dispose();
+      this.affordanceEntity?.dispose();
+      this.affordance?.dispose();
+      this.affordance = null;
+      this.affordanceEntity = null;
+      this.affordanceNearEntity = null;
+      this.affordanceFarEntity = null;
       this.moveDriver = null;
+      this.surfaceGrab = null;
     });
   }
 
-  /** Scene-level grip group: entity parenting preserves mesh offsets. */
-  private ensureMoveGrip(panel: Object3D): void {
-    if (this.moveGrip != null) return;
-    const grip = buildMoveGrip('Weather Panel Move Grip', PANEL_GRIP_SIZE[0], PANEL_GRIP_SIZE[1], PANEL_GRIP_SIZE[2]);
-    grip.near.name = 'Weather Panel Move Grip Near';
-    grip.far.name = 'Weather Panel Move Grip Far';
-    this.moveGrip = grip;
-    this.moveGripObject = grip.group;
-    this.moveGripEntity = this.world.createTransformEntity(grip.group);
-    this.seatMoveGrip(panel);
-    this.moveNearEntity = this.world.createTransformEntity(grip.near, { parent: this.moveGripEntity });
-    this.moveFarEntity = this.world.createTransformEntity(grip.far, { parent: this.moveGripEntity });
-    this.moveNearEntity.addComponent(PanelMoveGrip, {});
-    this.moveFarEntity.addComponent(PanelMoveGrip, {});
-    this.moveNearEntity.addComponent(RayInteractable, {});
-    this.moveFarEntity.addComponent(RayInteractable, {});
-    this.moveNearEntity.addComponent(OneHandGrabbable, { rotate: false });
-    this.moveFarEntity.addComponent(DistanceGrabbable, {
+  /**
+   * The UIKit surface is an alpha-blended quad, so by default it never writes
+   * depth: the rail's additive light guide could then be drawn over the panel
+   * regardless of which one is nearer, and the pair flipped order frame to
+   * frame. Writing depth (three's LessEqual test keeps stacked UI layers
+   * intact) makes the panel and the rail resolve each other by distance, which
+   * is the same rule the native compositor uses. There is one panel in this
+   * app, so the shared UIKit material is updated in place rather than cloned -
+   * cloning would detach it from the renderer that keeps it in sync.
+   */
+  private enableSurfaceDepth(panel: UIKitMLAsset): void {
+    panel.document?.traverse((child) => {
+      // Duck-typed on purpose: the UIKit surface, its MSDF text and any future
+      // layer are all renderables carrying a material, and only one flag is
+      // touched. The named cast keeps the unchecked read in one place.
+      const renderable = child as unknown as { material?: unknown };
+      const source = renderable.material;
+      if (source == null) return;
+      const materials = Array.isArray(source) ? source : [source];
+      for (const entry of materials) {
+        if (entry == null || typeof entry !== 'object') continue;
+        const material = entry as { depthWrite?: boolean };
+        if (typeof material.depthWrite === 'boolean') material.depthWrite = true;
+      }
+    });
+  }
+
+  private showLocationPicker(panel: UIKitMLAsset, open: boolean): void {
+    panel.requireElementById('weather-view').setProperties({ display: open ? 'none' : 'flex' });
+    panel.requireElementById('location-picker').setProperties({ display: open ? 'flex' : 'none' });
+  }
+
+  /**
+   * Whole-panel move affordance, scene-level so the driver stays 1:1. At rest
+   * nothing is drawn; hovering the panel or its frame reveals the Control Bar
+   * and edge handles in the platform colors.
+   */
+  private ensureAffordance(panel: UIKitMLAsset): void {
+    if (this.affordance != null) return;
+    const size = panel.document.rootElement.size?.value;
+    panel.updateWorldMatrix(true, true);
+    panel.document.getWorldScale(this.gripWorldScale);
+    const worldScale = Math.max(1e-4, this.gripWorldScale.x);
+    this.affordanceBaseScale = worldScale;
+    const heightM = (size?.[1] ?? 480) / 100 * worldScale;
+    const affordance = buildAffordance({ name: 'Weather Panel Move Affordance', heightM });
+    this.affordance = affordance;
+    this.affordanceEntity = this.world.createTransformEntity(affordance.group);
+    this.probeTargets.push(panel);
+    this.seatAffordance(panel);
+    this.affordanceNearEntity = this.world.createTransformEntity(affordance.near, { parent: this.affordanceEntity });
+    this.affordanceFarEntity = this.world.createTransformEntity(affordance.far, { parent: this.affordanceEntity });
+    this.affordanceNearEntity.addComponent(PanelMoveGrip, {});
+    this.affordanceFarEntity.addComponent(PanelMoveGrip, {});
+    this.affordanceNearEntity.addComponent(RayInteractable, {});
+    this.affordanceFarEntity.addComponent(RayInteractable, {});
+    this.affordanceNearEntity.addComponent(OneHandGrabbable, { rotate: false });
+    this.affordanceFarEntity.addComponent(DistanceGrabbable, {
       rotate: false,
       scale: false,
       movementMode: MovementMode.MoveAtSource,
       returnToOrigin: false,
     });
-    this.moveDriver = createGripDriver(this.world, this.moveNearEntity, this.moveFarEntity, grip, {
-      yaw: true,
+    this.moveDriver = createGripDriver(this.world, this.affordanceNearEntity, this.affordanceFarEntity, affordance, {
+      // Carry keeps the panel facing the viewer (yaw + pitch track the head,
+      // roll stays 0) and keeps its angular size while translation stays a
+      // kinematic 1:1 - no spring, no inertia, no snap-to-hand.
+      onHeld: (root, dt, hand) => this.carryPanel(root, dt, hand),
+      // Anywhere on the panel surface counts as hover, not only the thin frame.
+      probeHoverHands: (out) => { collectHoverHands(this.world, this.probeTargets, out); },
     });
+    // Native window grab: pointing anywhere at the panel and squeezing moves it.
+    this.surfaceGrab = createSurfaceGrab(this.world, this.probeTargets, affordance.far, this.affordanceNearEntity);
   }
 
-  /** Re-seat beneath the panel on new-session placement. */
-  private seatMoveGrip(panel: Object3D): void {
-    const grip = this.moveGrip;
-    if (grip == null) return;
-    panel.updateWorldMatrix(true, false);
-    grip.group.position.set(0, PANEL_GRIP_OFFSET_Y, 0.02);
-    panel.localToWorld(grip.group.position);
-    grip.group.parent?.worldToLocal(grip.group.position);
-    panel.getWorldQuaternion(grip.group.quaternion);
-    grip.group.updateMatrixWorld(true);
+  /**
+   * Per-frame carry behaviour: face the viewer, pull/push along the view ray
+   * from the holding hand's thumbstick, keep angular size, re-seat the bar.
+   */
+  private carryPanel(root: Object3D, delta: number, hand: Handedness | null): void {
+    const head = this.world.player.head;
+    faceViewer(root, head, 'auto');
+    stepViewDistance(root, head, thumbstickY(this.world, hand), this.viewPull, delta);
+    stepAngularSize(root, head, this.angularSize, delta);
+    const panel = this.panelObject;
+    if (panel != null) this.seatAffordance(panel);
+  }
+
+  /** Glue the frame to the panel's live world transform and scale. */
+  private seatAffordance(panel: UIKitMLAsset): void {
+    const affordance = this.affordance;
+    if (affordance == null) return;
+    panel.updateWorldMatrix(true, true);
+    panel.document.getWorldPosition(affordance.group.position);
+    panel.document.getWorldQuaternion(affordance.group.quaternion);
+    panel.document.getWorldScale(this.gripWorldScale);
+    affordance.group.scale.setScalar(this.gripWorldScale.x / this.affordanceBaseScale);
+    affordance.group.parent?.worldToLocal(affordance.group.position);
+    affordance.group.updateMatrixWorld(true);
+    this.needsAffordanceSeat = false;
   }
   update(delta: number, time: number): void {
-    // Dedicated whole-panel move grip drives the panel before any text
-    // work. Released transforms persist: the one-time session placement
-    // below only runs when the flag is set (new session), never as an
-    // overwrite after the user moved the panel.
-    const panelObject = this.world.getSceneObject<UIKitMLAsset>('weather-panel');
-    if (this.moveDriver != null && panelObject != null) {
-      this.moveDriver.update(panelObject);
-      // After a yawing hold the grip bar must follow the panel's new
-      // orientation; position is re-derived from the panel in the same
-      // pass so the bar always sits at the panel's bottom edge.
-      if (this.moveDriver.consumeReleased()) this.seatMoveGrip(panelObject);
+    // The whole-panel move affordance drives the panel before any text work.
+    // Released transforms persist: the one-time session placement below only
+    // runs when the flag is set (new session), never as an overwrite after the
+    // user moved the panel.
+    const dt = Number.isFinite(delta) ? Math.min(Math.max(delta, 0), 0.1) : 0.016;
+    const panelObject = this.world.getSceneObject<UIKitMLAsset>('weather-panel') ?? this.panelObject;
+    this.panelObject = panelObject;
+    const carried = this.affordanceNearEntity?.hasComponent(Grabbed) === true
+      || this.affordanceFarEntity?.hasComponent(Grabbed) === true;
+    if (panelObject != null) {
+      if (this.affordance != null) this.affordance.group.visible = panelObject.visible;
+      // Angular size is preserved relative to the grab pose, so a fresh grab
+      // never jumps and a released size is the new reference. The push/pull
+      // velocity restarts from rest on every grab.
+      if (carried && !this.wasCarried) {
+        baselineAngularSize(panelObject, this.world.player.head, this.angularSize);
+        this.viewPull.velocity = 0;
+      }
+      this.wasCarried = carried;
+      if (this.needsAffordanceSeat && !carried) this.seatAffordance(panelObject);
+      if (this.moveDriver != null) {
+        this.surfaceGrab?.update();
+        this.moveDriver.update(panelObject, dt);
+        // After a carry that re-oriented the panel the frame must follow the
+        // panel's new pose; `seatAffordance` re-derives it from the surface.
+        if (this.moveDriver.consumeReleased()) this.seatAffordance(panelObject);
+      }
     }
     if (this.needsPlacement) {
-      const panel = panelObject ?? this.world.getSceneObject<UIKitMLAsset>('weather-panel');
-      if (panel != null) {
-        placeControlAtViewer(panel, this.world, 1.5, 0.3);
-        this.seatMoveGrip(panel);
+      if (panelObject != null) {
+        placeControlAtViewer(panelObject, this.world, 1.4, 0.18);
+        this.seatAffordance(panelObject);
       }
       this.needsPlacement = false;
       this.placedInSession = true;
     }
-    // NOW-pill snap flash decays on wall-clock delta so it reads the same at
-    // any frame rate; the flash color rides on top of the live/demo pill.
-    // Direct update() calls without a delta fall back to 16 ms.
-    const dt = Number.isFinite(delta) ? Math.min(Math.max(delta, 0), 0.1) : 0.016;
-    if (this.snapFlashT >= 0) {
-      this.snapFlashT += dt;
-      const flash = Math.exp(-this.snapFlashT * 7);
-      this.modeEl?.setProperties({
-        backgroundColor: flash > 0.15 ? '#ffffff' : this.pillBase,
-      });
-      if (this.snapFlashT > 0.45) {
-        this.snapFlashT = -1;
-        this.modeEl?.setProperties({ backgroundColor: this.pillBase });
+    // Pill surface state machine, one write path (flash > hover > base).
+    // The NOW-snap flash and the poke/ray press flash share the channel;
+    // both decay on wall-clock delta so they read the same at any frame
+    // rate. Direct update() calls without a delta fall back to 16 ms.
+    const pressed = this.pokeEntity?.hasComponent(Pressed) === true;
+    if (pressed && !this.wasPressed) {
+      this.pressFlashT = 0;
+      // Paired visual for the press: additive flash at the pill. The
+      // UiPress tick rides the click path (a poke on a Button fires the
+      // same UIKit click the ray pointer produces).
+      const pill = this.modeElement;
+      if (pill != null && this.pokeImpulse != null) {
+        pill.getWorldPosition(this.impulseAt);
+        this.pokeImpulse.trigger(this.impulseAt);
       }
     }
+    this.wasPressed = pressed;
+    if (this.pressFlashT >= 0) this.pressFlashT += dt;
+    if (this.pressFlashT > 0.45) this.pressFlashT = -1;
+    if (this.snapFlashT >= 0) this.snapFlashT += dt;
+    if (this.snapFlashT > 0.45) this.snapFlashT = -1;
+    this.pokeImpulse?.update(dt);
+    this.pushPillBackground();
     if (this.statusEl == null || this.valuesEl == null || this.playheadEl == null) return;
     if (time - this.lastPushAt < PANEL_PUSH_INTERVAL_S && this.snapFlashT < 0) return;
     const lang = getLanguage();
     const state = weatherStore.state.peek();
     const current = weatherStore.current();
+    const busy = state.status.kind === 'loading' || state.status.kind === 'locating';
+    if (busy !== this.reloadBusy && panelObject != null) {
+      this.reloadBusy = busy;
+      this.applyStaticLabels(panelObject);
+    }
     if (current == null) {
       const status = state.status;
       this.pushStatus(
@@ -372,14 +561,10 @@ export class PanelSystem extends createSystem({
       providerDisplay !== '' && (status.kind === 'loading' || status.kind === 'locating')
         ? ` · ${providerDisplay}`
         : '';
-    // Headset readout hierarchy: provider/fallback/timeout provenance is
-    // demoted to ONE dim secondary line (revision + provider token folded
-    // in); the hero block above carries NOW + temp + precip + wind only.
+    // Keep provider/fallback provenance in one secondary line.
     const statusText =
-      status.kind === 'demo'
-        ? `${t('demoPrefix')}${localizeDataPhrase(status.reason, lang)}`
-        : demoDataset
-          ? `${t('statusDemoSynthetic')}${staleSuffix}`
+      status.kind === 'demo' || demoDataset
+        ? `${t('statusDemoSynthetic')}${staleSuffix}`
           : status.kind === 'ready'
             ? `${sourceStatus(providerDisplay, staleSuffix, lang)}`
             : status.kind === 'loading'
@@ -391,13 +576,12 @@ export class PanelSystem extends createSystem({
       dataset != null
         ? localizePlaceLabel(dataset.label.split(' · ').slice(1).join(' · ') || dataset.label, lang)
         : (status.kind === 'loading' ? t('statusRequestingLocation') : t('missingValue'));
-    const secondaryText = `${statusText}${providerToken}`;
+    const secondaryText = `${statusText}${providerToken}${frame.outOfCoverage ? t('beyondSuffixPipe') : ''}`;
     const at = playheadTime(dataset!, playheadHours, new Date());
     const clock = `${at.getHours() < 10 ? `0${at.getHours()}` : at.getHours()}:${at.getMinutes() < 10 ? `0${at.getMinutes()}` : at.getMinutes()}`;
-    const beyondData = frame.outOfCoverage ? t('beyondSuffixPipe') : '';
     const deltaLabel = isLive
-      ? `${t('playheadNow')}${beyondData}`
-      : `${clock} / ${playheadHours > 0 ? '+' : ''}${Math.round(playheadHours)}h${beyondData}`;
+      ? t('playheadNow')
+      : `${clock} / ${playheadHours > 0 ? '+' : ''}${Math.round(playheadHours * 2) / 2}h`;
     const compass =
       frame.available.windSpeedKmh && frame.available.windDirectionDeg
         ? ` ${compassFrom(frame.windDirectionDeg)}`
@@ -407,28 +591,26 @@ export class PanelSystem extends createSystem({
     // Cloud/RH/daylight stay out of the hero to keep the readout readable at
     // 0.8-1.2 m in both languages (Russian runs longer).
     const heroText =
-      `${valueOrDash(frame.temperatureC, (n) => n.toFixed(1), 'C')} · ${weatherCode}`;
+      `${valueOrDash(frame.temperatureC, (n) => n.toFixed(1), '°C')} · ${weatherCode}`;
     const valuesText =
       `${t('rain')} ${valueOrDash(frame.precipitationMm, (n) => n.toFixed(1), 'mm/h')} ` +
       `(${valueOrDash(frame.precipitationProbabilityPct, (n) => String(Math.round(n)), '%')})\n` +
       `${t('wind')} ${valueOrDash(frame.windSpeedKmh, (n) => String(Math.round(n)), `km/h${compass}`)}`;
     const modeText = demoDataset || status.kind === 'demo' ? t('badgeDemo') : t('badgeLive');
-    this.pillBase = demoDataset || status.kind === 'demo' ? '#f2b63d' : '#79d7f2';
+    this.pillBase = demoDataset || status.kind === 'demo' ? PILL_BASE_DEMO : PILL_BASE_LIVE;
     const combined = `${lang}|${secondaryText}|${locationText}|${deltaLabel}|${heroText}|${valuesText}|${modeText}`;
     if (combined === this.lastText) return;
     this.lastText = combined;
     this.lastPushAt = time;
-    if (this.snapFlashT < 0) {
-      this.modeEl?.setProperties({ text: modeText, backgroundColor: this.pillBase });
-    } else {
-      this.modeEl?.setProperties({ text: modeText });
-    }
+    // The pill surface (base/hover/flash) is owned by pushPillBackground,
+    // which runs every frame; only the text rides the 2 Hz push.
+    this.modeEl?.setProperties({ text: modeText });
     this.statusEl.setProperties({ text: secondaryText });
     this.locationEl?.setProperties({ text: locationText });
+    this.pickerLocationEl?.setProperties({ text: locationText });
     this.playheadEl.setProperties({ text: deltaLabel });
     this.heroEl?.setProperties({ text: heroText });
     this.valuesEl.setProperties({ text: valuesText });
-    this.revisionEl?.setProperties({ text: `rev ${__WEATHER_ROOM_REVISION__}${providerToken}` });
     const panel = this.world.getSceneObject<UIKitMLAsset>('weather-panel');
     if (panel != null) this.applyStaticLabels(panel);
   }
@@ -439,6 +621,37 @@ export class PanelSystem extends createSystem({
     this.lastText = combined;
     this.statusEl?.setProperties({ text: statusText });
     this.locationEl?.setProperties({ text: locationText });
+    this.pickerLocationEl?.setProperties({ text: locationText });
+  }
+
+  /**
+   * Mode-pill surface, one write path: white during a snap/press flash, a
+   * 30 %-lightened tint while any pointer (finger proximity or ray) hovers
+   * the panel entity, the live/demo base otherwise. Deduped per frame.
+   */
+  private pushPillBackground(): void {
+    const flashing = this.snapFlashT >= 0 || this.pressFlashT >= 0;
+    const hovered = this.pokeEntity?.hasComponent(Hovered) === true;
+    let background = this.pillBase;
+    if (flashing) background = PILL_FLASH;
+    else if (hovered) background = this.pillBase === PILL_BASE_DEMO ? PILL_HOVER_DEMO : PILL_HOVER_LIVE;
+    if (background === this.lastPillBg) return;
+    this.lastPillBg = background;
+    this.modeEl?.setProperties({ backgroundColor: background });
+  }
+
+  /**
+   * Sandbox toggle row copy: the timeline hint line doubles as the switch
+   * and its state indicator. Copy stays in this module (EN/RU inline):
+   * the shared dictionary belongs to another slice.
+   */
+  private applySandboxHint(on: boolean): void {
+    const hint = this.hintTextEl;
+    if (hint == null) return;
+    hint.setProperties({
+      text: on ? (getLanguage() === 'ru' ? SANDBOX_HINT_RU : SANDBOX_HINT_EN) : t('timelineHint'),
+      color: on ? SANDBOX_HINT_COLOR_ON : SANDBOX_HINT_COLOR_OFF,
+    });
   }
 
   /** Static button/hint labels (markup defaults are English-only). */
@@ -453,12 +666,27 @@ export class PanelSystem extends createSystem({
     setLabel('now-label', t('goLive'));
     setLabel('forward-label', t('stepForward'));
     setLabel('reload-label', t('reload'));
-    setLabel('xr-label', t('enterAr'));
     setLabel('exit-label', t('exit'));
     setLabel('lang-label', t('langName'));
-    setLabel('timeline-hint', t('timelineHint'));
-    // Spatial cycler label stays one short token (70 px button) while the
-    // location line carries the full manual/auto place with provenance.
+    this.applySandboxHint(weatherStore.state.peek().sandbox);
     setLabel('location-label', t('locationLabelPrefix'));
+    setLabel('location-picker-title', t('locationChoose'));
+    setLabel('location-picker-hint', t('locationPickerHint'));
+    setLabel('location-auto-label', t('locationClear'));
+    setLabel('location-back-label', t('locationBack'));
+    for (const preset of LOCATION_PRESETS) {
+      setLabel(`location-${preset.id}-label`, preset.id === 'saint-petersburg'
+        ? t('presetPetersburgShort')
+        : localizePresetLabel(preset.label));
+    }
+    const busy = weatherStore.state.peek().status.kind === 'loading' || weatherStore.state.peek().status.kind === 'locating';
+    panel.requireElementById('reload-button').setProperties({ disabled: busy });
+    // The label never grows: the busy wording ("Loading…" / "Загрузка…") is the
+    // longest string this panel can write and the 80 px utility box is sized for
+    // "Reload" / "Обновить", while the four-column row (4 x 80 px + margins in a
+    // 340 px panel) has no width left to grow. The busy state is carried by the
+    // disabled styling (already applied above) plus the status line, so the
+    // label always fits its box and never reflows.
+    setLabel('reload-label', t('reload'));
   }
 }

@@ -18,6 +18,9 @@ import {
 import type { Entity, ReadonlySignal } from '@iwsdk/core';
 import { capabilityProfile } from '../capabilities.js';
 import type { CapabilityProfile } from '../capabilities.js';
+import { enableDepthOcclusion } from '../depth-occlusion.js';
+import { enableHandField, HAND_FIELD_LAYERS } from '../hand-field.js';
+import { enableBeamLighting } from '../light-shared.js';
 import { roomModel } from '../room.js';
 import { weatherStore } from '../weather-state.js';
 import { windVectorFromFrame } from '../wind-shared.js';
@@ -31,7 +34,13 @@ varying vec2 vUv;
 void main() {
   vAlpha = aAlpha;
   vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+  vec3 center = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  vBeamWorld = (modelMatrix * instanceMatrix * vec4(position, 1.0)).xyz;
+  // Snow is "motes in the shaft": crystals grow inside the light cone and
+  // shrink outside it, so the field has a cause instead of filling the room.
+  float sizeMul = 0.55 + 0.45 * rBeamGate(center);
+  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix *
+    vec4(position.xy * sizeMul, position.z, 1.0);
 }
 `;
 const FRAGMENT = /* glsl */ `
@@ -39,18 +48,23 @@ uniform float uTime;
 varying float vAlpha;
 varying vec2 vUv;
 void main() {
-  // Fluffy flake: soft six-arm puff + gaussian core, slow glint so the
-  // field sparkles instead of reading as static sprites.
+  // Fluffy flake: soft six-arm puff + gaussian core. The slow glint becomes
+  // angular too — looking back along the beam toward the sun makes the
+  // crystal flare, the same way a real flake does.
   vec2 p = (vUv - 0.5) * 2.0;
   float r = length(p);
   float a = atan(p.y, p.x);
   float arms = 0.5 + 0.5 * cos(a * 6.0);
   float body = 1.0 - smoothstep(0.12, 0.42 + 0.4 * arms, r);
   float core = exp(-r * r * 14.0);
-  float alpha = max(body * 0.6, core) * vAlpha;
+  // Faint rather than absent outside the shaft: snowfall must stay readable
+  // at night, when there is no shaft at all.
+  float alpha = max(body * 0.6, core) * vAlpha * mix(0.12, 1.0, rBeamGate(vBeamWorld));
   if (alpha < 0.01) discard;
-  float glint = 0.85 + 0.3 * sin(uTime * 2.6 + vAlpha * 47.0);
-  gl_FragColor = vec4(vec3(0.82, 0.92, 1.0) * glint, alpha * 0.8);
+  vec3 viewDir = normalize(cameraPosition - vBeamWorld);
+  float glint = pow(max(0.0, dot(viewDir, -uBeamDir)), 6.0);
+  float shine = 0.85 + 0.3 * sin(uTime * 2.6 + vAlpha * 47.0);
+  gl_FragColor = vec4(vec3(0.82, 0.92, 1.0) * shine, min(1.0, alpha * 0.8 * (1.0 + glint * 1.4)));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -77,19 +91,23 @@ export class SnowSystem extends createSystem({}) {
     const alpha = new InstancedBufferAttribute(this.alphas, 1);
     alpha.setUsage(DynamicDrawUsage);
     geo.setAttribute('aAlpha', alpha);
-    this.flakes = new InstancedMesh(
-      geo,
-      new ShaderMaterial({
-        vertexShader: VERTEX,
-        fragmentShader: FRAGMENT,
-        uniforms: { uTime: { value: 0 } },
-        transparent: true,
-        depthWrite: false,
-        side: DoubleSide,
-        blending: NormalBlending,
-      }),
-      MAX_FLAKES,
-    );
+    const flakeMaterial = new ShaderMaterial({
+      vertexShader: VERTEX,
+      fragmentShader: FRAGMENT,
+      uniforms: { uTime: { value: 0 } },
+      transparent: true,
+      depthWrite: false,
+      side: DoubleSide,
+      blending: NormalBlending,
+    });
+    // Flakes are lit by the shared shaft and fill the same room volume as
+    // rain, so they must not paint over real furniture either.
+    enableBeamLighting(flakeMaterial);
+    enableDepthOcclusion(flakeMaterial);
+    // Staged rollout: implemented, off until the rain/dust wave is verified
+    // on hardware (flag in hand-field.ts).
+    if (HAND_FIELD_LAYERS.snow) enableHandField(flakeMaterial);
+    this.flakes = new InstancedMesh(geo, flakeMaterial, MAX_FLAKES);
     this.flakes.frustumCulled = false;
     this.flakes.instanceMatrix.setUsage(DynamicDrawUsage);
     this.dummy.position.set(0, -10, 0);

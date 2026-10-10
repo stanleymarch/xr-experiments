@@ -103,29 +103,37 @@ switch, presentation layer only:
   explicit override persists in `localStorage` under `weather-room.lang`.
 - How to switch: click the `RU`/`EN` chip in the browser DOM panel header
   (`data-testid="lang-toggle"`), or the `RU`/`EN` button in the spatial
-  panel's XR row (`lang-button` — a real UIKit button, controller-ray
-  clickable, same 70 px control size, no layout or style changes). The switch
+  panel's compact utility row (`lang-button` — a real UIKit button,
+  controller-ray clickable, one of four 80 px buttons). The switch
   persists in `localStorage` under `weather-room.lang` and re-renders both
   panels instantly. To reset to auto-detection (`navigator.language`,
   `ru*` → Russian), clear the `weather-room.lang` key.
+- The browser AR capability hint (`xr-note`) also follows language changes
+  using the cached support result, without repeating the capability probe.
+  A live browser pass verified RU -> EN -> RU after the probe completed.
+  The timeline label and both control-group accessible names follow the same
+  switch; +6h and NOW remained functional during that browser pass.
 - Manual location (headsets cannot use IP-geolocation): the DOM panel has a
-  `Location` row — preset select (`LOCATION_PRESETS`), a `lat, lon` field
-  (`parseLatLon`), `Set`/`Auto` (clear) buttons. Setting a location calls
+  `Location` row — preset select (`LOCATION_PRESETS`) with a
+  `Choose a city` placeholder, a `lat, lon` field (`parseLatLon`),
+  `Set`/`My location` (clear) buttons. Setting a location calls
   `setManualLocation(...)` and reloads like `Reload`; the status line shows
   the honest provider (`Live from MET Norway` / `Open-Meteo` / `wttr.in`,
   localized) and the location line is marked `(manual location)`. The
-  spatial panel has a compact `Location` cycler (`location-button`) that
-  steps through presets and reloads.
+  spatial panel opens an in-panel city chooser from its `Location` button
+  (see *Showing the weather for your own place* below).
 
 
 ## Weather-to-scene mapping
 
 | Variable | Source field | Scene behavior |
 |---|---|---|
-| Rain | `precipitation` mm/h → `drivers.rain` | Instanced, head-facing streaks tilt with wind; square-root display-density scaling keeps light rain legible. Normal alpha blending preserves coverage for passthrough composition. Splash rings terminate at sampled real-surface heights; puddles require mapped floor cells. |
+| Rain | `precipitation` mm/h → `drivers.rain` | Instanced, head-facing streaks tilt with wind; square-root display-density scaling keeps light rain legible. Streaks are 14 mm wide with a chromatic-fringe core and dissipate with distance (`clamp(1.2/(1+0.3d)·e^(-fog·6d), 0.3, 1.2)`), so the near/far apparent-thickness ratio measures 3.0 instead of 1.0. Splash hits are a six-ray comb lifted 3 cm along the surface normal. Puddles require mapped floor cells. |
 | Snow | `snowfall` cm/h → `drivers.snow` | Head-facing flakes drift under wind and settle for 1.2 s on mapped surfaces before recycling. Providers without snowfall use their snow weather code plus precipitation for visual classification only; the missing numeric snowfall still displays `--`. |
-| Wind | `wind_speed_10m`, `wind_direction_10m`, `wind_gusts_10m` | 120 advected ribbon streaks with riding motes show mean flow; gust excess intensifies flow and rain tilt. The shared vector maps meteorological “from” to world “to”; it is not north-aligned. |
-| Clouds / visibility | `cloud_cover`, `weather_code`, `relative_humidity_2m`, `visibility` | FogExp2 combines cloud, humidity and low-visibility/fog codes. Three sculpted cloud layers use one shared 128×128 noise tile instead of per-fragment simplex octaves; wind advects the cloud deck. The 400-mote pressure field sits beneath it. |
+| Wind | `wind_speed_10m`, `wind_direction_10m`, `wind_gusts_10m` | 120 advected ribbon streaks with riding seeds/leaves show mean flow; torn fibre bands replace the smooth tails, and gust excess intensifies flow and rain tilt. The shared vector maps meteorological “from” to world “to”; it is not north-aligned. |
+| Clouds / visibility | `cloud_cover`, `weather_code`, `relative_humidity_2m`, `visibility` | FogExp2 combines cloud, humidity and low-visibility/fog codes. One thick cloud slab ray-marches the shared 128×128 noise atlas vertically; the sample count is adaptive off a seeded frame-time EMA (4 samples only below 0.85 × 13.9 ms, 2 above 1.05 × 13.9 ms, each switch logged with the measured frame time). The dead flash branch is live again: a `WeatherEvent.Thunder` listener and the storm-hour schedule drive one Gaussian pulse that lifts sun/fill, thickens the fog and tints it. Dust motes are gated by the light shaft instead of pressure. |
+| Light shaft | `daylight`-derived sun + `cloud_cover` | One additive cone (1 draw call, 64 triangles) pins its apex to the sun and drives the shared beam uniforms every frame; rain brightness, wind fibres, snow gating, dust motes and the puddle specular all read the same beam, so the room has one light source instead of per-layer colours. |
+| Puddles | `rain` history + mapped floor cells | An analytic sky mirror, not a render target: noise-built water normal, `reflect(-V, n)` graded from horizon to zenith tone, one narrow beam specular and a rim fresnel that lifts alpha. No SSR, no full-screen pass. |
 
 This intentionally requests the main hourly scene variables, not every
 Open-Meteo variable. UV/radiation, snow depth, daily sunrise/sunset, soil
@@ -141,46 +149,62 @@ dished ceramic crown, emissive glow ring). The knob travels ±0.45 m ⇔
 −24…+24 h and supports hand/controller proximity grab and ray/distance grab;
 release within ±0.75 h snaps to NOW. Hover/grab states answer through the
 cloned glow-ring/crown emissive and guide-fill opacity. On XR entry it is
-placed once 0.9 m from the viewer, 0.22 m below the eyes, tilted up 16°.
-The panel has −6h/+6h, NOW and Reload buttons as mouse/touch fallbacks;
-physical-device clicks remain unverified.
+placed once 1.05 m from the viewer, 0.4 m below the eyes (below the panel
+and its Control Bar), tilted up 16°. The panel has −6h/+6h, NOW and Reload
+buttons as mouse/touch fallbacks; physical-device clicks remain unverified.
 
 ### Moving spatial controls
 
-The panel and the entire timeline each have a cyan move bar, separate from
-the panel buttons and time knob. Hold the bar with a nearby controller's
-squeeze or a hand pinch, move, then release. A controller ray can also move
-either bar by holding its trigger. The bar translates the control; on the
-panel the same hold also turns it in place by the hand's yaw (pitch and roll
-are ignored so the text never tips away), and the bar re-seats under the
-panel after release. Moving the rail never scrubs time. Hover/hold glow and
-controller haptics acknowledge the gesture.
+The panel and the timeline rail follow the Horizon OS window pattern instead
+of a permanent handle: a rest-invisible 22 mm Control Bar plaque (the platform
+48 dp floor) sits centred below each surface — the panel and the rail each get
+one plaque and nothing else — hovering anywhere on the surface reveals it
+(hover white `#FFFFFF`, press/select `#001E78`, 0.3 s / 0.08 s / 0.1 s
+smooth-step transitions, enter/exit hysteresis). The visible plaque never
+raycasts; two invisible collision shells per element do — one for near input
+(controller squeeze or hand pinch, `useHandPinchForGrab`) and one for the
+controller-ray trigger. Targets are built to hold >=3 deg of subtense out to
+3 m, which is why the bars can stay thin. Hover/hold glow, audio cues and
+controller haptics acknowledge the gesture, and haptics fire only into the
+holding hand.
+
+Carry keeps the platform's kinematic rule — exact 1:1 tracking, no physics —
+while the panel turns itself to face the viewer (yaw and pitch follow the
+view vector, roll pinned at 0) and preserves its angular size (eased, clamped
+0.6x..2x) as it moves along z. The rail faces the viewer the same way but
+keeps its authored 16 deg up-tilt. The pointing laser dims while a
+distance drag is active so it never obscures the carried surface. Release
+parks the control exactly where it was left; hovering or moving a hand
+afterwards never moves it, and moving the rail never scrubs time.
 
 Released positions persist for the current XR session, including focus
-transitions. A new XR session places the panel 1.5 m forward / 0.3 m above
-the viewer and the rail at its placement described above; positions are not
-saved across sessions. Near and ray grab components use separate entities:
-the SDK installs only one grab handle per entity.
+transitions. A new XR session places the panel 1.4 m forward / 0.18 m above
+the viewer (scene scale 0.18) and the rail at its placement described
+above; positions are not saved across sessions. Near and ray grab components
+use separate entities: the SDK installs only one grab handle per entity.
 
-### Showing the weather for your own place
-
-The location control cycles: **auto (device/IP)** -> each preset city ->
-back to auto. In immersive mode this is the spatial `Место` / `Location`
-button, so the viewer can reach their own coordinates without leaving XR; the
-browser HUD additionally has a `My location` (`Моё место`) button and a
-`lat, lon` entry with a hint line. The location line always names the
-provenance: `55.86°, -4.25° (вручную)` for manual coordinates, `По IP (Berlin)`
-for IP-based lookup, and `устройство` when the device geolocation
-answers. Auto lookups depend on the network: on the test headset network the
-IP lookup resolves to Berlin, which the label shows honestly rather than
-pretending it is the viewer's city.
+The spatial `Место` / `Location` button swaps the panel to an equal-height
+city chooser: six preset cities in a 2-column grid, `Моё место` (auto:
+device/IP) and `Назад` (back). Tapping a city sets the manual location,
+closes the chooser, and reloads; the provenance line shows the result
+(e.g. `Tokyo (вручную)` then `Эфир: Open-Meteo`). The browser HUD keeps the
+full row — preset select with a `Choose a city` placeholder, `lat, lon`
+entry, `Set`/`My location`. The location line always names the provenance:
+`55.86°, -4.25° (вручную)` for manual coordinates, `По IP (Berlin)` for
+IP-based lookup, and `устройство` when the device geolocation answers. Auto
+lookups depend on the network: on the test headset network the IP lookup
+resolves to Berlin, which the label shows honestly rather than pretending
+it is the viewer's city.
 
 Short viewports: the browser HUD switches to a compact layout below 700 px
-height (the Quest Browser window is ~587 px tall), and the Reload / Enter AR
-row is sticky at the panel bottom, so the immersion button stays reachable
-without scrolling. The spatial panel splits its controls into two rows
-(Enter AR / Exit above Reload / Location / RU) so five 70 px buttons no
-longer overflow the 296 px content width.
+height (the Quest Browser window is ~587 px tall): the card is a flex
+column whose body scrolls while Reload / Enter AR / Exit live in a fixed
+footer outside the scroll area, so actions stay reachable and scrolled
+content can never sit under them. Compact tiers tighten rhythm below
+700 px and 560 px of height while keeping 44 px touch targets. The spatial
+panel keeps all utility controls
+(Reload / Location / RU / Exit) in one compact 4-button row of 80 px
+kit-floor buttons, centered on the 340 px panel.
 
 ## Typography
 
@@ -287,6 +311,149 @@ density ramp predicts). Device captures: `artifacts/device-rain-final-1..3.png`;
 the pre-fix layouts: `artifacts/device-panel-2d-new.png`,
 `artifacts/device-xr-new-ui-1..2.png`.
 
+### Real-world depth occlusion (2026-10-09, IWER only)
+
+`iwsdk.config.json` requests `depthSensing` (`usage: gpu-optimized`,
+`format: float32`) as an **optional** feature: a denied Spatial permission or a
+runtime without depth then degrades to "no occlusion plus one console warning"
+instead of failing the AR session. `src/index.ts` registers the framework
+`DepthSensingSystem` (`enableOcclusion`, `enableDepthTexture`, `blurRadius: 20`)
+and `DepthOcclusionSystem`, which owns the app's depth texture for the custom
+weather shaders.
+
+Scope, explicitly: **this app has no virtual room geometry.** The walls, floor,
+couch and tables are real passthrough — the only virtual 3D content is the
+weather volume and the two UI surfaces. What gets occluded is therefore the
+weather layers (rain streaks, snow flakes, wind streaks and sparks, cloud
+plates, dust), which is exactly the owner's complaint of weather passing through
+furniture. What is deliberately **not** occluded is the UI: the weather panel and
+the timeline rail. Horizon OS never hides its own windows and controls behind
+real geometry, because a control that can be occluded stops being reachable, so
+both surfaces follow the system rule. Nothing in the app carries
+`DepthOccludable`; the framework `DepthSensingSystem` is registered for its
+depth feature diagnostics only — `enableDepthTexture` and `enableOcclusion` are
+false, so it uploads no texture of its own, and the one depth texture that is
+actually sampled belongs to `DepthOcclusionSystem`.
+
+The app carries its own depth path because the framework's `DepthOccludable`
+injection is written against three's built-in material shaders and derives the
+virtual depth from `modelViewMatrix * vec4(position, 1.0)` — the mesh origin for
+every instance of an `InstancedMesh`, and a silent no-op on a raw
+`ShaderMaterial`. `src/weather/depth-occlusion.ts` injects an equivalent but
+instance-correct test through `onBeforeCompile` (interpolated `gl_Position.xyw`,
+sampled per stereo view). Rain splashes and puddles stay unoccluded on purpose:
+they are decals anchored to the sampled real surface, where a depth test against
+that same surface would flicker them away.
+
+Measured in IWER (`metaQuest3`, `living_room`), head at (0, 1.6, 0) aimed at the
+couch and table, ECS paused so both frames contain identical particles:
+
+| Check | Result |
+|---|---|
+| feature granted | `enabledFeatures` includes `depth-sensing`; no `depth-sensing feature not enabled` warning |
+| pipeline | `[weather-room] real-world depth occlusion active (usage=gpu-optimized format=float32 191x121 rawValueToMeters=1 depthNear=0.1 eyes=2)` |
+| framework path | `DepthSensingSystem` live with `blurRadius: 20`; no entity carries `DepthOccludable` (UI exclusion above) |
+| occlusion on vs off | frozen frames differ by 1687 px (0.46% of the frame), every changed pixel on a rain streak or a cloud-plate silhouette cut; the on-frame keeps only the few streaks in front of real geometry while the off-frame shows the full field (`artifacts/xr-depth-frozen-on.png`, `artifacts/xr-depth-frozen-off.png`, amplified difference `artifacts/xr-depth-diff.png`) |
+
+The A/B frames were captured while the timeline rail still carried
+`DepthOccludable` (since removed for the UI rule above). They stay valid for this
+measurement: the staged view looks at the couch and table with the rail out of
+frame, and the difference image contains only streak-shaped marks and cloud
+silhouette cuts — no rail-shaped region.
+
+Not measured here: `SoftOcclusion` vs `MinMaxSoftOcclusion` cost (the MinMax
+preprocessing pass needs a source flip plus a full reload, which the shared
+runtime window did not have), and frame cost generally. Still needs a physical
+headset: the Spatial permission prompt and its denial path, real Quest depth
+quality/blur, and the depth-image transform actually shipped by the device (the
+shader applies the runtime's `normDepthBufferFromNormView` and only falls back to
+the plain convention when the runtime hands over an identity stub), the
+right-eye depth layer on a non-multiview stereo renderer, and occlusion
+behaviour while grabbing.
+
+#### Device format reality: why the first headset run showed no occlusion (2026-10-09)
+
+The first physical run logged `active` and still drew rain over the beds. The
+device session reported `usage=gpu-optimized format=unsigned-short 320x320
+rawValueToMeters=1 depthNear=0.1`, and that is where the two environments part:
+the WebXR Depth Sensing Module's format table gives `unsigned-short` the WebGL
+format **R16UI** — an *integer* texture, "inspect Red channel and use the
+value" — while `float32` is R32F and `luminance-alpha` is LUMINANCE_ALPHA with
+the least significant byte in luminance. The shader sampled every format through
+a float `sampler2DArray`, so on the device the sampler and the texture class did
+not match, every read came back 0, and the module's own "0 means invalid depth"
+rule turned the mismatch into "no occlusion at all" — silently, with the
+pipeline reporting healthy.
+
+What changed for it:
+- The injected shader now declares the sampler the format needs (`usampler2DArray`
+  for `unsigned-short`, `sampler2DArray` otherwise, with the 16-bit reassembly
+  reading `.rg` — the CPU path's texture is packed RG/UnsignedByte, and the
+  high byte lives in green while alpha is padding that reads 1), and
+  `setDepthTextureKind` recompiles the effect materials
+  when the session's format becomes known, because a sampler type is fixed at
+  compile time. The kind is dropped back to `float` together with the depth
+  texture at session exit, so a null texture can never leave an integer
+  sampler asking three to bind its RGBA placeholder per draw.
+- Decoding follows the spec (`raw × rawValueToMeters`, 0 = invalid) with the
+  near-plane-relative variants kept as explicit, named alternatives, every
+  division guarded. Which one is live is not guessed: `DepthOcclusionSystem`
+  reads a spread of raw texels back from the live image (framebuffer readback on
+  the GPU path, the WebXR buffer on the CPU path), scores each candidate by
+  whether it yields room-sized distances, applies the winner and logs it.
+- `normDepthBufferFromNormView` is now the source of truth for depth-image
+  coordinates, applied to the spec's normalized view coordinates (origin
+  top-left, y downward). The plain convention remains the fallback for runtimes
+  that hand over an identity stub — the emulator does, and applying a no-op
+  matrix to already-correct UVs would flip the image.
+- Every probe logs a control value that can be read on the device without eyes:
+  `[weather-room] depth probe: format=... kind=... decode=... matrix=on|off
+  raw[center]=<raw> -> <m>m raw[min..max]=... plausible=<%>`.
+
+| Environment | Depth format | What is proven |
+|---|---|---|
+| IWER (this workstation) | `float32` (R32F, unitless inverse depth, identity transform) | feature granted, pipeline live, occlusion A/B, and that the fallback path still works after the rewrite |
+| Quest 3 (owner's session) | `unsigned-short` (R16UI, `rawValueToMeters=1`, `depthNear=0.1`, 320x320) | format + geometry facts only; the fix itself is **unverified until the next headset run** |
+
+Unverifiable in IWER, to check on the headset with the probe line: that an R16UI
+texture is accepted by the injected `usampler2DArray` in the XR context, the
+texture type (TEXTURE_2D vs TEXTURE_2D_ARRAY with an `imageIndex`), which decode
+the probe selects (the raw samples in the line decide it), the real
+`normDepthBufferFromNormView`, the readback's colour-renderability, and whether
+the per-eye layer/transform split holds on a non-multiview stereo renderer.
+
+#### Deviations from the depth-occlusion skill, and why
+
+The skill (`iwsdk-depth-occlusion`) documents the framework path: request
+`"depthSensing": { "required": true, "usage": "gpu-optimized", "format":
+"float32" }`, register `DepthSensingSystem` with `enableDepthTexture: true,
+enableOcclusion: true, useFloat32: true, blurRadius: 20`, and put
+`DepthOccludable` on the intended scene nodes. This app deviates in four places,
+each for a recorded reason:
+
+- `required: false` instead of `required: true`: IWSDK's `launchXR` has no retry
+  on a rejected `requestSession`, so a denied Spatial permission would fail the
+  whole AR entry instead of degrading. The ticket for this work asked for
+  graceful degradation.
+- `enableDepthTexture: false, enableOcclusion: false` on the framework system:
+  the app owns the depth texture that is actually sampled, so the framework's
+  copy would be an unused per-frame upload. It stays registered for its feature
+  diagnostics (and its "depth-sensing feature not enabled" warning).
+- No `DepthOccludable` anywhere: per the UI-availability rule above, the app's
+  only non-UI 3D object is the timeline rail, which must not be hidden.
+- A hand-written injection instead of `DepthOccludable` for the weather layers:
+  the skill's own note ("The depth occlusion feature may not be compatible with
+  custom shaders") plus the instancing flaw above make the framework path a
+  silent no-op there.
+
+The skill also says not to inspect framework source when the build, registered
+systems, entity components and console warnings already establish the failing
+layer. Those signals said the pipeline was healthy while the headset showed no
+occlusion, so the failing layer had to be established from the format contract
+instead; the framework's own shader was read to confirm it shares the
+float-sampler assumption, which is why the framework path fails on the device
+too and why this module owns its own decode.
+
 ## Verified in this workstation session
 
 `npm run typecheck` and root `npm run build` passed. The build assembled
@@ -307,11 +474,56 @@ the pre-fix layouts: `artifacts/device-panel-2d-new.png`,
   `(-0.18, 0.07, -0.05)` left the panel and NOW playhead unchanged.
   Later hand/ray moves also retained released positions. A real IWER
   exit/re-entry restored both initial placements.
+- 2026-10-08 repair pass (all in IWER `immersive-ar`): `RainSystem` had been
+  imported but never registered — registration restored (28 live systems);
+  with providers blocked the demo scenario (4 mm/h) rendered visible falling
+  streaks across the room (`artifacts/xr-rain-now.png`). The panel move bar
+  no longer self-rotates: a static held controller leaves the panel yaw at
+  exactly 0°, a deliberate wrist yaw of +50° turns it exactly +50° (pitch
+  and roll 0), a ray drag across 0.4 m / 0.3 m translates 1:1 with yaw
+  locked at 0°, and hover alone never moves anything. (Superseded on
+  2026-10-09: the wrist-yaw coupling was replaced by the viewer-facing
+  carry described under "Moving spatial controls".) Ray-dragging the time
+  knob set +16 h and −5.5 h; releasing within ±0.75 h snapped to NOW. The
+  spatial location chooser opened, closed (Back), and selected Tokyo through
+  real ray clicks, with the live provider answering afterwards. The spatial
+  language button switched EN↔RU and the browser HUD followed. Browser HUD
+  rows are equal-width grids (3-column timeline and location rows); the
+  utility row is a flex row with equal columns for 2 or 3 visible buttons.
 - Russian glyphs rendered on the browser and spatial panels. App-only
   captures: `artifacts/browser-ru-fixed.png`,
   `artifacts/spatial-controls-ru-fixed.png`; compact two-surface evidence:
   `artifacts/ui-runtime-review.jpg`. The managed console reported no font
   or missing-glyph errors during the checks.
+- 2026-10-09 card polish pass (IWER): nine measured layout defects fixed on
+  both surfaces and both languages - the RU preset button no longer clips
+  (short label `Петербург` on the spatial picker, 140 px buttons), secondary
+  XR text is 12 px+ with >=4.5:1 contrast (`#a6bcd9` 5.6:1 on the panel),
+  the picker content is vertically centered (no dead bottom), the DOM
+  utility row lost its orphan button, empty error paragraphs collapsed, and
+  section rhythm is 8/16/24. The picker was opened and closed through real
+  MCP controller rays in EN and RU after the changes
+  (`artifacts/ui-fix-picker-live-{en,ru}.png`); hover over the move grip
+  still never moves the panel; `screen-input-smoke.html` passes; no new
+  font/glyph/parse errors in the managed console.
+- 2026-10-09 carry/rotate pass (IWER, scripted controller through the CLI):
+  near squeeze on the blue plank grabs at touch range (0.045 m engages,
+  0.18 m does not - near means near), then the panel follows the hand 1:1 on
+  all three axes: +0.4 m X translated +0.400 m, and a walk-away carry of
+  dX=-1.18/dY=+0.034/dZ=+2.015 moved the panel by exactly the same vector
+  (parked at (-0.78, 1.81, 0.62), ~2 m from its start). Wrist yaw couples
+  relative to the grab pose, 1:1 and reversible (wrist 0->40 deg rolled the
+  panel -40->0 deg in 10 deg steps); pitch/roll do not follow. The far ray
+  grip hovers then trigger-grabs at 0.55 m and ray-drags translate-only,
+  1:1 (+0.35 m drag -> +0.350 m), wrist yaw while ray-held leaves the panel
+  untouched. The timeline rail grip carries 1:1 as well (-0.45 m -> -0.450).
+  Release parks the surfaces in place; moving the hand afterwards never
+  disturbs them (`artifacts/grab-near-carried.png`, `grab-far-ray.png`,
+  `timeline-carried.png`, `grab-final-state.png`, `grab-reset-state.png`).
+  (Superseded on 2026-10-09 by the move-affordance rework: the surfaces no
+  longer carry a permanent plank, and wrist yaw no longer turns them - the
+  panel and rail face the viewer automatically. The measurements above still
+  document the kinematic 1:1 carry rule, which the rework preserves.)
 - The spatial panel is a world-space UIKitML surface; the browser DOM panel
   is separate native HTML. `screen-input-smoke.html` proves a synthetic
   unhanded XR screen ray clicks the real UIKit `+6h` button (playhead 6),
@@ -343,3 +555,234 @@ the pre-fix layouts: `artifacts/device-panel-2d-new.png`,
 Physical Quest 3 passthrough, Android browser behavior/permissions, surface
 coverage, comfort, and standalone performance remain unverified. IWER does not
 prove those device-specific behaviors.
+
+## Move affordance (Control Bar) and draw order
+
+The panel and the rail each expose one hover-revealed Control Bar plaque below
+their surface (no permanent bar, no edge handles, no move hint): rest draws
+nothing, hover draws it white, a grab turns it #001E78, and a grab also turns
+the control toward the viewer (yaw + pitch, roll 0), keeps its angular size
+across depth translation, and pushes/pulls it along the view ray from the
+holding hand's thumbstick (0.4 m to 3 m). A `Handle.inputState`-verified IWER
+run covers the bar grab, the carry and the pull; haptics and audio were not
+felt (the emulator has no actuators).
+
+Depth order between the panel, the rail and the plaque is only verified in
+IWER: the panel's UIKit surface, the plaque and the opaque rail parts now write
+depth, while the additive light guide, the endpoint glows and the knob glow
+ring stay transparent with `depthWrite: false`. Whether this removes the
+reported frame-to-frame flip of the rail strip over the panel's lower rows
+needs a real headset pass — the sequence of device captures that showed the
+defect (seq-8/seq-9/seq-10) cannot be reproduced in the emulator.
+
+## Tracked-hand occluder
+
+Real-world depth occlusion tests the weather against the room's depth image,
+which never contains the user's hand, so rain fell straight through a tracked
+hand. `hand-occluder.ts` closes that gap with geometry instead of shaders: one
+`InstancedMesh` of 8x6 spheres per hand, anchored to the framework's own hand
+model by joint name (17 anchors: wrist plus the four metacarpals for the palm,
+four tips, four distal phalanges and three thumb joints), rendered with
+`colorWrite: false`, `depthWrite: true` and `transparent: false`. It draws in
+the opaque pass, so the transparent weather layers behind it fail their depth
+test and are cut.
+
+Measured: 2720 triangles and +2 draw calls with two hands, 160 triangles and
++2 draw calls in controller mode (one larger sphere on `player.gripSpaces`),
+0 with neither. Proxies are created and dropped as input sources come and go —
+an IWER run switching `hand` to `controller` moved the entities from
+`hand-occluder-<side>-hand` to `hand-occluder-<side>-controller` without
+leaking. `raycast` is disabled so the proxy never intercepts poke/ray/grab, and
+it is not frustum culled because its bounds do not describe the instances.
+
+Consequence worth knowing: because the proxy is opaque geometry, it also cuts
+the panel where a hand is closer to the camera than the panel. That is the
+physically correct reading in passthrough (a UI panel should not draw over your
+real hand) but it is a behavioural change for the UI, and the occlusion of the
+panel by a hand has not been seen on hardware yet.
+
+## Hand interactions
+
+Five surfaces, all sharing one input-layer read of the hand rig (systems 2.7-2.9,
+before the weather visuals at 30.5-36.5):
+
+- **Occlusion** (`hand-occluder.ts`): depth-only proxy spheres, so rain and snow
+  are cut by a tracked hand (details above).
+- **Push field** (`hand-field.ts` + `hand-field-system.ts`): up to four capsule
+  SDFs (palm radius 0.06 m, forearm 0.05 m, controller grip 0.07 m) folded into
+  the layer's own vertex shader, so a hand shoves rain streaks and dust motes
+  aside instead of passing through them. Rolled out per layer through
+  `HAND_FIELD_LAYERS`: rain and dust on, wind and snow implemented but off until
+  the first two are seen on hardware. With no hands the uniforms stay empty and
+  the shader cost is exactly zero.
+- **Clap = thunder** (`gesture-sandbox.ts`): palm anchors (middle-finger
+  metacarpal, wrist fallback, controller grip fallback) with a distance and a
+  closing-speed threshold plus a cooldown; a clap emits the existing
+  `WeatherEvent.Thunder`, which the audio rumble and the cloud flash already
+  listen to. It fires only in **sandbox mode**; outside it, thunder still comes
+  from the weather code (WMO >= 95). Every fire is confirmed by audio (hands
+  have no haptics - Meta's hands guidance), and controller sessions also get a
+  haptic pulse.
+- **Poke** (`panel.ts`): `PokeInteractable` on the panel entity, so a fingertip
+  touch drives the same `Hovered`/`Pressed` path as a ray, with a mode-pill tint
+  on hover and a flash plus click cue on press.
+- **Pinch scrub** (`timeline.ts`): an invisible 0.90 x 0.02 x 0.02 m strip over
+  the rail with `OneHandGrabbable`; a pinch anywhere on the scale scrubs with the
+  existing ±0.45 m ⇔ ±24 h mapping and the ±0.75 h snap-to-live, fires a detent
+  impulse on every hour crossed, and the strip is pinned back to rest each held
+  frame so a grab can never drag it out of place. The ray and knob paths are
+  unchanged.
+
+Sandbox mode is a store flag with a `SandboxToggle` event; its switch is the
+panel's existing hint row (runtime name `weather-toggle-sandbox`), which flips
+its text and colour instead of adding a new UIKitML control. Gaze tracking is
+deliberately not enabled: it is an optional descriptor, and gaze+pinch would be
+an add-on to the strip rather than a required path.
+
+### Hands wave verification (2026-10-10, managed IWER, by query)
+
+- Registration: `ecs_list_systems` reports `HandOccluderSystem` 2.7,
+  `HandFieldSystem` 2.8 and `GestureSandboxSystem` 2.9 among 33 systems, none
+  paused, all running from boot through ~17.5k frames with no hands connected
+  and across hand/controller switches, with no app errors and no InputSystem
+  BVH warnings.
+- Poke: `PokeInteractable` is on exactly one entity, `Weather Panel`. With the
+  index tip ~10 cm away the panel carries `Hovered`; at ~1 cm from the surface
+  (inside the 2 cm touch down-radius) it carries `Hovered` and `Pressed`, and
+  the press-edge impulse entity moved to the mode-pill anchor.
+- Sandbox + clap: a controller ray select on the hint row flipped its text from
+  `-24H < KNOB / BUTTONS > +24H` to `CLAP = THUNDER · TAP TO TURN OFF`, copy
+  that is only written while `sandbox` is true. With the ECS frozen, palms
+  0.156 m apart did not fire (the false-positive guard held) and palms 0.089 m
+  apart did: the clap impulse appeared at the exact midpoint of the two measured
+  palm anchors. `fire()` emits `WeatherEvent.Thunder` in the same statement that
+  triggers the impulse, and its synchronous listeners are the audio rumble and
+  the cloud flash.
+- Pinch scrub: the strip (entity `Weather Timeline Pinch Scrub`) grabs on
+  squeeze and a drag to rail x = 0.4 moved the playhead from `NOW` to
+  `16:41 / +16h`, which is exactly the ±0.45 m ⇔ ±24 h mapping; the strip's own
+  transform stayed bit-identical to rest while held, and the knob followed to
+  rail x = 0.30. Hand pinch is not drivable through the emulator API
+  (`xr_set_gamepad_state` rejects hand devices), so this used the controller
+  squeeze on the same grab path.
+- Coexistence: after all gesture activity both `hand-occluder-*-hand` proxies
+  were still alive, so the occluder and the push field share the rig without
+  either tearing the other down.
+
+Not yet seen on hardware: the real feel of the clap threshold, the poke
+down-radius with a real fingertip, whether the pinch scrub detent is felt as a
+detent, and how dense the occluder proxy spheres look around an actual palm.
+
+## Atmosphere pass: measured evidence and hardware limits
+
+Managed IWER, same location/hour and the same entry pose before and after the
+pass: draw calls 102 → 100, triangles 48 092 → 48 964, points 1000 → 0,
+programs 24 → 25, textures 13 → 14, shadow casters 0 → 0. Frame time on this
+uncalibrated host (ANGLE over Intel UHD 620) is p50 36.1 ms, so the cloud
+ray-march runs its documented 2-sample fallback and logs
+`cloud ray-march 2 samples (measured frame 16.8 ms)`; four samples are only
+adopted below 0.85 × 13.9 ms and were not reached here. Rain apparent thickness
+(near/far median, fixed 764x485 frame) moved from a ratio of 1.0 — every streak
+aliasing to a single pixel, which is what read as a screen-space overlay — to
+3.0, with a 7.5 mm streak widened to 14 mm because a 1.9 mm core is sub-pixel
+beyond 0.6 m.
+
+Still emulator-only evidence: that the XR context accepts the integer-sampler
+variant against the device's R16UI depth texture, which decode the probe picks
+there, the device's real `normDepthBufferFromNormView`, the perceived thickness
+of the new streaks on a headset, and whether the hand occluder covers a palm
+without gaps wide enough to let a rain streak through. A headset run answers
+the first three from the console probe line (`depth probe: format=… kind=… decode=… raw[center]=… plausible=…%`) without looking through the lenses.
+
+### UI slice re-verification (2026-10-10, managed IWER)
+
+The root pipeline was re-run end to end on the final tree
+(`npm run build` → `npm ci` + `vite build` for the app, then assembly) and
+printed `Assembled 4 experience(s) into _site/`: `8thwall/knockdown`,
+`8thwall/portal`, `8thwall/sea-battle` and `iwsdk/weather-room`, all four listed
+in `_site/manifest.json`. The 8th Wall experiences are still built and served by
+the root build, so the migration did not disturb them. (The first attempts
+failed on `EPERM` while `npm ci` tried to replace `sharp`'s native DLLs, which a
+long-lived IWSDK reference MCP server had loaded; stopping that process let the
+pipeline finish.)
+
+
+One bounded pass on the frozen tree, driven by real XR input rather than by
+looking at pictures:
+
+- `ui assets --raw` lists `weather-panel` as the only UIKitML asset; the
+  isolated preview rendered without parser or resource errors.
+- The affordance graph in the live runtime contains exactly three objects per
+  surface — `… Move Affordance`, `… Near`, `… Far` — i.e. the four edge bars are
+  gone from the scene, not merely hidden.
+- A controller ray aimed at the plaque (world position measured with
+  `scene_get_object_transform`: the panel is 0.864 m tall at scale 0.18 and the
+  plaque sits 0.0515 m below its bottom edge) put `Hovered` on
+  `Weather Panel Move Affordance Far`; select was pressed and released with the
+  state queried on both sides.
+- Hand mode created `hand-occluder-left/right-hand`, and switching back to
+  controllers replaced them with `hand-occluder-left/right-controller` on the
+  same entities — the proxy lifecycle has no leak and no duplicate.
+- The console carried the depth probe line
+  (`format=float32 kind=float decode=spec-raw matrix=off raw[center]=0.9994 -> 1.00m plausible=100%`)
+  and no shader compile errors in either sampler variant. The repeating
+  `readPixels: buffer is not large enough for dimensions` warning from the probe
+  was fixed afterwards (nine single-texel reads sized from the live depth image,
+  and the read format/type now queried from the driver instead of guessed).
+
+### Independent review round (2026-10-10)
+
+A read-only reviewer pass over both waves found four defects; all four are
+fixed and the tree rebuilt green:
+
+- session exit now resets the depth sampler kind together with the texture
+  (an integer sampler left compiled with a null texture would have three bind
+  its RGBA placeholder per draw — hardware-only trigger, exercised here by an
+  enter/exit/re-enter cycle with a clean console);
+- the 16-bit decode reads `.rg` from the CPU path's RG-packed texture instead
+  of `.ra`, where alpha is padding that reads 1 (silently dead occlusion on
+  cpu-optimized 16-bit runtimes — the secondary Android path; not reachable in
+  IWER or on gpu-optimized Quest);
+- a second simultaneous timeline grab survives the release of the first (the
+  disqualify handler re-elects instead of nulling);
+- pausing `HandFieldSystem` clears the capsule uniforms, so a paused system
+  cannot keep parting rain around a frozen hand pose.
+
+### AR-defect round (2026-10-10, managed IWER + source audit)
+
+The owner's headset report ("in AR nothing is visible except a cloud lying on
+the floor") was traced to two independent, source-verified causes:
+
+- the depth shader declared an integer sampler while the runtime hands over a
+  normalized depth texture, so every occluded draw was dropped
+  (`GL_INVALID_OPERATION ... GL_UNSIGNED_INT_SAMPLER_2D_ARRAY`). The float
+  sampler plus the calibrated decode fixed it; IWER now logs
+  `depth occlusion active (... decode=inverse-unit)` and
+  `depth probe: ... raw[center]=0.959 -> 2.44m ... resolved=yes`, which matches
+  the SDK's own GPU-depth formula `rawValueToMeters * depthNear / (1 - tex)`.
+- the temperature haze was the only weather layer without
+  `enableDepthOcclusion`, so it was the one layer that survived the broken
+  depth pass and the only one that drew through real geometry. It now carries
+  the same injection as every other layer, and its three strata are spread
+  through a capped band (`min.y + 0.3 .. min.y + 1.25`) inside the walls
+  instead of stacking in the bottom 0.3 m as one floor-level sheet.
+
+Measured in IWER after the change: the cloud deck sits at y = 2.38 m with the
+viewer head at y = 1.60 m, i.e. the deck is 0.78 m above the eyes; the source
+guarantees `plateTop >= min.y + 0.9` and, with the head-anchored volume,
+`>= head.y + 0.88` (`RoomModel.containAnchor` grows the volume to
+`head.y + 1`). A floor-level "cloud" can therefore not come from the deck.
+
+Also verified in the same session: grip anywhere on the panel surface moves the
+window 1:1 with the controller (`Grabbed` on `Weather Panel Move Affordance
+Far`, panel `(0, 1.78, -1.4) -> (0.25, 1.88, -1.4)`), the flat page shows only
+the DOM panel, the dot cue above the rail is gone, and the four utility labels
+measure identical centred boxes (`48x20`, relative centre `[0, 0]`).
+
+Still hardware-only, listed so the next headset run can close it:
+
+- `unsigned-short` GPU depth decode on Quest 3 (the probe line must read
+  `resolved=yes` with plausible meters; the float32 path is the only one IWER
+  can exercise);
+- visible rain/haze occlusion and the haze band height against a real room;
+- the cloud deck height in a room whose scan has no ceiling.

@@ -23,6 +23,9 @@ import {
 import type { Entity, ReadonlySignal } from '@iwsdk/core';
 import { capabilityProfile } from '../capabilities.js';
 import type { CapabilityProfile } from '../capabilities.js';
+import { enableDepthOcclusion } from '../depth-occlusion.js';
+import { enableHandField, HAND_FIELD_LAYERS } from '../hand-field.js';
+import { enableBeamLighting } from '../light-shared.js';
 import { roomModel } from '../room.js';
 import { weatherStore } from '../weather-state.js';
 import { windVectorFromFrame } from '../wind-shared.js';
@@ -32,7 +35,11 @@ const MAX_REDUCED = 1200;
 const SPLASH_COUNT = 48;
 const SPLASH_FADE_S = 0.4;
 const FALL_BASE_SPEED = 4;
-const STREAK_WIDTH = 0.0075;
+/** World width of one streak. Wide enough to be macroscopic: at this size the
+ * projectile reads as a real object whose apparent thickness grows with
+ * proximity, instead of a sub-pixel hairline that aliases to the same 1 px at
+ * every depth. */
+const STREAK_WIDTH = 0.014;
 const STREAK_BASE_LEN = 0.45;
 
 const RAIN_VERTEX = /* glsl */ `
@@ -49,18 +56,29 @@ const RAIN_FRAGMENT = /* glsl */ `
 varying float vAlpha;
 varying vec2 vUv;
 void main() {
-  // Thread-like filament: gaussian core + faint halo, lit head at the
-  // leading (bottom) end dissolving into a soft tail. Reads as a thin
-  // streak of light from every angle, never a box.
+  // Thread-like filament: three core samples offset across the width, weighted
+  // R/G/B, give the drop a chromatic fringe (dispersion) instead of a flat
+  // white bar. Halo and head/tail shape stay as before.
   float x = (vUv.x - 0.5) * 2.0;
-  float core = exp(-x * x * 16.0);
-  float halo = exp(-x * x * 3.5) * 0.3;
+  float w = 0.16;
+  float cr = exp(-(x - w) * (x - w) * 9.0);
+  float cg = exp(-x * x * 9.0);
+  float cb = exp(-(x + w) * (x + w) * 9.0);
+  float core = (cr + cg + cb) * 0.3333;
+  float halo = exp(-x * x * 3.0) * 0.32;
   float head = 0.45 + 0.85 * exp(-pow((vUv.y - 0.1) * 3.0, 2.0));
   float tail = smoothstep(0.0, 0.05, vUv.y) * (1.0 - smoothstep(0.4, 1.0, vUv.y) * 0.7);
+  // Crossing the light shaft brightens the drop; outside it the rain dims.
+  float beam = rBeamFactor(vBeamWorld);
   float a = (core + halo) * head * tail * vAlpha;
   if (a < 0.01) discard;
-  vec3 col = mix(vec3(0.5, 0.66, 0.92), vec3(0.85, 0.92, 1.0), core);
-  gl_FragColor = vec4(col, a * 0.8);
+  // Dispersion only where the core is; the halo stays neutral blue.
+  vec3 fringe = vec3(cr, cg, cb) / max(cr + cg + cb, 0.0001);
+  vec3 col = mix(vec3(0.5, 0.66, 0.92), fringe, core);
+  col = mix(col, vec3(0.85, 0.92, 1.0), halo);
+  // Manual premultiplied additive under NormalBlending: the layer reads as
+  // light rather than paint while passthrough composition is preserved.
+  gl_FragColor = vec4(col * a * beam, a);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -80,14 +98,20 @@ const SPLASH_FRAGMENT = /* glsl */ `
 varying float vFade;
 varying vec2 vUv;
 void main() {
-  // Soft expanding crown ring + brief central glint (RingGeometry uvs are
-  // planar across the bounding square, so radial distance is exact).
-  float d = length(vUv - vec2(0.5)) * 2.0;
-  float ring = exp(-pow((d - 0.72) * 7.0, 2.0));
-  float glint = exp(-d * d * 9.0) * 0.3;
-  float a = (ring + glint) * vFade;
+  // Contact flash, not a flat decal ring: a six-ray angular comb radiated from
+  // the impact point plus a short central glint, so the hit reads from any
+  // viewing angle (RingGeometry uvs are planar across the bounding square).
+  vec2 p = vUv - vec2(0.5);
+  float d = length(p) * 2.0;
+  float ang = atan(p.y, p.x);
+  float comb = pow(0.5 + 0.5 * cos(ang * 6.0), 8.0);
+  float radial = smoothstep(1.0, 0.25, d) * (1.0 - smoothstep(0.0, 0.14, d));
+  float glint = exp(-d * d * 9.0) * 0.35;
+  float beam = rBeamFactor(vBeamWorld);
+  float a = (comb * radial + glint) * vFade;
   if (a < 0.01) discard;
-  gl_FragColor = vec4(0.62, 0.78, 1.0, a * 0.65);
+  float outA = a * 0.65;
+  gl_FragColor = vec4(vec3(0.62, 0.78, 1.0) * beam * outA, outA);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -98,7 +122,10 @@ export class RainSystem extends createSystem({}) {
   private splashEntity!: Entity;
   private streaks!: InstancedMesh;
   private positions = new Float32Array(MAX_FULL * 3);
+  /** Seed alpha: also the liveness marker for the simulation. */
   private alphas = new Float32Array(MAX_FULL);
+  /** Per-frame render alpha = seed alpha x distance attenuation. */
+  private readonly alphasOut = new Float32Array(MAX_FULL);
   private lengths = new Float32Array(MAX_FULL);
   private speeds = new Float32Array(MAX_FULL);
   private cursor = 0;
@@ -126,10 +153,21 @@ export class RainSystem extends createSystem({}) {
       side: DoubleSide,
       blending: NormalBlending,
     });
+    // Shared beam first, then the depth test on top: both hooks append after
+    // the shader's own gl_Position, so the streak keeps its instance-correct
+    // occlusion and gains the shaft brightness.
+    enableBeamLighting(material);
+    // Streaks fall through the whole room volume, so they are the effect that
+    // must disappear behind real furniture.
+    enableDepthOcclusion(material);
+    // Staged rollout flag: streaks part around a tracked hand (push + dim in
+    // the vertex stage; see hand-field.ts). Splashes are surface decals and
+    // stay pinned — a hand does not shove the floor.
+    if (HAND_FIELD_LAYERS.rain) enableHandField(material);
     this.streaks = new InstancedMesh(geo, material, MAX_FULL);
     this.streaks.frustumCulled = false;
     this.streaks.instanceMatrix.setUsage(DynamicDrawUsage);
-    const alphaAttr = new InstancedBufferAttribute(this.alphas, 1);
+    const alphaAttr = new InstancedBufferAttribute(this.alphasOut, 1);
     alphaAttr.setUsage(DynamicDrawUsage);
     geo.setAttribute('aAlpha', alphaAttr);
     this.dummy.position.set(0, -10, 0);
@@ -150,8 +188,20 @@ export class RainSystem extends createSystem({}) {
       transparent: true,
       side: DoubleSide,
       depthWrite: false,
+      // Decal compromise: the splash stays a surface mark (it keeps depthTest
+      // and the module's 3 cm real-depth bias) instead of ignoring occlusion
+      // outright. Rising the impact point 3 cm along the surface normal and
+      // pulling the virtual depth forward with polygonOffset keeps the mark in
+      // front of the surface it sits on, so it neither flickers against its
+      // own sampled floor nor floats — while any real geometry that is
+      // genuinely closer still cuts it.
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
       blending: NormalBlending,
     });
+    enableBeamLighting(splashMat);
+    enableDepthOcclusion(splashMat);
     this.splashMesh = new InstancedMesh(splashGeo, splashMat, SPLASH_COUNT);
     this.splashMesh.frustumCulled = false;
     this.splashAge.fill(Number.POSITIVE_INFINITY);
@@ -191,6 +241,10 @@ export class RainSystem extends createSystem({}) {
     const floorY = min.y;
     const fallBase = FALL_BASE_SPEED + 8 * drivers.rain;
     (this.xrManager.isPresenting ? this.world.player.head : this.world.camera).getWorldPosition(this.cameraPos);
+    // The room's own FogExp2 is what the far rain must dissolve into, so the
+    // attenuation reads as air rather than as a per-drop brightness rule.
+    const fog = this.world.scene.fog as unknown as { density?: number } | null;
+    const fogDensity = typeof fog?.density === 'number' ? fog.density : 0.006;
 
     // Seed newly-visible particles at the top (deterministic hash from the
     // cursor keeps the hot loop allocation-free and Math.random-free).
@@ -204,7 +258,7 @@ export class RainSystem extends createSystem({}) {
         this.positions[ix + 2] = min.z + ((seed * 13) % 1) * spanZ;
         this.speeds[i] = fallBase * (0.85 + 0.3 * ((seed * 29) % 1));
         this.lengths[i] = STREAK_BASE_LEN * (0.7 + 0.6 * drivers.rain + 0.2 * ((seed * 31) % 1));
-        this.alphas[i] = 0.55 + 0.35 * drivers.rain;
+        this.alphas[i] = 0.62 + 0.33 * drivers.rain;
       }
     }
     // Simulate drops: recycle each one at the first surface it crosses.
@@ -232,6 +286,21 @@ export class RainSystem extends createSystem({}) {
       );
       const crossWind = this.wind.x * Math.cos(toCamYaw) - this.wind.z * Math.sin(toCamYaw);
       const tiltZ = -Math.atan(crossWind / Math.max(1, this.speeds[i]));
+      // Physical depth cue: drop brightness falls off with camera distance
+      // through the room's own fog, so near rain is bright and far rain fades
+      // into the haze instead of reading as a flat screen overlay. Width and
+      // length need no term here — the quads have a real world size, so their
+      // apparent size already grows with proximity; the alpha is what was
+      // missing for depth to read.
+      const ddx = this.positions[ix] - this.cameraPos.x;
+      const ddy = this.positions[ix + 1] - this.cameraPos.y;
+      const ddz = this.positions[ix + 2] - this.cameraPos.z;
+      const distance = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+      const atten = Math.max(
+        0.3,
+        Math.min(1.2, (1.2 / (1 + 0.3 * distance)) * Math.exp(-fogDensity * 6 * distance)),
+      );
+      this.alphasOut[i] = this.alphas[i] * atten;
       // Cylindrical billboard toward the camera, tilted into the wind.
       this.dummy.position.set(this.positions[ix], this.positions[ix + 1], this.positions[ix + 2]);
       this.dummy.rotation.set(0, toCamYaw, tiltZ);
@@ -297,7 +366,7 @@ export class RainSystem extends createSystem({}) {
     this.splashCursor = (this.splashCursor + 1) % SPLASH_COUNT;
     const si = s * 3;
     this.splashPos[si] = x;
-    this.splashPos[si + 1] = y + 0.01;
+    this.splashPos[si + 1] = y + 0.03;
     this.splashPos[si + 2] = z;
     this.splashAge[s] = 0;
     this.splashFade[s] = 1;
@@ -307,6 +376,7 @@ export class RainSystem extends createSystem({}) {
     super.destroy();
     this.positions.fill(0);
     this.alphas.fill(0);
+    this.alphasOut.fill(0);
     this.speeds.fill(0);
     this.splashPos.fill(0);
     this.splashAge.fill(Number.POSITIVE_INFINITY);

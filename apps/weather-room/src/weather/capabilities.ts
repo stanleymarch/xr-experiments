@@ -13,6 +13,8 @@ export interface CapabilityProfile {
   meshes: boolean;
   hitTest: boolean;
   hands: boolean;
+  /** WebXR depth image granted this session (real-world occlusion possible). */
+  depth: boolean;
   particleBudget: 'full' | 'reduced';
 }
 
@@ -21,6 +23,7 @@ const FULL: CapabilityProfile = {
   meshes: true,
   hitTest: true,
   hands: true,
+  depth: true,
   particleBudget: 'full',
 };
 
@@ -36,7 +39,14 @@ export function detectCapabilities(world: World): CapabilityProfile {
   if (session == null) {
     // IWER desktop / non-immersive preview: no real surfaces, but the
     // desktop GPU preview can afford the full particle budget.
-    return { planes: false, meshes: false, hitTest: false, hands: false, particleBudget: 'full' };
+    return {
+      planes: false,
+      meshes: false,
+      hitTest: false,
+      hands: false,
+      depth: false,
+      particleBudget: 'full',
+    };
   }
   const features = session.enabledFeatures ?? [];
   const planes = features.includes('plane-detection');
@@ -48,6 +58,7 @@ export function detectCapabilities(world: World): CapabilityProfile {
     meshes,
     hitTest,
     hands,
+    depth: features.includes('depth-sensing'),
     // Reduced = typical Android WebXR (no mesh detection): halve particles,
     // disable surface-coupled splashes (floor-y fallback), keep the rest.
     particleBudget: meshes ? 'full' : 'reduced',

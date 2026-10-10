@@ -3,23 +3,19 @@
  * (0.96 m exhibition instrument, knob travel ±0.45 m) and drives it.
  * While grabbed, handle X in [-0.45, 0.45] maps to playhead hours [-24, 24].
  * Releasing within +/-0.75 h of 0 snaps back to live. On XR entry the control
- * is placed in front of the tracked viewer once (0.9 m out, 0.22 m below the
- * eyes, face tilted up) so the panel and the full rail share one forward
- * glance, then stays fixed in the room.
+ * is placed in front of the tracked viewer once (1.05 m out, 0.4 m below
+ * the eyes, face tilted up), below the panel and its separate move bar,
+ * then stays fixed in the room.
  *
  * Hover/grab feedback animates the cloned glow-ring/crown emissive and the
  * NOW→playhead light-guide fill on materials cloned once at setup — no
- * per-frame allocations, shared prototype materials untouched. Until the
- * first grab, the knob breathes and a small floating `timelineHint` tag
- * hovers beside it; the first grab retires the cue permanently.
+ * per-frame allocations, shared prototype materials untouched.
  */
 
 import {
-  BufferAttribute,
-  BufferGeometry,
+  BoxGeometry,
   createSystem,
   DistanceGrabbable,
-  DoubleSide,
   Grabbed,
   Hovered,
   Mesh,
@@ -27,7 +23,6 @@ import {
   MeshStandardMaterial,
   MovementMode,
   OneHandGrabbable,
-  PlaneGeometry,
   RayInteractable,
   Vector3,
   SphereGeometry,
@@ -42,80 +37,108 @@ import {
 } from '../../scene-assets/timeline-control.scene-asset.js';
 import { TimelineHandle, TimelineMoveGrip } from '../components/timeline-handle.js';
 import {
-  buildMoveGrip,
+  baselineAngularSize,
+  buildAffordance,
+  ContactImpulse,
+  createAngularSizeState,
   createGripDriver,
+  createSurfaceGrab,
+  createViewPullState,
+  faceViewer,
   placeControlAtViewer,
+  stepAngularSize,
+  stepViewDistance,
+  thumbstickY,
+  unlockGripAudio,
 } from '../control-placement.js';
-import type { GripDriver, MoveGrip } from '../control-placement.js';
+import type { Affordance, AngularSizeState, GripDriver, Handedness, SurfaceGrab, ViewPullState } from '../control-placement.js';
 import { PLAYHEAD_MAX_H, PLAYHEAD_MIN_H, WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
 import type { HourCrossedDetail } from '../weather-state.js';
 import { Haptics, pulseHaptics } from '../feedback.js';
-import { onLanguageChange, t } from '../i18n.js';
 
 const RAIL_HALF = TIMELINE_TRAVEL_HALF;
 const SNAP_HOURS = 0.75;
 const DEFAULT_POS = new Vector3(0, 1.2, -1.0);
 /**
- * One-glance framing: panel (1.5 m out, +0.3 m) and timeline (0.9 m out,
- * -0.22 m) sit in the same forward gaze; the rail stays well above the
- * bottom frustum edge and inside comfortable reach. Face tipped up.
+ * One-glance framing: panel (1.4 m out, +0.18 m, scale 0.18) and timeline
+ * (1.05 m out, -0.4 m) keep their controls and move bars separate.
+ * Face tipped up; the whole rail remains visible below the panel.
  */
-const PLACEMENT_DISTANCE = 0.9;
-const PLACEMENT_HEIGHT_OFFSET = -0.22;
+const PLACEMENT_DISTANCE = 1.05;
+const PLACEMENT_HEIGHT_OFFSET = -0.4;
 const FACE_TILT_X = -0.28;
-/** Floating cue tag: compact authored-geometry card, no fonts/DOM. */
-const CUE_CARD_W = 0.16;
-const CUE_CARD_H = 0.028;
-const CUE_DOT_PITCH = 0.0075;
-const CUE_DOT_R = 0.0016;
-const CUE_TAG_OFFSET = new Vector3(0.0, 0.075, 0.055);
 /**
- * Dedicated whole-rail move grip: a bar hung below the housing (clear of
- * the TimeKnob travel band and the cue tag), sized for a comfortable pinch.
+ * Dedicated whole-rail move affordance: the platform Control Bar (a pill)
+ * below the housing, clear of the TimeKnob travel band.
  */
-const MOVE_GRIP_OFFSET = new Vector3(0.0, -0.075, 0.02);
+const MOVE_GRIP_OFFSET = new Vector3(0.0, 0.0, 0.02);
 const MOVE_GRIP_SIZE: readonly [number, number, number] = [0.22, 0.03, 0.03];
+/** Housing half-height (asset envelope y = 0 here), so the Control Bar sits
+ *  just below the housing's bottom edge instead of below an arbitrary box. */
+const MOVE_AFFORDANCE_HOUSING_H = 0.074;
+/**
+ * Pinch-scrub strip: one invisible grab shell spanning the whole scale
+ * (±0.45 m travel) at knob grip height. A pinch anywhere along the rail
+ * grabs it and drives the playhead through the same TimelineHandle mapping
+ * (±0.45 m ⇔ ±24 h). Cross-section per spec: 0.90 × 0.02 × 0.02 m.
+ */
+const SCRUB_STRIP_W_M = 0.9;
+const SCRUB_STRIP_T_M = 0.02;
+/** Detent impulse color: rail cyan accent. */
+const DETENT_IMPULSE_COLOR = 0x79d7f2;
+
 
 export class TimelineSystem extends createSystem({
   hovered: { required: [TimelineHandle, Hovered] },
   grabbed: { required: [TimelineHandle, Grabbed] },
   handles: { required: [TimelineHandle] },
-  moveHovered: { required: [TimelineMoveGrip, Hovered] },
-  moveGrabbed: { required: [TimelineMoveGrip, Grabbed] },
 }) {
   private railEntity: Entity | null = null;
   private handleEntity: Entity | null = null;
   private grabbedHandle: Entity | null = null;
   /** Separate invisible ray target; never shares Object3D ownership. */
   private scrubProxyEntity: Entity | null = null;
-  /** Dedicated whole-rail move grip (near + distance entities + driver). */
-  private moveGrip: MoveGrip | null = null;
+  /** Wide invisible pinch-scrub shell across the whole scale. */
+  private scrubStripEntity: Entity | null = null;
+  /** Paired visual for the hourly detent tick while pinch-scrubbing. */
+  private detentImpulse: ContactImpulse | null = null;
+  /** Whole-rail move affordance: Control Bar pill below the housing. */
+  private moveAffordance: Affordance | null = null;
   private moveGripEntity: Entity | null = null;
   private moveNearEntity: Entity | null = null;
   private moveFarEntity: Entity | null = null;
   private moveDriver: GripDriver | null = null;
+  private surfaceGrab: SurfaceGrab | null = null;
+  /** Aiming anywhere on the rail counts as aiming at the window. */
+  private readonly carrySurface: Object3D[] = [];
+  private wasCarried = false;
+  private readonly angularSize: AngularSizeState = createAngularSizeState();
+  private readonly viewPull: ViewPullState = createViewPullState();
   private needsPlacement = false;
   private placedInSession = false;
   private readonly handleWorld = new Vector3();
-  private readonly cueLocal = new Vector3();
   private glowMaterial: MeshStandardMaterial | null = null;
   private crownMaterial: MeshStandardMaterial | null = null;
   private fillMaterial: MeshBasicMaterial | null = null;
   private fillMesh: Object3D | null = null;
-  private cueTag: Object3D | null = null;
-  private cueDots: MeshBasicMaterial | null = null;
-  /** First successful grab retires the cue for the whole page lifetime. */
-  private cueRetired = false;
   /** NOW-pill snap flash: 0 = idle, otherwise seconds since the flash start. */
   private snapFlashT = -1;
   /** Hour-crossing detent flash on the guide fill: 0..1 decay, no allocation. */
   private hourPing = 0;
 
   init(): void {
+    this.detentImpulse = new ContactImpulse(this.world, DETENT_IMPULSE_COLOR, 'Timeline Detent Impulse');
     this.cleanupFuncs.push(
       this.world.visibilityState.subscribe((state) => {
         if (state === VisibilityState.NonImmersive) this.placedInSession = false;
+        if (state === VisibilityState.Visible) unlockGripAudio();
         this.needsPlacement = state === VisibilityState.Visible && !this.placedInSession;
+        // The flat page shows the DOM panel only: the whole rail rig —
+        // housing, knob, scrub proxies, move affordance — hangs off
+        // the rail entity, so hiding its root hides all of it, mirroring the
+        // panel's own NonImmersive behaviour.
+        const railObject = this.railEntity?.object3D;
+        if (railObject != null) railObject.visible = state !== VisibilityState.NonImmersive;
       }),
       this.queries.grabbed.subscribe('qualify', (entity) => {
         // The shared `grabbed` query also matches the rail move-grip
@@ -124,16 +147,23 @@ export class TimelineSystem extends createSystem({
         // driver, so ignoring it here changes no bus behavior.
         if (!entity.hasComponent(TimelineHandle)) return;
         this.grabbedHandle = entity;
-        if (!this.cueRetired) {
-          this.cueRetired = true;
-          this.hideCueTag();
-        }
         weatherEvents.emit(WeatherEvent.TimelineGrab);
         pulseHaptics(this.world, Haptics.grab.intensity, Haptics.grab.durationMs);
       }),
-      this.queries.grabbed.subscribe('disqualify', () => {
+      this.queries.grabbed.subscribe('disqualify', (entity) => {
         const wasLive = weatherStore.state.peek().isLive;
-        this.grabbedHandle = null;
+        // Two TimelineHandle grabs can overlap — a hand pinching the scrub
+        // strip while a ray holds the ray proxy — and releasing either one
+        // fires this handler. Re-elect the survivor instead of killing
+        // scrubbing for both; a released non-holder (the move grip) must not
+        // disturb the live grab at all.
+        if (this.grabbedHandle != null && this.grabbedHandle !== entity) return;
+        const next =
+          [...this.queries.grabbed.entities].find(
+            (candidate) => candidate !== entity && candidate.hasComponent(TimelineHandle),
+          ) ?? null;
+        this.grabbedHandle = next;
+        if (next != null) return;
         weatherEvents.emit(WeatherEvent.TimelineRelease);
         // Release outside the snap zone gets a subtle single settle tap so
         // it still acknowledges; snap-to-live arrivals already got the
@@ -154,6 +184,14 @@ export class TimelineSystem extends createSystem({
         else {
           this.hourPing = 1;
           pulseHaptics(this.world, Haptics.hourTick.intensity, Haptics.hourTick.durationMs);
+          // Paired visual for the detent tick (hands have no haptics): a
+          // flash at the held handle — knob, ray proxy, or pinch strip —
+          // while a scrub is actually in progress.
+          const held = this.grabbedHandle;
+          if (held != null && this.detentImpulse != null) {
+            held.object3D?.getWorldPosition(this.handleWorld);
+            this.detentImpulse.trigger(this.handleWorld);
+          }
         }
       }),
       weatherEvents.on(WeatherEvent.TimelineSnap, () => {
@@ -164,6 +202,10 @@ export class TimelineSystem extends createSystem({
           70,
         );
       }),
+      () => {
+        this.detentImpulse?.dispose();
+        this.detentImpulse = null;
+      },
     );
     // elics `System.init()` is synchronous and never awaited (no official
     // async-init API), so report clone/registration failures loudly instead
@@ -198,6 +240,20 @@ export class TimelineSystem extends createSystem({
         child.material = cloned;
         this.fillMaterial = cloned;
         this.fillMesh = child;
+      } else if (child.name === 'TickMarks' || child.name.startsWith('Signpost')) {
+        // 95%-opaque hairlines and signposts: keep them opaque with depth writes
+        // so they occlude by distance like the housing instead of riding the
+        // transparent sort against the panel UI. The additive light guide, the
+        // endpoint glows and the knob glow ring stay transparent.
+        const sources = Array.isArray(child.material) ? child.material : [child.material];
+        const clones = sources.map((entry) => {
+          const clone = entry.clone();
+          clone.transparent = false;
+          clone.opacity = 1;
+          clone.depthWrite = true;
+          return clone;
+        });
+        child.material = Array.isArray(child.material) ? clones : clones[0];
       }
     });
 
@@ -227,18 +283,39 @@ export class TimelineSystem extends createSystem({
       movementMode: MovementMode.MoveAtSource,
       returnToOrigin: false,
     });
-    // Dedicated whole-rail move grip: hangs below the housing, clear of the
-    // knob travel band (|x| <= 0.45) and the cue tag above. Two coincident
-    // meshes because OneHandGrabbable (near: squeeze/pinch) and
-    // DistanceGrabbable (ray trigger) are mutually exclusive per entity.
-    const moveGrip = buildMoveGrip('Weather Timeline Move Grip', MOVE_GRIP_SIZE[0], MOVE_GRIP_SIZE[1], MOVE_GRIP_SIZE[2]);
-    moveGrip.group.position.copy(MOVE_GRIP_OFFSET);
-    moveGrip.near.name = 'Weather Timeline Move Grip Near';
-    moveGrip.far.name = 'Weather Timeline Move Grip Far';
-    this.moveGrip = moveGrip;
-    this.moveGripEntity = this.world.createTransformEntity(moveGrip.group, { parent: this.railEntity });
-    this.moveNearEntity = this.world.createTransformEntity(moveGrip.near, { parent: this.moveGripEntity });
-    this.moveFarEntity = this.world.createTransformEntity(moveGrip.far, { parent: this.moveGripEntity });
+    // Pinch-scrub strip: the wide invisible grab shell across the whole
+    // scale. OneHandGrabbable only (the ray already owns the knob proxy
+    // above), so pointing behavior is unchanged; a pinch anywhere along
+    // the rail grabs the strip and the TimelineHandle mapping below writes
+    // the playhead from its world X (same ±0.45 m ⇔ ±24 h route as the
+    // knob). The strip is pinned back to rest every held frame, so grabs
+    // never drift it along the rail.
+    const scrubStrip = new Mesh(
+      new BoxGeometry(SCRUB_STRIP_W_M, SCRUB_STRIP_T_M, SCRUB_STRIP_T_M),
+      new MeshBasicMaterial({ colorWrite: false, depthWrite: false }),
+    );
+    scrubStrip.name = 'Weather Timeline Pinch Scrub';
+    scrubStrip.position.set(0, 0, TIMELINE_KNOB_REST_Z);
+    this.scrubStripEntity = this.world.createTransformEntity(scrubStrip, { parent: this.railEntity });
+    this.scrubStripEntity.addComponent(TimelineHandle, {});
+    this.scrubStripEntity.addComponent(OneHandGrabbable, { rotate: false });
+    // Whole-rail move affordance: a Control Bar pill below the housing, clear
+    // of the knob travel band (|x| <= 0.45) and the cue tag above. The rail is
+    // a bar instrument, not a window, so it gets the platform Control Bar only
+    // (no edge frame): its own bezel is the edge, and the pill is the handle.
+    // Two coincident collision shells because OneHandGrabbable (near:
+    // squeeze/pinch) and DistanceGrabbable (ray trigger) are mutually
+    // exclusive per entity.
+    const moveAffordance = buildAffordance({
+      name: 'Weather Timeline Move Affordance',
+      heightM: MOVE_AFFORDANCE_HOUSING_H,
+      pillWidthM: MOVE_GRIP_SIZE[0],
+    });
+    moveAffordance.group.position.copy(MOVE_GRIP_OFFSET);
+    this.moveAffordance = moveAffordance;
+    this.moveGripEntity = this.world.createTransformEntity(moveAffordance.group, { parent: this.railEntity });
+    this.moveNearEntity = this.world.createTransformEntity(moveAffordance.near, { parent: this.moveGripEntity });
+    this.moveFarEntity = this.world.createTransformEntity(moveAffordance.far, { parent: this.moveGripEntity });
     this.moveNearEntity.addComponent(TimelineMoveGrip, {});
     this.moveFarEntity.addComponent(TimelineMoveGrip, {});
     this.moveNearEntity.addComponent(RayInteractable, {});
@@ -250,98 +327,56 @@ export class TimelineSystem extends createSystem({
       movementMode: MovementMode.MoveAtSource,
       returnToOrigin: false,
     });
-    this.moveDriver = createGripDriver(this.world, this.moveNearEntity, this.moveFarEntity, moveGrip);
+    this.moveDriver = createGripDriver(this.world, this.moveNearEntity, this.moveFarEntity, moveAffordance, {
+      // Carry turns the rail about Y only: its authored 16 deg up-tilt stays,
+      // roll stays 0, angular size is kept across depth translation, and the
+      // thumbstick pushes/pulls it along the view ray.
+      onHeld: (root, dt, hand) => {
+        const head = this.world.player.head;
+        faceViewer(root, head, FACE_TILT_X);
+        stepViewDistance(root, head, thumbstickY(this.world, hand), this.viewPull, dt);
+        stepAngularSize(root, head, this.angularSize, dt);
+      },
+    });
+    // Native window grab: pointing anywhere at the rail and squeezing moves it.
+    this.carrySurface.push(model);
+    this.surfaceGrab = createSurfaceGrab(this.world, this.carrySurface, moveAffordance.far, this.moveNearEntity);
 
     this.cleanupFuncs.push(() => {
       this.moveNearEntity?.dispose();
       this.moveFarEntity?.dispose();
       this.scrubProxyEntity?.dispose();
+      this.scrubStripEntity?.dispose();
+      scrubStrip.geometry.dispose();
+      scrubStrip.material.dispose();
       rayTarget.geometry.dispose();
       rayTarget.material.dispose();
       this.moveGripEntity?.dispose();
-      moveGrip.near.geometry.dispose();
-      moveGrip.material.dispose();
+      this.moveAffordance?.dispose();
+      this.moveAffordance = null;
+      this.surfaceGrab = null;
       this.handleEntity?.dispose();
       this.railEntity?.dispose();
     });
   }
 
-  /**
-   * Floating first-use tag: a small cyan card + a `timelineHint`-length row of
-   * authored dots (pure geometry, no fonts/DOM), parented to the rail above
-   * the knob so it never covers the weather panel. The dot count tracks the
-   * hint length, so EN/RU both shape the tag without new dictionary keys.
-   */
-  private buildCueTag(): void {
-    const rail = this.railEntity?.object3D;
-    if (rail == null || this.cueTag != null) return;
-    const card = new Mesh(
-      new PlaneGeometry(CUE_CARD_W, CUE_CARD_H),
-      new MeshBasicMaterial({ color: 0x060b18, transparent: true, opacity: 0.82, side: DoubleSide }),
-    );
-    card.name = 'TimelineCueCard';
-    card.position.copy(CUE_TAG_OFFSET);
-    rail.add(card);
-    this.cueTag = card;
-    this.refreshCueDots();
-    const refresh = (): void => {
-      if (!this.cueRetired && this.cueTag != null) this.refreshCueDots();
-    };
-    this.cleanupFuncs.push(onLanguageChange(refresh));
-  }
-
-  /** Dot row length follows the active `timelineHint` string, wrapped in two rows. */
-  private refreshCueDots(): void {
-    const tag = this.cueTag;
-    if (tag == null) return;
-    const previous = tag.getObjectByName('TimelineCueDots');
-    if (previous != null) tag.remove(previous);
-    const hint = t('timelineHint');
-    const slots = Math.max(8, Math.min(28, hint.length));
-    const cols = Math.min(slots, 14);
-    const rows = Math.ceil(slots / cols);
-    const positions: number[] = [];
-    for (let i = 0; i < slots; i += 1) {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const cx = (col - (cols - 1) / 2) * CUE_DOT_PITCH;
-      const cy = rows === 1 ? 0 : ((rows - 1) / 2 - row) * CUE_DOT_PITCH * 1.6;
-      const segments = 8;
-      for (let s = 0; s < segments; s += 1) {
-        const a0 = (s / segments) * Math.PI * 2;
-        const a1 = ((s + 1) / segments) * Math.PI * 2;
-        positions.push(
-          cx, cy, 0.0008,
-          cx + Math.cos(a0) * CUE_DOT_R, cy + Math.sin(a0) * CUE_DOT_R, 0.0008,
-          cx + Math.cos(a1) * CUE_DOT_R, cy + Math.sin(a1) * CUE_DOT_R, 0.0008,
-        );
-      }
-    }
-    const dotsGeometry = new BufferGeometry();
-    dotsGeometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
-    dotsGeometry.computeVertexNormals();
-    if (this.cueDots == null) {
-      this.cueDots = new MeshBasicMaterial({ color: 0x79d7f2, side: DoubleSide });
-    }
-    const dots = new Mesh(dotsGeometry, this.cueDots);
-    dots.name = 'TimelineCueDots';
-    tag.add(dots);
-  }
-
-  private hideCueTag(): void {
-    const tag = this.cueTag;
-    if (tag != null && tag.parent != null) tag.parent.remove(tag);
-    this.cueTag = null;
-  }
-
   update(delta: number): void {
     if (this.railEntity == null || this.handleEntity == null) return;
-    // Dedicated whole-rail move grip runs before knob math: the rail (and
+    // Whole-rail move affordance runs before knob math: the rail (and
     // therefore the knob constraint frame) may move under the hand. Moving
     // the rail never writes the playhead; the knob pass below still maps the
     // handle inside the moved frame.
-    if (this.moveDriver != null && this.railEntity.object3D != null) {
-      this.moveDriver.update(this.railEntity.object3D);
+    const rail = this.railEntity.object3D;
+    if (this.moveDriver != null && rail != null) {
+      const carried = this.moveNearEntity?.hasComponent(Grabbed) === true
+        || this.moveFarEntity?.hasComponent(Grabbed) === true;
+      if (carried && !this.wasCarried) {
+        baselineAngularSize(rail, this.world.player.head, this.angularSize);
+        this.viewPull.velocity = 0;
+      }
+      this.wasCarried = carried;
+      this.surfaceGrab?.update();
+      this.moveDriver.update(rail, delta);
     }
 
     if (this.needsPlacement && this.railEntity.object3D != null) {
@@ -350,14 +385,12 @@ export class TimelineSystem extends createSystem({
       this.railEntity.object3D.updateMatrixWorld(true);
       this.needsPlacement = false;
       this.placedInSession = true;
-      if (!this.cueRetired && this.cueTag == null) this.buildCueTag();
     }
 
     const state = weatherStore.state.peek();
     const handle = this.grabbedHandle;
     const grabbed = handle != null;
     const hovered = this.queries.hovered.entities.size > 0 || grabbed;
-    const cueActive = !this.cueRetired && this.cueTag != null;
 
     // NOW-snap flash: the store announces every live arrival on the shared
     // hour bus (knob drag, step buttons, DOM scrub alike); the ring flashes
@@ -373,15 +406,13 @@ export class TimelineSystem extends createSystem({
     // State feedback on the pre-cloned materials only.
     const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.008);
     if (this.glowMaterial != null) {
-      this.glowMaterial.emissiveIntensity = grabbed
-        ? 3.2 + pulse * 0.8
-        : hovered ? 2.4 : cueActive ? 1.6 + pulse * 1.2 : 1.6;
+      this.glowMaterial.emissiveIntensity = grabbed ? 3.2 + pulse * 0.8 : hovered ? 2.4 : 1.6;
       // Unmistakable NOW snap: the glow ring carries the snap flash on top
       // of hover/grab feedback for one shared moment.
       this.glowMaterial.emissiveIntensity += snapFlash * 3.0;
     }
     if (this.crownMaterial != null) {
-      this.crownMaterial.emissiveIntensity = grabbed ? 0.6 : hovered ? 0.35 : cueActive ? 0.15 + pulse * 0.35 : 0.15;
+      this.crownMaterial.emissiveIntensity = grabbed ? 0.6 : hovered ? 0.35 : 0.15;
     }
     if (this.fillMaterial != null) {
       this.fillMaterial.opacity = grabbed ? 1.0 : hovered ? 0.9 : 0.75;
@@ -407,6 +438,12 @@ export class TimelineSystem extends createSystem({
       if (Math.abs(hours) <= SNAP_HOURS && this.fillMaterial != null) {
         this.fillMaterial.opacity = 1;
       }
+      // The pinch strip is a fixed shell: after its world X has been read
+      // into the mapping above, pin it back to rest so the grab drag never
+      // drifts it along the rail.
+      if (this.scrubStripEntity?.hasComponent(Grabbed) === true) {
+        this.scrubStripEntity.object3D?.position.set(0, 0, TIMELINE_KNOB_REST_Z);
+      }
     } else {
       // Released: keep the knob where the playhead says it is. The knob is
       // authored to travel local X, so it inherently retains its X
@@ -427,11 +464,7 @@ export class TimelineSystem extends createSystem({
       const snapped = Math.abs(clamped) < 0.05 && state.isLive;
       this.fillMesh.scale.x = snapped ? 0.0001 : (Math.abs(clamped) < 0.0001 ? 0.0001 : clamped);
     }
-    // The cue tag rides above the knob and breathes with it — no allocation.
-    if (this.cueTag != null) {
-      this.cueLocal.set(knobX * 0.35, CUE_TAG_OFFSET.y + Math.sin(performance.now() * 0.0032) * 0.004, CUE_TAG_OFFSET.z);
-      this.cueTag.position.copy(this.cueLocal);
-    }
+    this.detentImpulse?.update(dt);
   }
 
 }

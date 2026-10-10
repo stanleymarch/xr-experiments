@@ -64,54 +64,169 @@ try {
   timelineSystem.update();
   if (Math.abs(knob.position.x - 0.3) > 0.0001 || Math.abs(knob.position.y) > 0.0001) throw new Error('Released knob did not re-seat on the rail at the scrubbed hour');
   {
-    // Whole-control move grip: translation plus yaw-only rotation through
-    // the real createGripDriver. Yaw must accumulate hand deltas exactly
-    // once (a held-steady rotation must not spin the root), pitch/roll
-    // must stay untouched, and release must surface once.
-    const { buildMoveGrip, createGripDriver } = await import('./src/weather/control-placement.ts');
-    const { Grabbed: G2, Group, Quaternion: Qt, Vector3: V3 } = await import('@iwsdk/core');
-    const grip = buildMoveGrip('Smoke Move Grip', 0.2, 0.03, 0.03);
+    // Whole-control move affordance: kinematic 1:1 translation, the platform
+    // hover/select colors with enter/exit hysteresis, release-once, and the
+    // carry hooks (viewer facing + angular size). Carrying no longer couples
+    // wrist yaw through the grip mesh: the control turns itself toward the
+    // viewer while held, and a steady hand contributes nothing.
+    const {
+      buildAffordance,
+      createGripDriver,
+      createAngularSizeState,
+      createViewPullState,
+      baselineAngularSize,
+      stepAngularSize,
+      stepViewDistance,
+      faceViewer,
+    } = await import('./src/weather/control-placement.ts');
+    const { Grabbed: G2, Group } = await import('@iwsdk/core');
+    const DEG = Math.PI / 180;
+    const yawOf = (q) => Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.x * q.x));
+
+    // Viewer facing: yaw + pitch track the head, roll stays 0, and an authored
+    // tilt (the timeline rail's 16 deg) survives the yaw pass.
+    const head = new Group();
+    const target = new Group();
+    target.position.set(0, 0, -1);
+    world.createTransformEntity(head);
+    world.createTransformEntity(target);
+    head.updateMatrixWorld(true);
+    faceViewer(target, head, 'auto');
+    if (Math.abs(yawOf(target.quaternion)) > 0.001 || Math.abs(target.rotation.z) > 0.001) {
+      throw new Error('Face-on viewer must leave the surface unrotated with roll 0');
+    }
+    head.position.set(0.5, 0, -1);
+    head.updateMatrixWorld(true);
+    faceViewer(target, head, 'auto');
+    if (Math.abs(yawOf(target.quaternion) - 90 * DEG) > 0.01 || Math.abs(target.rotation.z) > 0.001) {
+      throw new Error(`Facing yaw wrong (${(yawOf(target.quaternion) / DEG).toFixed(1)} deg)`);
+    }
+    // Head 0.3 m above and 1 m in front: yaw stays 0 and the surface pitches up
+    // to keep facing the viewer (pitch = -asin(0.3 / 1.044) = -0.291 rad).
+    head.position.set(0, 0.3, 0);
+    head.updateMatrixWorld(true);
+    faceViewer(target, head, 'auto');
+    if (Math.abs(yawOf(target.quaternion)) > 0.01 || Math.abs(target.rotation.x + 0.291) > 0.02) {
+      throw new Error(`Facing pitch wrong (x ${target.rotation.x.toFixed(3)} rad)`);
+    }
+    // Straight above the surface is the degenerate pitch case: the surface
+    // lies flat facing up (-90 deg) with roll still 0.
+    head.position.set(0, 0.5, -1);
+    head.updateMatrixWorld(true);
+    faceViewer(target, head, 'auto');
+    if (Math.abs(target.rotation.x + Math.PI / 2) > 0.01 || Math.abs(target.rotation.z) > 0.001) {
+      throw new Error(`Straight-above pitch wrong (x ${target.rotation.x.toFixed(3)} rad)`);
+    }
+    head.position.set(0, 0.3, 0);
+    head.updateMatrixWorld(true);
+    faceViewer(target, head, -0.28);
+    if (Math.abs(target.rotation.x + 0.28) > 0.001) throw new Error('Authored tilt must survive the facing pass');
+
+    // Angular size: preserved relative to the grab pose, clamped 0.6x..2x.
+    head.position.set(0, 0, 0);
+    target.position.set(0, 0, -1);
+    target.scale.setScalar(0.18);
+    head.updateMatrixWorld(true);
+    target.updateMatrixWorld(true);
+    const angular = createAngularSizeState();
+    baselineAngularSize(target, head, angular);
+    if (Math.abs(angular.baseDistance - 1) > 0.001 || Math.abs(angular.baseScale - 0.18) > 0.001) {
+      throw new Error('Angular baseline must capture the grab-pose distance and scale');
+    }
+    for (let i = 0; i < 200; i += 1) stepAngularSize(target, head, angular, 0.016);
+    if (Math.abs(angular.current - 1) > 0.001) throw new Error('A steady distance must not resize the control');
+    target.position.set(0, 0, -2);
+    target.updateMatrixWorld(true);
+    for (let i = 0; i < 200; i += 1) stepAngularSize(target, head, angular, 0.016);
+    if (Math.abs(target.scale.x - 0.18 * 0.6) > 0.002) throw new Error(`Carrying away must hit the 0.6x floor (${target.scale.x.toFixed(3)})`);
+    target.position.set(0, 0, -0.5);
+    target.updateMatrixWorld(true);
+    for (let i = 0; i < 200; i += 1) stepAngularSize(target, head, angular, 0.016);
+    if (Math.abs(target.scale.x - 0.18 * 2) > 0.002) throw new Error(`Carrying closer must hit the 2x ceiling (${target.scale.x.toFixed(3)})`);
+
+    // Push / pull along the view ray: a small deflection only nudges, full
+    // deflection eases up and stops dead at the platform distance limits.
+    const pull = createViewPullState();
+    head.position.set(0, 0, 0);
+    target.position.set(0, 0, -1.4);
+    target.scale.setScalar(0.18);
+    head.updateMatrixWorld(true);
+    target.updateMatrixWorld(true);
+    const distanceOf = () => target.getWorldPosition(new Vector3()).length();
+    stepViewDistance(target, head, 0.25, pull, 0.016);
+    if (!(distanceOf() < 1.4 && distanceOf() > 1.395)) {
+      throw new Error(`A small deflection must nudge, not jump (${distanceOf().toFixed(4)} m)`);
+    }
+    for (let i = 0; i < 400; i += 1) stepViewDistance(target, head, 1, pull, 0.016);
+    if (Math.abs(distanceOf() - 0.4) > 0.002) throw new Error(`Pull must stop at the 0.4 m limit (${distanceOf().toFixed(3)} m)`);
+    for (let i = 0; i < 600; i += 1) stepViewDistance(target, head, -1, pull, 0.016);
+    if (Math.abs(distanceOf() - 3) > 0.002) throw new Error(`Push must stop at the 3 m limit (${distanceOf().toFixed(3)} m)`);
+    const parkedDistance = distanceOf();
+    for (let i = 0; i < 60; i += 1) stepViewDistance(target, head, 0, pull, 0.016);
+    if (Math.abs(distanceOf() - parkedDistance) > 0.0001) throw new Error('A centered stick must not move the control');
+
+    // Move affordance: invisible at rest, platform colors on hover/select.
+    const affordance = buildAffordance({ name: 'Smoke Move Affordance', heightM: 0.3, pillWidthM: 0.2 });
     const root = new Group();
     world.createTransformEntity(root);
-    const gripEntity = world.createTransformEntity(grip.group);
-    const nearEntity = world.createTransformEntity(grip.near, { parent: gripEntity });
-    const farEntity = world.createTransformEntity(grip.far, { parent: gripEntity });
-    const driver = createGripDriver(world, nearEntity, farEntity, grip, { yaw: true });
-    const yawOf = (q) => Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.x * q.x));
-    const axisY = new V3(0, 1, 0);
-    // Model the grab system: each frame it applies that frame's pose delta
-    // on top of the grip's pinned rest transform.
-    const handYaw = (deg) => {
-      grip.near.quaternion.copy(new Qt().setFromAxisAngle(axisY, (deg * Math.PI) / 180));
-      grip.near.updateWorldMatrix(true, false);
-    };
+    const gripEntity = world.createTransformEntity(affordance.group);
+    const nearEntity = world.createTransformEntity(affordance.near, { parent: gripEntity });
+    const farEntity = world.createTransformEntity(affordance.far, { parent: gripEntity });
+    let hovering = false;
+    let carriedFrames = 0;
+    const driver = createGripDriver(world, nearEntity, farEntity, affordance, {
+      onHeld: () => { carriedFrames += 1; },
+      probeHoverHands: (out) => { if (hovering) out.push('right'); },
+    });
     root.updateMatrixWorld(true);
+    driver.update(root, 0.016);
+    if (affordance.visual.visible || affordance.material.opacity > 0.01) {
+      throw new Error('Affordance must not be drawn at rest');
+    }
+    hovering = true;
+    driver.update(root, 0.016);
+    if (affordance.material.opacity > 0.01) throw new Error('Hover must not flash inside the enter dwell');
+    for (let i = 0; i < 10; i += 1) driver.update(root, 0.016);
+    if (!affordance.visual.visible || affordance.material.color.getHex() !== 0xffffff) {
+      throw new Error(`Hover must draw the 0xffffff platform color (got ${affordance.material.color.getHex().toString(16)})`);
+    }
+    for (let i = 0; i < 30; i += 1) driver.update(root, 0.016);
+    if (Math.abs(affordance.material.opacity - 1) > 0.01) throw new Error('Full hover must be fully drawn');
+    hovering = false;
+    for (let i = 0; i < 5; i += 1) driver.update(root, 0.016);
+    if (affordance.material.opacity < 0.9) throw new Error('Hover must survive a dropout shorter than the exit dwell');
+    for (let i = 0; i < 40; i += 1) driver.update(root, 0.016);
+    if (affordance.material.opacity > 0.02 || affordance.visual.visible) {
+      throw new Error('Hover end must return the affordance to rest');
+    }
+
+    // Grab: no jump at the grab pose, select color, then 1:1 translation.
     nearEntity.addComponent(G2, {});
-    driver.update(root);
-    handYaw(35);
-    driver.update(root);
-    if (Math.abs(yawOf(root.quaternion) - (35 * Math.PI) / 180) > 0.02) throw new Error(`Grip yaw did not rotate the root (got ${((yawOf(root.quaternion) * 180) / Math.PI).toFixed(1)} deg)`);
-    handYaw(0);
-    driver.update(root);
-    driver.update(root);
-    if (Math.abs(yawOf(root.quaternion) - (35 * Math.PI) / 180) > 0.02) throw new Error('Held-steady rotation spun the root (yaw must apply once per hand delta)');
-    if (Math.abs(root.rotation.x) > 0.001 || Math.abs(root.rotation.z) > 0.001) throw new Error('Yaw move must not pitch or roll the root');
-    handYaw(55);
-    driver.update(root);
-    if (Math.abs(yawOf(root.quaternion) - (90 * Math.PI) / 180) > 0.02) throw new Error(`Cumulative yaw wrong (got ${((yawOf(root.quaternion) * 180) / Math.PI).toFixed(1)} deg)`);
-    grip.near.position.x += 0.15;
-    grip.near.updateWorldMatrix(true, false);
-    driver.update(root);
+    driver.update(root, 0.016);
+    if (root.position.lengthSq() > 0.000001) throw new Error(`Grab start must not jump (${root.position.length().toFixed(4)} m)`);
+    if (carriedFrames !== 1) throw new Error('Carry hook must run on every held frame');
+    for (let i = 0; i < 30; i += 1) driver.update(root, 0.016);
+    if (affordance.material.color.getHex() !== 0x001e78) {
+      throw new Error(`Select must use the 0x001e78 platform color (got ${affordance.material.color.getHex().toString(16)})`);
+    }
+    affordance.near.position.x += 0.15;
+    affordance.near.updateWorldMatrix(true, false);
+    driver.update(root, 0.016);
     if (Math.abs(root.position.x - 0.15) > 0.02) throw new Error(`Translation regressed (root x ${root.position.x.toFixed(3)})`);
     nearEntity.removeComponent(G2, {});
-    driver.update(root);
+    driver.update(root, 0.016);
     if (!driver.consumeReleased()) throw new Error('Release must surface exactly once');
     if (driver.consumeReleased()) throw new Error('Release flag must clear after reading');
+    nearEntity.addComponent(G2, {});
+    driver.update(root, 0.016);
+    if (Math.abs(root.position.x - 0.15) > 0.02) throw new Error('Regrab must not jump the control');
+    nearEntity.removeComponent(G2, {});
+    driver.update(root, 0.016);
+    if (!driver.consumeReleased()) throw new Error('Second release must surface exactly once');
     nearEntity.dispose();
     farEntity.dispose();
     gripEntity.dispose();
-    grip.near.geometry.dispose();
-    grip.material.dispose();
+    affordance.dispose();
   }
   {
     const { roomModel } = await import('./src/weather/room.ts');

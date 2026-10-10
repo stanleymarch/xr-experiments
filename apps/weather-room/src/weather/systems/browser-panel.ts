@@ -1,17 +1,17 @@
 /** Native HTML controls for desktop/phone browsers; XR uses the spatial panel. */
 
 import { createSystem } from '@iwsdk/core';
-import { PLAYHEAD_MAX_H, PLAYHEAD_MIN_H, WeatherEvent, playheadTime, weatherEvents, weatherStore } from '../weather-state.js';
+import { WeatherEvent, playheadTime, weatherEvents, weatherStore } from '../weather-state.js';
 import type { HourCrossedDetail } from '../weather-state.js';
 import { Haptics, pulseHaptics } from '../feedback.js';
 import {
-  formatHoursFromNow,
   formatMissing,
   getLanguage,
   localizeDataPhrase,
   localizeLoadingLabel,
   localizePlaceLabel,
   localizePresetLabel,
+  locationOriginLabel,
   onLanguageChange,
   providerOf,
   sourceStatus,
@@ -23,9 +23,16 @@ import {
 import { PROVIDER_DISPLAY } from '../providers.js';
 import {
   LOCATION_PRESETS,
+  forgetDeviceLocation,
+  geolocationPermissionState,
   getManualLocation,
+  loadWeather,
   parseLatLon,
+  requestDeviceLocation,
   setManualLocation,
+  watchGeolocationPermission,
+  type GeolocationPermission,
+  type LocationOrigin,
 } from '../weather-data.js';
 import { reloadWeather } from './weather-loader.js';
 
@@ -35,6 +42,18 @@ export const BROWSER_PANEL_ROOT_ID = 'weather-browser-panel';
 const STYLE_ID = `${BROWSER_PANEL_ROOT_ID}-style`;
 
 const FONT_BASE = `${import.meta.env.BASE_URL}fonts/`;
+
+/**
+ * 2D orbit framing: pivot on the room centre (the authored hero view target),
+ * stay above the floor, and keep the panel's front face on screen so an orbit
+ * can never turn the room into an invisible back side.
+ */
+const ORBIT_TARGET = { x: 0, y: 1.2, z: -0.3 } as const;
+const ORBIT_MIN_RADIUS = 1.6;
+const ORBIT_MAX_RADIUS = 9;
+const ORBIT_MIN_PITCH = 0.12;
+const ORBIT_MAX_PITCH = 1.05;
+const ORBIT_YAW_LIMIT = 1.15;
 
 const CSS = `
 @font-face {
@@ -96,8 +115,9 @@ const CSS = `
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   width: min(400px, calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
   max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   z-index: 20;
   box-sizing: border-box;
   background: rgba(13, 25, 48, 0.88);
@@ -135,6 +155,9 @@ const CSS = `
   font-size: 12px;
   color: #94aac8;
 }
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-meta button {
+  margin-left: auto;
+}
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-badge {
   display: inline-block;
   padding: 2px 10px;
@@ -152,7 +175,6 @@ const CSS = `
   margin: 2px 0;
 }
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="time-line"],
-#${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="playhead-value"],
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="weather-hero"],
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="weather-line"] {
   font-variant-numeric: tabular-nums;
@@ -176,15 +198,39 @@ const CSS = `
   line-height: 1.55;
 }
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="status-line"] {
-  font-size: 11px;
-  color: #5f7896;
+  font-size: 12px;
+  color: #7e99bd;
   line-height: 1.4;
 }
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 16px;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-timeline {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+#${BROWSER_PANEL_ROOT_ID} [data-testid="location-row"] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+#${BROWSER_PANEL_ROOT_ID} [data-testid="location-row"] select,
+#${BROWSER_PANEL_ROOT_ID} [data-testid="location-row"] input {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-timeline button,
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-utility button {
+  padding-left: 8px;
+  padding-right: 8px;
+  /* The loading label swap must never shift or spill out of the button. */
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 #${BROWSER_PANEL_ROOT_ID} button {
   min-height: 44px;
@@ -216,7 +262,7 @@ const CSS = `
 }
 #${BROWSER_PANEL_ROOT_ID} label.browser-panel-scrub {
   display: block;
-  margin-top: 12px;
+  margin-top: 24px;
   font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.08em;
@@ -241,31 +287,56 @@ const CSS = `
   color: #060b18;
   background: #eef5ff;
 }
-#${BROWSER_PANEL_ROOT_ID} input[type="range"] {
-  width: 100%;
-  min-height: 44px;
-  margin: 0;
-  touch-action: none;
-  accent-color: #79d7f2;
-}
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-note {
   margin: 8px 0 0;
   font-size: 12px;
   color: #94aac8;
   font-variant-numeric: tabular-nums;
 }
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-note[data-state="info"] {
+  color: #79d7f2;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-note[data-state="warn"] {
+  color: #f2b63d;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-note[data-state="error"] {
+  color: #ff9d9d;
+}
+/* Fixed footer outside the scroll area: it can never sit over the content,
+   and the primary actions stay reachable without scrolling the card. */
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-utility {
-  position: sticky;
-  bottom: -1px;
-  z-index: 2;
-  margin-top: 8px;
-  padding: 8px 0 2px;
-  background: linear-gradient(to bottom, rgba(13, 25, 48, 0), rgba(13, 25, 48, 0.96) 30%);
+  flex: 0 0 auto;
+  margin-top: 0;
+  padding-top: 12px;
+  border-top: 1px solid rgba(169, 216, 255, 0.14);
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-utility > button {
+  flex: 1 1 0;
+  min-width: 0;
 }
 @media (max-height: 700px) {
   #${BROWSER_PANEL_ROOT_ID} {
     padding: 10px 12px 10px;
     font-size: 13px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-row {
+    margin-top: 10px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} label.browser-panel-scrub {
+    margin-top: 14px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-utility {
+    padding-top: 10px;
   }
   #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="time-line"] {
     font-size: 18px;
@@ -277,17 +348,43 @@ const CSS = `
     font-size: 14px;
   }
 }
-@media (max-height: 500px) {
+/* Short desktop/landscape windows: tighten rhythm so the card scrolls as one
+   clean column instead of stacking content under a floating bar. Touch
+   targets keep their 44px minimum; only spacing and type shrink. */
+@media (max-height: 560px) {
   #${BROWSER_PANEL_ROOT_ID} {
     width: min(340px, calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
     padding: 10px 12px 12px;
-    font-size: 13px;
+    font-size: 12.5px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} h2 {
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-meta {
+    margin-bottom: 6px;
   }
   #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="time-line"] {
-    font-size: 17px;
+    font-size: 16px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="weather-hero"] {
+    font-size: 19px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="weather-line"] {
+    font-size: 13px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-row {
+    margin-top: 8px;
+    gap: 6px;
   }
   #${BROWSER_PANEL_ROOT_ID} label.browser-panel-scrub {
-    margin-top: 8px;
+    margin-top: 10px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-note {
+    margin-top: 6px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-utility {
+    padding-top: 8px;
   }
 }
 `;
@@ -307,8 +404,6 @@ function el<K extends keyof HTMLElementTagNameMap>(
 export class BrowserPanelSystem extends createSystem({}) {
   private root: HTMLElement | null = null;
   private disposed = false;
-  private range: HTMLInputElement | null = null;
-  private playheadValue: HTMLElement | null = null;
   private statusLine: HTMLElement | null = null;
   private locationLine: HTMLElement | null = null;
   private timeLine: HTMLElement | null = null;
@@ -319,6 +414,7 @@ export class BrowserPanelSystem extends createSystem({}) {
   private exitButton: HTMLButtonElement | null = null;
   private reloadButton: HTMLButtonElement | null = null;
   private xrNote: HTMLElement | null = null;
+  private xrSupported: boolean | null = null;
   private langButton: HTMLButtonElement | null = null;
   private locationWrap: HTMLElement | null = null;
   private locationSelect: HTMLSelectElement | null = null;
@@ -329,9 +425,24 @@ export class BrowserPanelSystem extends createSystem({}) {
   private locationHintEl: HTMLElement | null = null;
   private unsubscribeLanguage: (() => void) | null = null;
   private dirty = true;
-  private scrubPointer: number | null = null;
   private lastRenderAt = -Number.MAX_SAFE_INTEGER;
   private lastClockMinute = -1;
+  /** Last Permissions API state for geolocation (null until the precheck answers). */
+  private permission: GeolocationPermission | null = null;
+  private messageTimer: number | null = null;
+  /** `fetchedAt` of the dataset whose substitution message was already shown. */
+  private seenDatasetAt = -1;
+  private unsubscribePermission: (() => void) | null = null;
+  private devObserver: MutationObserver | null = null;
+  private readonly suppressedDevHosts = new Set<HTMLElement>();
+  // Non-XR orbit camera (desktop/mobile 2D only; XR owns the camera when presenting).
+  private orbitListenersAttached = false;
+  private readonly orbitPointers = new Map<number, { x: number; y: number }>();
+  private orbit: { yaw: number; pitch: number; radius: number; yawBase: number } | null = null;
+  private orbitRadiusTarget: number | null = null;
+  private orbitCanvas: HTMLCanvasElement | null = null;
+  private orbitTouchAction: string | null = null;
+  private orbitPinchSpan = 0;
 
   init(): void {
     if (typeof document === 'undefined') return;
@@ -376,43 +487,6 @@ export class BrowserPanelSystem extends createSystem({}) {
       tick();
       void reloadWeather();
     };
-    const scrub = (): void => {
-      if (this.range == null) return;
-      weatherStore.setPlayhead(Number(this.range.value));
-    };
-    // Own the touch gesture: native range handling varies on mobile and
-    // must not turn a horizontal scrub into panel scrolling or a canvas ray.
-    const scrubAtPointer = (event: PointerEvent): void => {
-      const range = this.range;
-      if (range == null) return;
-      const bounds = range.getBoundingClientRect();
-      const fraction = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
-      const hours = PLAYHEAD_MIN_H + fraction * (PLAYHEAD_MAX_H - PLAYHEAD_MIN_H);
-      range.value = String(Math.round(hours * 2) / 2);
-      scrub();
-    };
-    const startScrub = (event: PointerEvent): void => {
-      if (!event.isPrimary || event.button !== 0 || this.scrubPointer != null || this.range == null) return;
-      event.preventDefault();
-      event.stopPropagation();
-      this.scrubPointer = event.pointerId;
-      this.range.focus({ preventScroll: true });
-      this.range.setPointerCapture(event.pointerId);
-      scrubAtPointer(event);
-    };
-    const moveScrub = (event: PointerEvent): void => {
-      if (event.pointerId !== this.scrubPointer) return;
-      event.preventDefault();
-      event.stopPropagation();
-      scrubAtPointer(event);
-    };
-    const endScrub = (event: PointerEvent): void => {
-      if (event.pointerId !== this.scrubPointer) return;
-      event.stopPropagation();
-      this.scrubPointer = null;
-      if (this.range?.hasPointerCapture(event.pointerId)) this.range.releasePointerCapture(event.pointerId);
-      this.render();
-    };
     const launchXR = (): void => {
       if (!this.world.xrEnabled) return;
       tick();
@@ -433,10 +507,10 @@ export class BrowserPanelSystem extends createSystem({}) {
       tick();
       const parsed = parseLatLon(this.locationInput.value);
       if (parsed == null) {
-        if (this.locationError != null) this.locationError.textContent = t('locationInvalid');
+        this.showLocationMessage(t('locationInvalid'), 'error');
         return;
       }
-      if (this.locationError != null) this.locationError.textContent = '';
+      this.showLocationMessage('', 'info');
       setManualLocation({
         latitude: parsed.latitude,
         longitude: parsed.longitude,
@@ -452,28 +526,21 @@ export class BrowserPanelSystem extends createSystem({}) {
       setManualLocation({ latitude: preset.latitude, longitude: preset.longitude, label: preset.label });
       void reloadWeather();
     };
-    const clearManual = (): void => {
+    const locateMe = (): void => {
       tick();
-      setManualLocation(null);
-      void reloadWeather();
+      void this.detectDeviceLocation();
     };
 
     this.root?.querySelector('[data-testid="step-back"]')?.addEventListener('click', stepBack);
     this.root?.querySelector('[data-testid="go-live"]')?.addEventListener('click', goLive);
     this.root?.querySelector('[data-testid="step-forward"]')?.addEventListener('click', stepForward);
     this.reloadButton?.addEventListener('click', reload);
-    this.range?.addEventListener('input', scrub);
-    this.range?.addEventListener('pointerdown', startScrub);
-    this.range?.addEventListener('pointermove', moveScrub);
-    this.range?.addEventListener('pointerup', endScrub);
-    this.range?.addEventListener('pointercancel', endScrub);
-    this.range?.addEventListener('lostpointercapture', endScrub);
     this.enterButton?.addEventListener('click', launchXR);
     this.exitButton?.addEventListener('click', exitXR);
     this.langButton?.addEventListener('click', switchLanguage);
     this.locationSelect?.addEventListener('change', applyPreset);
     this.locationApply?.addEventListener('click', applyManualInput);
-    this.locationClear?.addEventListener('click', clearManual);
+    this.locationClear?.addEventListener('click', locateMe);
 
     this.cleanupFuncs.push(
       () => {
@@ -484,22 +551,31 @@ export class BrowserPanelSystem extends createSystem({}) {
           ?.removeEventListener('click', stepForward);
       },
       () => this.reloadButton?.removeEventListener('click', reload),
-      () => this.range?.removeEventListener('input', scrub),
-      () => this.range?.removeEventListener('pointerdown', startScrub),
-      () => this.range?.removeEventListener('pointermove', moveScrub),
-      () => this.range?.removeEventListener('pointerup', endScrub),
-      () => this.range?.removeEventListener('pointercancel', endScrub),
-      () => this.range?.removeEventListener('lostpointercapture', endScrub),
       () => this.enterButton?.removeEventListener('click', launchXR),
       () => this.exitButton?.removeEventListener('click', exitXR),
       () => this.langButton?.removeEventListener('click', switchLanguage),
       () => this.locationSelect?.removeEventListener('change', applyPreset),
       () => this.locationApply?.removeEventListener('click', applyManualInput),
-      () => this.locationClear?.removeEventListener('click', clearManual),
+      () => this.locationClear?.removeEventListener('click', locateMe),
       unsubscribeStore,
       unsubscribeVisibility,
       () => this.xrManager.removeEventListener('sessionstart', onSessionVisibility),
       () => this.xrManager.removeEventListener('sessionend', onSessionVisibility),
+      () => this.detachOrbitListeners(),
+      () => {
+        this.devObserver?.disconnect();
+        this.devObserver = null;
+        for (const host of this.suppressedDevHosts) host.style.display = '';
+        this.suppressedDevHosts.clear();
+      },
+      () => {
+        this.unsubscribePermission?.();
+        this.unsubscribePermission = null;
+      },
+      () => {
+        if (this.messageTimer != null) window.clearTimeout(this.messageTimer);
+        this.messageTimer = null;
+      },
       () => {
         this.unsubscribeLanguage?.();
         this.unsubscribeLanguage = null;
@@ -526,7 +602,21 @@ export class BrowserPanelSystem extends createSystem({}) {
     });
 
     this.applySessionVisibility();
+    this.suppressRedundantDevXrEntry();
+    this.syncOrbitListeners();
     void this.probeXrSupport();
+    void this.syncPermissionState();
+    // React to a permission change made in browser settings: a grant must
+    // re-run the chain so the device fix replaces the IP/fixed dataset the
+    // TTL would otherwise keep for the whole window.
+    this.unsubscribePermission = watchGeolocationPermission((state) => {
+      this.permission = state;
+      if (this.disposed) return;
+      // A remembered device fix is only valid while the permission holds.
+      if (state !== 'granted') forgetDeviceLocation();
+      if (state === 'granted' && getManualLocation() == null) void this.reloadForced();
+      else this.render();
+    });
   }
 
   private buildPanel(): void {
@@ -578,7 +668,7 @@ export class BrowserPanelSystem extends createSystem({}) {
     root.appendChild(info);
 
     const row = document.createElement('div');
-    row.className = 'browser-panel-row';
+    row.className = 'browser-panel-row browser-panel-timeline';
     row.setAttribute('role', 'group');
     row.setAttribute('aria-label', 'Timeline controls');
     const back = document.createElement('button');
@@ -601,28 +691,10 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.reloadButton.dataset.testid = 'reload';
     this.reloadButton.textContent = 'Reload';
     this.reloadButton.setAttribute('aria-label', 'Reload weather data');
-    // Timeline row keeps the scrub buttons; Reload joins the utility row below.
+    // Timeline row keeps the -6h / NOW / +6h buttons; the DOM slider was
+    // removed (scrubbing lives on the spatial timeline in XR).
     row.append(back, now, forward);
     root.appendChild(row);
-
-    const scrubLabel = document.createElement('label');
-    scrubLabel.className = 'browser-panel-scrub';
-    scrubLabel.setAttribute('for', `${BROWSER_PANEL_ROOT_ID}-playhead`);
-    scrubLabel.textContent = 'Timeline';
-    root.appendChild(scrubLabel);
-    this.range = document.createElement('input');
-    this.range.type = 'range';
-    this.range.id = `${BROWSER_PANEL_ROOT_ID}-playhead`;
-    this.range.dataset.testid = 'playhead';
-    this.range.min = String(PLAYHEAD_MIN_H);
-    this.range.max = String(PLAYHEAD_MAX_H);
-    this.range.step = '0.5';
-    this.range.value = '0';
-    this.range.setAttribute('aria-label', 'Timeline offset in hours from now');
-    root.appendChild(this.range);
-    this.playheadValue = el('p', 'playhead-value', 'NOW');
-    this.playheadValue.className = 'browser-panel-note';
-    root.appendChild(this.playheadValue);
 
     // Compact manual-location row: preset select + "lat,lon" field + Set/Auto.
     // Same row/heading visual language; no new panel styling beyond layout
@@ -639,6 +711,10 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.locationSelect = document.createElement('select');
     this.locationSelect.id = `${BROWSER_PANEL_ROOT_ID}-location`;
     this.locationSelect.dataset.testid = 'location-presets';
+    const chooseCity = document.createElement('option');
+    chooseCity.value = '';
+    chooseCity.textContent = t('locationChoose');
+    this.locationSelect.appendChild(chooseCity);
     for (const preset of LOCATION_PRESETS) {
       const option = document.createElement('option');
       option.value = preset.id;
@@ -648,6 +724,7 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.locationInput = document.createElement('input');
     this.locationInput.type = 'text';
     this.locationInput.dataset.testid = 'location-input';
+    this.locationInput.setAttribute('aria-label', t('locationPlaceholder'));
     this.locationInput.placeholder = 'lat, lon';
     this.locationInput.setAttribute('inputmode', 'decimal');
     this.locationApply = document.createElement('button');
@@ -657,11 +734,12 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.locationClear = document.createElement('button');
     this.locationClear.type = 'button';
     this.locationClear.dataset.testid = 'location-auto';
-    this.locationClear.setAttribute('aria-label', 'Clear manual location');
+    this.locationClear.setAttribute('aria-label', t('ariaDetectLocation'));
     this.locationWrap.append(this.locationSelect, this.locationInput, this.locationApply, this.locationClear);
     root.appendChild(this.locationWrap);
     this.locationError = el('p', 'location-error', '');
     this.locationError.className = 'browser-panel-note';
+    this.locationError.hidden = true;
     root.appendChild(this.locationError);
 
     // One short hint line: how to show weather for your own place.
@@ -692,6 +770,14 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.xrNote.className = 'browser-panel-note';
     root.appendChild(this.xrNote);
 
+    // Split the card into an independently scrolling body and a fixed action
+    // footer: the actions can never be painted over by scrolled content, and
+    // they stay reachable on short viewports without scrolling the card.
+    const body = document.createElement('div');
+    body.className = 'browser-panel-body';
+    while (root.firstChild != null) body.appendChild(root.firstChild);
+    root.append(body, xrRow);
+
     document.body.appendChild(root);
     this.root = root;
   }
@@ -708,10 +794,14 @@ export class BrowserPanelSystem extends createSystem({}) {
       this.xrNote.textContent = t('xrDisabled');
     }
     if (!this.root.hidden) this.dirty = true;
+    // XR owns the camera while presenting; the 2D orbit owns it otherwise.
+    this.syncOrbitListeners();
   }
 
   /** Throttled visible refresh: the cached frame advances even without store events. */
   update(): void {
+    // Zoom easing runs every frame (before the panel's throttle guard).
+    this.stepOrbitZoom();
     if (this.disposed || this.root == null || this.root.hidden) return;
     const now = performance.now();
     if (now - this.lastRenderAt < 500) return;
@@ -739,6 +829,7 @@ export class BrowserPanelSystem extends createSystem({}) {
       supported = false;
     }
     if (this.disposed) return;
+    this.xrSupported = supported;
     if (this.enterButton != null) this.enterButton.disabled = !supported;
     if (this.xrNote != null && this.world.xrEnabled) {
       this.xrNote.textContent = supported ? t('xrEnterHint') : t('xrUnavailable');
@@ -759,14 +850,6 @@ export class BrowserPanelSystem extends createSystem({}) {
     const demoDataset = dataset?.source === 'demo';
     this.applyChromeLabels(lang);
 
-    if (this.range != null) {
-      if (this.scrubPointer == null) this.range.value = String(playheadHours);
-      this.range.setAttribute(
-        'aria-valuetext',
-        isLive ? t('ariaLiveNow') : formatHoursFromNow(Math.round(playheadHours * 2) / 2, lang),
-      );
-    }
-
     if (this.badge != null) {
       const demo = demoDataset || status.kind === 'demo';
       this.badge.textContent = demo ? t('badgeDemo') : t('badgeLive');
@@ -774,8 +857,10 @@ export class BrowserPanelSystem extends createSystem({}) {
     }
     if (this.reloadButton != null) {
       const loading = status.kind === 'loading' || status.kind === 'locating';
+      // Busy state is carried by the disabled button and the status line; the
+      // label never changes, so it can never shift or spill out of the box.
       this.reloadButton.disabled = loading;
-      this.reloadButton.textContent = loading ? t('reloading') : t('reload');
+      this.reloadButton.setAttribute('aria-busy', loading ? 'true' : 'false');
     }
 
     if (current == null || dataset == null) {
@@ -790,7 +875,6 @@ export class BrowserPanelSystem extends createSystem({}) {
       if (this.timeLine != null) this.timeLine.textContent = early;
       if (this.heroLine != null) this.heroLine.textContent = t('missingValue');
       if (this.weatherLine != null) this.weatherLine.textContent = t('missingValue');
-      if (this.playheadValue != null) this.playheadValue.textContent = early;
       return;
     }
 
@@ -801,7 +885,7 @@ export class BrowserPanelSystem extends createSystem({}) {
         ? (PROVIDER_DISPLAY[providerOf(dataset.source) as keyof typeof PROVIDER_DISPLAY] ?? providerOf(dataset.source))
         : '';
     // One dim secondary line: honest status core (already names the provider
-    // when live) plus a token only when it adds information.
+    // when live); no provider token is appended because that only repeated it.
     if (this.statusLine != null) {
       const statusCore =
         status.kind === 'demo'
@@ -809,17 +893,24 @@ export class BrowserPanelSystem extends createSystem({}) {
           : demoDataset
             ? `${t('statusDemoRetained')}${staleSuffix}`
             : `${sourceStatus(providerDisplay, staleSuffix, lang)}`;
-      const extraToken =
-        providerDisplay !== '' && (status.kind === 'loading' || status.kind === 'locating')
-          ? ` · ${providerDisplay}`
-          : '';
-      this.statusLine.textContent = `${statusCore}${extraToken}`;
+      this.statusLine.textContent = statusCore;
     }
+    const place = dataset.label.split(' · ').slice(1).join(' · ') || dataset.label;
     if (this.locationLine != null) {
-      this.locationLine.textContent = localizePlaceLabel(
-        dataset.label.split(' · ').slice(1).join(' · ') || dataset.label,
-        lang,
-      );
+      this.locationLine.textContent = demoDataset
+        ? localizePlaceLabel(place, lang)
+        : this.composeLocationLine(place, dataset.locationOrigin, dataset.locationAccuracyM, lang);
+    }
+    // One honest message when the chain silently swapped a device fix for the
+    // IP/fixed fallback: the user must know they are not seeing their own place.
+    if (!demoDataset && dataset.fetchedAt !== this.seenDatasetAt) {
+      this.seenDatasetAt = dataset.fetchedAt;
+      const code = dataset.locationErrorCode;
+      if (dataset.locationOrigin === 'ip' || dataset.locationOrigin === 'fallback') {
+        if (code === 1) this.showLocationMessage(t('geoDenied'), 'warn', 8000);
+        else if (code === 2) this.showLocationMessage(t('geoUnavailable'), 'warn', 8000);
+        else if (code === 3) this.showLocationMessage(t('geoTimeout'), 'warn', 8000);
+      }
     }
 
     const at = playheadTime(dataset, playheadHours, new Date());
@@ -830,7 +921,6 @@ export class BrowserPanelSystem extends createSystem({}) {
       ? `${t('playheadNow')}${beyond}`
       : `${hours}:${minutes} (${playheadHours > 0 ? '+' : ''}${playheadHours}h)${beyond}`;
     if (this.timeLine != null) this.timeLine.textContent = label;
-    if (this.playheadValue != null) this.playheadValue.textContent = label;
 
     if (this.heroLine != null) {
       const temp = Number.isFinite(frame.temperatureC) ? `${frame.temperatureC.toFixed(1)} C` : formatMissing('C');
@@ -855,6 +945,8 @@ export class BrowserPanelSystem extends createSystem({}) {
   /** Static chrome: buttons, labels, aria, and the location picker skeleton. */
   private applyChromeLabels(lang: Language): void {
     this.root?.setAttribute('aria-label', t('ariaPanel'));
+    this.root?.querySelector('.browser-panel-timeline')?.setAttribute('aria-label', t('ariaTimelineGroup'));
+    this.root?.querySelector('.browser-panel-utility')?.setAttribute('aria-label', t('ariaXrGroup'));
     this.root?.querySelector('[data-testid="step-back"]')?.setAttribute('aria-label', t('ariaStepBack'));
     this.root?.querySelector('[data-testid="go-live"]')?.setAttribute('aria-label', t('ariaGoLive'));
     this.root?.querySelector('[data-testid="step-forward"]')?.setAttribute('aria-label', t('ariaStepForward'));
@@ -865,20 +957,38 @@ export class BrowserPanelSystem extends createSystem({}) {
     if (now != null) now.textContent = t('goLive');
     if (forward != null) forward.textContent = t('stepForward');
     if (this.reloadButton != null) this.reloadButton.setAttribute('aria-label', t('ariaReload'));
-    if (this.range != null) this.range.setAttribute('aria-label', t('ariaScrub'));
     if (this.langButton != null) {
       this.langButton.textContent = t('langName');
       this.langButton.setAttribute('aria-label', t('ariaSwitchLanguage'));
     }
     if (this.enterButton != null) this.enterButton.textContent = t('enterAr');
     if (this.exitButton != null) this.exitButton.textContent = t('exit');
+    if (this.xrNote != null) {
+      this.xrNote.textContent = t(!this.world.xrEnabled ? 'xrDisabled'
+        : this.xrSupported == null ? 'xrChecking'
+        : this.xrSupported ? 'xrEnterHint' : 'xrUnavailable');
+    }
     this.root?.querySelector('[data-testid="location-label"]')?.replaceChildren(t('locationLabelPrefix'));
-    if (this.locationInput != null) this.locationInput.placeholder = t('locationPlaceholder');
-    if (this.locationApply != null) this.locationApply.textContent = t('locationApply');
-    if (this.locationClear != null) this.locationClear.textContent = t('locationClear');
-    if (this.locationHintEl != null) this.locationHintEl.textContent = t('locationHint');
-    if (this.locationError != null && this.locationError.textContent !== '') {
-      this.locationError.textContent = t('locationInvalid');
+    if (this.locationInput != null) {
+      this.locationInput.placeholder = t('locationPlaceholder');
+      this.locationInput.setAttribute('aria-label', t('locationPlaceholder'));
+    }
+    if (this.locationApply != null) {
+      this.locationApply.textContent = t('locationApply');
+      this.locationApply.setAttribute('aria-label', t('locationApply'));
+    }
+    if (this.locationClear != null) {
+      this.locationClear.textContent = t('locationClear');
+      this.locationClear.setAttribute('aria-label', t('ariaDetectLocation'));
+    }
+    if (this.locationHintEl != null) {
+      // A denied permission is stated plainly instead of letting the button
+      // silently fail; the note clears when the precheck sees a grant.
+      this.locationHintEl.textContent = this.permission === 'denied' ? t('geoDenied') : t('locationHint');
+    }
+    if (this.locationError != null) {
+      const active = this.locationError.dataset.state;
+      if (active === 'error' && !this.locationError.hidden) this.locationError.textContent = t('locationInvalid');
     }
     void lang;
   }
@@ -888,14 +998,13 @@ export class BrowserPanelSystem extends createSystem({}) {
     const manual = getManualLocation();
     if (this.locationSelect != null) {
       const options = this.locationSelect.querySelectorAll('option');
+      const chooseCity = options.item(0);
+      if (chooseCity != null) chooseCity.textContent = t('locationChoose');
       LOCATION_PRESETS.forEach((preset, index) => {
-        const option = options.item(index);
+        const option = options.item(index + 1);
         if (option != null) option.textContent = localizePresetLabel(preset.label, lang);
       });
-      if (manual != null) {
-        const match = LOCATION_PRESETS.find((preset) => preset.label === manual.label);
-        if (match != null) this.locationSelect.value = match.id;
-      }
+      this.locationSelect.value = LOCATION_PRESETS.find((preset) => preset.label === manual?.label)?.id ?? '';
     }
     if (this.locationInput != null && document.activeElement !== this.locationInput) {
       this.locationInput.value = manual != null ? `${manual.latitude}, ${manual.longitude}` : '';
@@ -916,5 +1025,282 @@ export class BrowserPanelSystem extends createSystem({}) {
       if (this.disposed) return;
       badge.style.background = previous;
     }, 450);
+  }
+
+  /** Honest location line: origin token first, then the place/coords it names. */
+  private composeLocationLine(
+    place: string,
+    origin: LocationOrigin,
+    accuracyM: number | undefined,
+    lang: Language,
+  ): string {
+    if (origin === 'device') return `${locationOriginLabel('device', lang, accuracyM)} · ${place}`;
+    if (origin === 'ip') {
+      const city = /^IP-based location \((.*)\)$/.exec(place)?.[1] ?? '';
+      return city === '' ? locationOriginLabel('ip', lang) : `${locationOriginLabel('ip', lang)} · ${city}`;
+    }
+    if (origin === 'manual') {
+      return `${locationOriginLabel('manual', lang)} · ${place.replace(' (manual location)', '')}`;
+    }
+    return locationOriginLabel('fallback', lang);
+  }
+
+  /**
+   * In-flow status/toast line under the location row. `timeoutMs` clears it
+   * again (transient toast); omitting it keeps the text until replaced. Kept
+   * inside the card flow so a message can never overlap a control.
+   */
+  private showLocationMessage(text: string, state: 'info' | 'warn' | 'error', timeoutMs?: number): void {
+    const node = this.locationError;
+    if (node == null) return;
+    if (this.messageTimer != null) {
+      window.clearTimeout(this.messageTimer);
+      this.messageTimer = null;
+    }
+    node.textContent = text;
+    node.dataset.state = state;
+    node.hidden = text === '';
+    if (text !== '' && timeoutMs != null) {
+      this.messageTimer = window.setTimeout(() => {
+        this.messageTimer = null;
+        if (this.disposed) return;
+        node.textContent = '';
+        node.hidden = true;
+      }, timeoutMs);
+    }
+  }
+
+  /** Permissions API precheck; drives the hint line and the onchange reaction. */
+  private async syncPermissionState(): Promise<void> {
+    const state = await geolocationPermissionState();
+    if (this.disposed) return;
+    this.permission = state;
+    this.render();
+  }
+
+  /** Refetch bypassing the TTL (used after a fresh permission grant). */
+  private async reloadForced(): Promise<void> {
+    weatherStore.setStatus({ kind: 'locating' });
+    const { dataset, status } = await loadWeather(undefined, { force: true });
+    if (this.disposed) return;
+    weatherStore.setDataset(dataset);
+    if (status.kind !== 'ready') weatherStore.setStatus(status);
+  }
+
+  /**
+   * "Locate me" gesture: clear any manual override, escalate a device fix via
+   * `watchPosition(enableHighAccuracy)`, then load weather at that fix. Every
+   * failure mode is reported by its geolocation error code (1/2/3) instead of
+   * one generic message.
+   */
+  private async detectDeviceLocation(): Promise<void> {
+    if (this.locationClear != null) this.locationClear.disabled = true;
+    this.showLocationMessage(t('locationDetecting'), 'info');
+    try {
+      const outcome = await requestDeviceLocation({ enableHighAccuracy: true });
+      if (this.disposed) return;
+      if (!outcome.ok || outcome.location == null) {
+        // Non-destructive: a manual override and the current dataset stay put.
+        this.showLocationMessage(
+          outcome.errorCode === 1 ? t('geoDenied')
+            : outcome.errorCode === 2 ? t('geoUnavailable')
+            : outcome.errorCode === 3 ? t('geoTimeout')
+            : t('geoUnsupported'),
+          'warn',
+        );
+        return;
+      }
+      // The device fix is now the answer: drop a stored override so later
+      // loads do not silently revert to the manual city.
+      setManualLocation(null);
+      const { dataset, status } = await loadWeather(undefined, {
+        force: true,
+        location: outcome.location,
+      });
+      if (this.disposed) return;
+      weatherStore.setDataset(dataset);
+      if (status.kind !== 'ready') weatherStore.setStatus(status);
+      this.showLocationMessage('', 'info');
+    } finally {
+      if (!this.disposed && this.locationClear != null) this.locationClear.disabled = false;
+    }
+  }
+
+  /**
+   * IWSDK's dev harness injects its own "Enter XR" pill into an open shadow
+   * root (dev-server only; absent from production builds). The panel's Enter AR
+   * is the product's single entry, so that duplicate is hidden as soon as it is
+   * attached, without touching the harness API (CLI `xr enter` and
+   * `world.launchXR()` keep working).
+   */
+  private suppressRedundantDevXrEntry(): void {
+    const scan = (): void => {
+      for (const child of Array.from(document.body.children)) {
+        const host = child as HTMLElement;
+        if (host.shadowRoot == null || this.suppressedDevHosts.has(host)) continue;
+        if (host.shadowRoot.textContent?.includes('Enter XR') !== true) continue;
+        this.suppressedDevHosts.add(host);
+        host.style.display = 'none';
+      }
+    };
+    scan();
+    this.devObserver = new MutationObserver(scan);
+    this.devObserver.observe(document.body, { childList: true });
+  }
+
+  /** Attach the 2D orbit listeners to the renderer canvas only, never the panel. */
+  private syncOrbitListeners(): void {
+    const canvas = (this.world.renderer?.domElement ?? null) as HTMLCanvasElement | null;
+    const shouldAttach = canvas != null && !this.xrManager.isPresenting;
+    if (shouldAttach && !this.orbitListenersAttached) this.attachOrbitListeners(canvas);
+    else if (!shouldAttach && this.orbitListenersAttached) this.detachOrbitListeners();
+  }
+
+  private attachOrbitListeners(canvas: HTMLCanvasElement): void {
+    this.orbitCanvas = canvas;
+    this.orbitTouchAction = canvas.style.touchAction;
+    canvas.style.touchAction = 'none';
+    canvas.addEventListener('pointerdown', this.onOrbitPointerDown);
+    canvas.addEventListener('pointermove', this.onOrbitPointerMove);
+    canvas.addEventListener('pointerup', this.onOrbitPointerUp);
+    canvas.addEventListener('pointercancel', this.onOrbitPointerUp);
+    canvas.addEventListener('wheel', this.onOrbitWheel, { passive: false });
+    this.orbitListenersAttached = true;
+  }
+
+  private detachOrbitListeners(): void {
+    const canvas = this.orbitCanvas;
+    if (canvas != null) {
+      canvas.removeEventListener('pointerdown', this.onOrbitPointerDown);
+      canvas.removeEventListener('pointermove', this.onOrbitPointerMove);
+      canvas.removeEventListener('pointerup', this.onOrbitPointerUp);
+      canvas.removeEventListener('pointercancel', this.onOrbitPointerUp);
+      canvas.removeEventListener('wheel', this.onOrbitWheel);
+      canvas.style.touchAction = this.orbitTouchAction ?? '';
+    }
+    this.orbitPointers.clear();
+    this.orbitPinchSpan = 0;
+    this.orbitCanvas = null;
+    this.orbitListenersAttached = false;
+  }
+
+  /** Derive the orbit from the authored camera pose so drag starts 1:1. */
+  private ensureOrbit(): void {
+    if (this.orbit != null) return;
+    const camera = this.world.camera;
+    const dx = camera.position.x - ORBIT_TARGET.x;
+    const dy = camera.position.y - ORBIT_TARGET.y;
+    const dz = camera.position.z - ORBIT_TARGET.z;
+    const distance = Math.hypot(dx, dy, dz);
+    const radius = Math.max(ORBIT_MIN_RADIUS, Math.min(ORBIT_MAX_RADIUS, distance));
+    const yaw = Math.atan2(dx, dz);
+    const pitch = Math.asin(Math.max(-1, Math.min(1, dy / (distance || 1))));
+    this.orbit = {
+      yaw,
+      pitch: Math.max(ORBIT_MIN_PITCH, Math.min(ORBIT_MAX_PITCH, pitch)),
+      radius,
+      yawBase: yaw,
+    };
+    this.orbitRadiusTarget = radius;
+  }
+
+  /** Write the orbit pose to the camera; a no-op while XR owns the camera. */
+  private applyOrbit(): void {
+    const orbit = this.orbit;
+    if (orbit == null || this.xrManager.isPresenting) return;
+    const cosPitch = Math.cos(orbit.pitch);
+    const camera = this.world.camera;
+    camera.position.set(
+      ORBIT_TARGET.x + orbit.radius * cosPitch * Math.sin(orbit.yaw),
+      ORBIT_TARGET.y + orbit.radius * Math.sin(orbit.pitch),
+      ORBIT_TARGET.z + orbit.radius * cosPitch * Math.cos(orbit.yaw),
+    );
+    // lookAt reads matrixWorld, which is stale mid-frame; refresh it first so
+    // the orientation matches the position written just above.
+    camera.updateWorldMatrix(true, false);
+    camera.lookAt(ORBIT_TARGET.x, ORBIT_TARGET.y, ORBIT_TARGET.z);
+    // Read-only state for tooling/verification (never consumed by the app).
+    if (this.root != null) {
+      this.root.dataset.orbit =
+        `${orbit.yaw.toFixed(3)},${orbit.pitch.toFixed(3)},${orbit.radius.toFixed(3)},` +
+        `${camera.position.x.toFixed(3)},${camera.position.y.toFixed(3)},${camera.position.z.toFixed(3)}`;
+    }
+  }
+
+  /** Multiplicative zoom with hard limits; the radius eases in update(). */
+  private zoomOrbit(factor: number): void {
+    const base = this.orbitRadiusTarget ?? this.orbit?.radius ?? 0;
+    if (!(base > 0) || !Number.isFinite(factor)) return;
+    this.orbitRadiusTarget = Math.max(ORBIT_MIN_RADIUS, Math.min(ORBIT_MAX_RADIUS, base * factor));
+  }
+
+  private pointerSpan(): number {
+    const points = [...this.orbitPointers.values()];
+    if (points.length < 2) return 0;
+    return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+  }
+
+  private readonly onOrbitPointerDown = (event: PointerEvent): void => {
+    const canvas = this.orbitCanvas;
+    if (canvas == null || event.button !== 0) return;
+    event.preventDefault();
+    this.orbitPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is best-effort; drag still works without it.
+    }
+    if (this.orbitPointers.size === 2) this.orbitPinchSpan = this.pointerSpan();
+    this.ensureOrbit();
+  };
+
+  private readonly onOrbitPointerMove = (event: PointerEvent): void => {
+    const start = this.orbitPointers.get(event.pointerId);
+    const orbit = this.orbit;
+    if (start == null || orbit == null || this.xrManager.isPresenting) return;
+    event.preventDefault();
+    this.orbitPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (this.orbitPointers.size >= 2) {
+      // Two-finger pinch: zoom, never orbit, so the frame cannot lurch.
+      const span = this.pointerSpan();
+      if (this.orbitPinchSpan > 0 && span > 0) this.zoomOrbit(this.orbitPinchSpan / span);
+      this.orbitPinchSpan = span;
+      return;
+    }
+    const yaw = orbit.yaw - (event.clientX - start.x) * 0.006;
+    const pitch = orbit.pitch + (event.clientY - start.y) * 0.006;
+    orbit.yaw = Math.max(orbit.yawBase - ORBIT_YAW_LIMIT, Math.min(orbit.yawBase + ORBIT_YAW_LIMIT, yaw));
+    orbit.pitch = Math.max(ORBIT_MIN_PITCH, Math.min(ORBIT_MAX_PITCH, pitch));
+    this.applyOrbit();
+  };
+
+  private readonly onOrbitPointerUp = (event: PointerEvent): void => {
+    if (!this.orbitPointers.delete(event.pointerId)) return;
+    const canvas = this.orbitCanvas;
+    if (canvas != null && canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
+    }
+    if (this.orbitPointers.size < 2) this.orbitPinchSpan = 0;
+  };
+
+  private readonly onOrbitWheel = (event: WheelEvent): void => {
+    event.preventDefault();
+    this.ensureOrbit();
+    this.zoomOrbit(Math.exp(event.deltaY * 0.0012));
+  };
+
+  /** Ease the zoomed radius toward its target; drag stays exactly 1:1. */
+  private stepOrbitZoom(): void {
+    const orbit = this.orbit;
+    const target = this.orbitRadiusTarget;
+    if (orbit == null || target == null || this.disposed || this.xrManager.isPresenting) return;
+    const delta = target - orbit.radius;
+    if (Math.abs(delta) < 0.002) {
+      if (orbit.radius === target) return;
+      orbit.radius = target;
+    } else {
+      orbit.radius += delta * 0.22;
+    }
+    this.applyOrbit();
   }
 }

@@ -37,6 +37,8 @@ export const Haptics = {
   snapFirst: { intensity: 0.3, durationMs: 25 },
   /** Snap-to-live, second tap of the double pulse. */
   snapSecond: { intensity: 0.6, durationMs: 60 },
+  /** Clap-sandbox mode flip: medium tap, firmer than a button tick. */
+  sandboxToggle: { intensity: 0.45, durationMs: 35 },
   /** Thunder flash: deep longer pulse, felt not only seen. */
   thunder: { intensity: 0.75, durationMs: 140 },
 } as const satisfies Record<string, HapticPulse>;

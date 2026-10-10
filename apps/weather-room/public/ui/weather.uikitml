@@ -33,20 +33,21 @@
   .panel-root {
     flex-direction: column;
     width: 340px;
+    height: 480px;
   }
   .panel-content {
     align-items: stretch;
     flex-direction: column;
-    padding-top: 18px;
+    padding-top: 14px;
     padding-left: 22px;
     padding-right: 22px;
   }
   .brand-kicker {
     font-family: "Geologica";
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
-    line-height: 14px;
-    letter-spacing: 2.5px;
+    line-height: 15px;
+    letter-spacing: 2px;
     width: 100%;
     text-align: center;
     color: #79d7f2;
@@ -73,9 +74,9 @@
   }
   .mode-pill {
     font-family: "Geologica";
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
-    line-height: 14px;
+    line-height: 15px;
     letter-spacing: 1.5px;
     padding-top: 3px;
     padding-left: 12px;
@@ -86,13 +87,8 @@
     color: #060b18;
     text-align: center;
   }
-  .revision {
-    font-family: "Geologica";
-    color: #94aac8;
-    font-size: 11px;
-    font-weight: 500;
-    line-height: 14px;
-    margin-left: 8px;
+  .panel-view {
+    flex-direction: column;
   }
   .playhead {
     font-family: "Geologica";
@@ -122,23 +118,23 @@
   }
   .subhead {
     font-family: "Geologica";
-    color: #94aac8;
+    color: #a6bcd9;
     font-size: 12px;
     font-weight: 500;
-    line-height: 15px;
+    line-height: 16px;
     width: 100%;
     margin-top: 4px;
     text-align: center;
   }
   .subhead:dark {
-    color: #94aac8;
+    color: #a6bcd9;
   }
   .values {
     font-family: "Geologica";
     color: #eef5ff;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
-    line-height: 23px;
+    line-height: 21px;
     width: 100%;
     margin-top: 6px;
     text-align: center;
@@ -148,27 +144,27 @@
   }
   .status {
     font-family: "Geologica";
-    color: #5f7896;
-    font-size: 10px;
+    color: #a6bcd9;
+    font-size: 12px;
     font-weight: 500;
-    line-height: 14px;
+    line-height: 16px;
     width: 100%;
-    margin-top: 10px;
+    margin-top: 12px;
     text-align: center;
   }
   .status:dark {
-    color: #5f7896;
+    color: #a6bcd9;
   }
   .timeline-hint {
     font-family: "Geologica";
     color: #79d7f2;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
-    line-height: 13px;
+    line-height: 16px;
     width: 100%;
-    margin-top: 8px;
+    margin-top: 12px;
     text-align: center;
-    letter-spacing: 1px;
+    letter-spacing: 0.5px;
   }
   .timeline-hint:dark {
     color: #79d7f2;
@@ -176,66 +172,157 @@
   .controls-row {
     flex-direction: row;
     justify-content: center;
-    margin-top: 10px;
-    margin-bottom: 6px;
+    margin-top: 12px;
+    margin-bottom: 10px;
   }
   .control-button {
-    width: 70px;
-    margin-left: 3px;
-    margin-right: 3px;
+    width: 88px;
+    margin-left: 4px;
+    margin-right: 4px;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
   }
   .button-label {
     transform-translate-y: 1px;
+    width: 100%;
+    text-align: center;
   }
   .xr-row {
     flex-direction: row;
     justify-content: center;
-    margin-bottom: 16px;
+    margin-bottom: 10px;
+  }
+  .utility-button {
+    width: 80px;
+    margin-left: 2px;
+    margin-right: 2px;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  .utility-label {
+    font-size: 12px;
+    width: 100%;
+    text-align: center;
+  }
+  .picker-button {
+    width: 140px;
+    margin-left: 2px;
+    margin-right: 2px;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  .picker-label {
+    font-size: 14px;
+    width: 100%;
+    text-align: center;
+  }
+  .picker {
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    flex-grow: 1;
+    padding-top: 24px;
+    padding-left: 22px;
+    padding-right: 22px;
+  }
+  .picker-title {
+    font-family: "Geologica";
+    font-size: 24px;
+    line-height: 30px;
+    font-weight: 700;
+    text-align: center;
+    color: #eef5ff;
+    margin-bottom: 12px;
+  }
+  .picker-hint {
+    font-family: "Geologica";
+    font-weight: 500;
+    font-size: 13px;
+    line-height: 19px;
+    color: #a6bcd9;
+    text-align: center;
+    margin-top: 16px;
   }
 </style>
 <Panel id="weather-root" class="panel-root">
-  <div class="panel-content">
-    <div class="brand-kicker">STANIVERSE</div>
-    <div class="heading">WEATHER//ROOM</div>
-    <div class="mode-row">
-      <div id="mode-badge" class="mode-pill">LIVE</div>
-      <div id="revision-label" class="revision">rev --</div>
+  <div id="weather-view" class="panel-view">
+    <div class="panel-content">
+      <div class="brand-kicker">STANIVERSE</div>
+      <div class="heading">WEATHER//ROOM</div>
+      <div class="mode-row">
+        <div id="mode-badge" class="mode-pill">LIVE</div>
+      </div>
+      <div id="playhead-line" class="playhead">NOW</div>
+      <div id="hero-line" class="hero-temp">--</div>
+      <div id="location-line" class="subhead">Locating...</div>
+      <div id="values-line" class="values">--</div>
+      <div id="status-line" class="status">Loading...</div>
+      <div id="timeline-hint" class="timeline-hint">-24H &lt; KNOB / BUTTONS &gt; +24H</div>
     </div>
-    <div id="playhead-line" class="playhead">NOW</div>
-    <div id="hero-line" class="hero-temp">--</div>
-    <div id="location-line" class="subhead">Locating...</div>
-    <div id="values-line" class="values">--</div>
-    <div id="status-line" class="status">Loading...</div>
-    <div id="timeline-hint" class="timeline-hint">-24H &lt; GRAB KNOB / TAP BUTTONS &gt; +24H</div>
+    <div class="controls-row">
+      <Button id="back-button" class="control-button" variant="secondary">
+        <ButtonLabel id="back-label" class="button-label">-6h</ButtonLabel>
+      </Button>
+      <Button id="now-button" class="control-button" variant="primary">
+        <ButtonLabel id="now-label" class="button-label">NOW</ButtonLabel>
+      </Button>
+      <Button id="forward-button" class="control-button" variant="secondary">
+        <ButtonLabel id="forward-label" class="button-label">+6h</ButtonLabel>
+      </Button>
+    </div>
+    <div class="xr-row">
+      <Button id="reload-button" class="utility-button" variant="tertiary">
+        <ButtonLabel id="reload-label" class="utility-label">Reload</ButtonLabel>
+      </Button>
+      <Button id="location-button" class="utility-button" variant="tertiary">
+        <ButtonLabel id="location-label" class="utility-label">Location</ButtonLabel>
+      </Button>
+      <Button id="lang-button" class="utility-button" variant="tertiary">
+        <ButtonLabel id="lang-label" class="utility-label">RU</ButtonLabel>
+      </Button>
+      <Button id="exit-button" class="utility-button" variant="tertiary">
+        <ButtonLabel id="exit-label" class="utility-label">Exit</ButtonLabel>
+      </Button>
+    </div>
   </div>
-  <div class="controls-row">
-    <Button id="back-button" class="control-button" variant="secondary">
-      <ButtonLabel id="back-label" class="button-label">-6h</ButtonLabel>
-    </Button>
-    <Button id="now-button" class="control-button" variant="primary">
-      <ButtonLabel id="now-label" class="button-label">NOW</ButtonLabel>
-    </Button>
-    <Button id="forward-button" class="control-button" variant="secondary">
-      <ButtonLabel id="forward-label" class="button-label">+6h</ButtonLabel>
-    </Button>
-  </div>
-  <div class="xr-row">
-    <Button id="xr-button" class="control-button" variant="primary">
-      <ButtonLabel id="xr-label" class="button-label">Enter AR</ButtonLabel>
-    </Button>
-    <Button id="exit-button" class="control-button" variant="tertiary">
-      <ButtonLabel id="exit-label" class="button-label">Exit</ButtonLabel>
-    </Button>
-  </div>
-  <div class="xr-row">
-    <Button id="reload-button" class="control-button" variant="tertiary">
-      <ButtonLabel id="reload-label" class="button-label">Reload</ButtonLabel>
-    </Button>
-    <Button id="location-button" class="control-button" variant="tertiary">
-      <ButtonLabel id="location-label" class="button-label">Location</ButtonLabel>
-    </Button>
-    <Button id="lang-button" class="control-button" variant="tertiary">
-      <ButtonLabel id="lang-label" class="button-label">RU</ButtonLabel>
-    </Button>
+  <div id="location-picker" class="picker">
+    <div id="location-picker-title" class="picker-title">Choose a city</div>
+    <div id="picker-location-line" class="subhead">--</div>
+    <div class="controls-row">
+      <Button id="location-moscow" class="picker-button" variant="secondary">
+        <ButtonLabel id="location-moscow-label" class="picker-label">Moscow</ButtonLabel>
+      </Button>
+      <Button id="location-saint-petersburg" class="picker-button" variant="secondary">
+        <ButtonLabel id="location-saint-petersburg-label" class="picker-label">St Petersburg</ButtonLabel>
+      </Button>
+    </div>
+    <div class="xr-row">
+      <Button id="location-london" class="picker-button" variant="secondary">
+        <ButtonLabel id="location-london-label" class="picker-label">London</ButtonLabel>
+      </Button>
+      <Button id="location-berlin" class="picker-button" variant="secondary">
+        <ButtonLabel id="location-berlin-label" class="picker-label">Berlin</ButtonLabel>
+      </Button>
+    </div>
+    <div class="xr-row">
+      <Button id="location-new-york" class="picker-button" variant="secondary">
+        <ButtonLabel id="location-new-york-label" class="picker-label">New York</ButtonLabel>
+      </Button>
+      <Button id="location-tokyo" class="picker-button" variant="secondary">
+        <ButtonLabel id="location-tokyo-label" class="picker-label">Tokyo</ButtonLabel>
+      </Button>
+    </div>
+    <div class="xr-row">
+      <Button id="location-auto-button" class="picker-button" variant="primary">
+        <ButtonLabel id="location-auto-label" class="picker-label">My location</ButtonLabel>
+      </Button>
+      <Button id="location-back-button" class="picker-button" variant="tertiary">
+        <ButtonLabel id="location-back-label" class="picker-label">Back</ButtonLabel>
+      </Button>
+    </div>
+    <div id="location-picker-hint" class="picker-hint">My location uses device/IP.</div>
   </div>
 </Panel>

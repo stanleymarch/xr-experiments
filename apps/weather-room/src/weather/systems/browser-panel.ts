@@ -1,6 +1,6 @@
-/** Native HTML controls for desktop/phone browsers; XR uses the spatial panel. */
+/** Native HTML controls for desktop/phone browsers AND handheld phone XR; tracked-hands XR uses the spatial panel. */
 
-import { createSystem } from '@iwsdk/core';
+import { buildSessionInit, createSystem, normalizeReferenceSpec, resolveReferenceSpaceType, SessionMode } from '@iwsdk/core';
 import { WeatherEvent, playheadTime, weatherEvents, weatherStore } from '../weather-state.js';
 import type { HourCrossedDetail } from '../weather-state.js';
 import { Haptics, pulseHaptics } from '../feedback.js';
@@ -35,6 +35,7 @@ import {
   type LocationOrigin,
 } from '../weather-data.js';
 import { reloadWeather } from './weather-loader.js';
+import { usesSpatialControls } from '../capabilities.js';
 
 /** Stable DOM id for the browser controls. */
 export const BROWSER_PANEL_ROOT_ID = 'weather-browser-panel';
@@ -56,6 +57,9 @@ const ORBIT_MAX_PITCH = 1.05;
 const ORBIT_YAW_LIMIT = 1.15;
 
 const CSS = `
+body:xr-overlay #scene-container {
+  visibility: hidden;
+}
 @font-face {
   font-family: Geologica;
   font-style: normal;
@@ -119,6 +123,10 @@ const CSS = `
   flex-direction: column;
   overflow: hidden;
   z-index: 20;
+  /* Native touch controls win over the canvas: the panel owns its touches,
+     nothing intercepts them, and the card never clips its own controls. */
+  touch-action: pan-y;
+  pointer-events: auto;
   box-sizing: border-box;
   background: rgba(13, 25, 48, 0.88);
   -webkit-backdrop-filter: blur(18px) saturate(1.4);
@@ -171,6 +179,10 @@ const CSS = `
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-badge[data-mode="demo"] {
   background: #f2b63d;
 }
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-badge[data-mode="loading"] {
+  background: #2a3c5e;
+  color: #d7e6fb;
+}
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-info p {
   margin: 2px 0;
 }
@@ -180,13 +192,13 @@ const CSS = `
   font-variant-numeric: tabular-nums;
 }
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="time-line"] {
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 19px;
+  font-weight: 600;
   color: #eef5ff;
   line-height: 1.2;
 }
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-info [data-testid="weather-hero"] {
-  font-size: 26px;
+  font-size: 32px;
   font-weight: 700;
   color: #eef5ff;
   line-height: 1.25;
@@ -211,6 +223,14 @@ const CSS = `
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-timeline {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+#${BROWSER_PANEL_ROOT_ID} [data-testid="time-scrub"] {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  accent-color: #79d7f2;
+  touch-action: none;
 }
 #${BROWSER_PANEL_ROOT_ID} [data-testid="location-row"] {
   display: grid;
@@ -260,13 +280,55 @@ const CSS = `
   border-color: #79d7f2;
   color: #060b18;
 }
-#${BROWSER_PANEL_ROOT_ID} label.browser-panel-scrub {
-  display: block;
-  margin-top: 24px;
+#${BROWSER_PANEL_ROOT_ID} details.browser-panel-location {
+  margin-top: 12px;
+}
+#${BROWSER_PANEL_ROOT_ID} details.browser-panel-location > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(169, 216, 255, 0.19);
+  border-radius: 12px;
+  background: rgba(120, 184, 255, 0.07);
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
   font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.08em;
   color: #94aac8;
+}
+#${BROWSER_PANEL_ROOT_ID} details.browser-panel-location > summary::-webkit-details-marker {
+  display: none;
+}
+#${BROWSER_PANEL_ROOT_ID} details.browser-panel-location > summary::after {
+  content: "▾";
+  font-size: 14px;
+  color: #79d7f2;
+}
+#${BROWSER_PANEL_ROOT_ID} details.browser-panel-location[open] > summary {
+  color: #79d7f2;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-location-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-location-content select,
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-location-content button[data-testid="location-auto"] {
+  width: 100%;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-location-content input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-location-content .browser-panel-location-manual {
+  display: flex;
+  gap: 8px;
 }
 #${BROWSER_PANEL_ROOT_ID} select,
 #${BROWSER_PANEL_ROOT_ID} input[type="text"] {
@@ -310,6 +372,15 @@ const CSS = `
   padding-top: 12px;
   border-top: 1px solid rgba(169, 216, 255, 0.14);
 }
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-sandbox {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+#${BROWSER_PANEL_ROOT_ID} button[data-testid="sandbox-toggle"][data-state="on"] {
+  background: #f2b63d;
+  border-color: #f2b63d;
+  color: #060b18;
+}
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-body {
   display: flex;
   flex-direction: column;
@@ -332,8 +403,8 @@ const CSS = `
   #${BROWSER_PANEL_ROOT_ID} .browser-panel-row {
     margin-top: 10px;
   }
-  #${BROWSER_PANEL_ROOT_ID} label.browser-panel-scrub {
-    margin-top: 14px;
+  #${BROWSER_PANEL_ROOT_ID} details.browser-panel-location {
+    margin-top: 10px;
   }
   #${BROWSER_PANEL_ROOT_ID} .browser-panel-utility {
     padding-top: 10px;
@@ -377,8 +448,8 @@ const CSS = `
     margin-top: 8px;
     gap: 6px;
   }
-  #${BROWSER_PANEL_ROOT_ID} label.browser-panel-scrub {
-    margin-top: 10px;
+  #${BROWSER_PANEL_ROOT_ID} details.browser-panel-location {
+    margin-top: 8px;
   }
   #${BROWSER_PANEL_ROOT_ID} .browser-panel-note {
     margin-top: 6px;
@@ -409,12 +480,18 @@ export class BrowserPanelSystem extends createSystem({}) {
   private timeLine: HTMLElement | null = null;
   private heroLine: HTMLElement | null = null;
   private weatherLine: HTMLElement | null = null;
+  private timeScrub: HTMLInputElement | null = null;
   private badge: HTMLElement | null = null;
   private enterButton: HTMLButtonElement | null = null;
   private exitButton: HTMLButtonElement | null = null;
   private reloadButton: HTMLButtonElement | null = null;
+  private sandboxButton: HTMLButtonElement | null = null;
+  private sandboxNote: HTMLElement | null = null;
   private xrNote: HTMLElement | null = null;
   private xrSupported: boolean | null = null;
+  private launchingXr = false;
+  private xrEntryError: string | null = null;
+  private rejectedTouchSession: XRSession | null = null;
   private langButton: HTMLButtonElement | null = null;
   private locationWrap: HTMLElement | null = null;
   private locationSelect: HTMLSelectElement | null = null;
@@ -483,15 +560,18 @@ export class BrowserPanelSystem extends createSystem({}) {
       tick();
       weatherStore.goLive();
     };
+    const scrubTime = (): void => {
+      if (this.timeScrub != null) weatherStore.setPlayhead(this.timeScrub.valueAsNumber);
+    };
     const reload = (): void => {
       tick();
       void reloadWeather();
     };
     const launchXR = (): void => {
-      if (!this.world.xrEnabled) return;
+      if (!this.world.xrEnabled || this.launchingXr || this.world.xrSession != null) return;
       tick();
       firmTap();
-      void this.world.launchXR();
+      void this.enterXrWithOverlay();
     };
     const exitXR = (): void => {
       tick();
@@ -530,6 +610,12 @@ export class BrowserPanelSystem extends createSystem({}) {
       tick();
       void this.detectDeviceLocation();
     };
+    const toggleSandbox = (): void => {
+      tick();
+      weatherStore.setSandbox(!weatherStore.state.peek().sandbox);
+    };
+    const blockWorldSelect = (event: Event): void => event.preventDefault();
+    this.root?.addEventListener('beforexrselect', blockWorldSelect);
 
     this.root?.querySelector('[data-testid="step-back"]')?.addEventListener('click', stepBack);
     this.root?.querySelector('[data-testid="go-live"]')?.addEventListener('click', goLive);
@@ -538,6 +624,8 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.enterButton?.addEventListener('click', launchXR);
     this.exitButton?.addEventListener('click', exitXR);
     this.langButton?.addEventListener('click', switchLanguage);
+    this.sandboxButton?.addEventListener('click', toggleSandbox);
+    this.timeScrub?.addEventListener('input', scrubTime);
     this.locationSelect?.addEventListener('change', applyPreset);
     this.locationApply?.addEventListener('click', applyManualInput);
     this.locationClear?.addEventListener('click', locateMe);
@@ -552,6 +640,9 @@ export class BrowserPanelSystem extends createSystem({}) {
       },
       () => this.reloadButton?.removeEventListener('click', reload),
       () => this.enterButton?.removeEventListener('click', launchXR),
+      () => this.sandboxButton?.removeEventListener('click', toggleSandbox),
+      () => this.timeScrub?.removeEventListener('input', scrubTime),
+      () => this.root?.removeEventListener('beforexrselect', blockWorldSelect),
       () => this.exitButton?.removeEventListener('click', exitXR),
       () => this.langButton?.removeEventListener('click', switchLanguage),
       () => this.locationSelect?.removeEventListener('change', applyPreset),
@@ -596,6 +687,13 @@ export class BrowserPanelSystem extends createSystem({}) {
         if (this.root?.hidden) this.dirty = true;
         else this.render();
       }),
+      // Sandbox flip from the spatial Button while the DOM is hidden
+      // (tracked-hands XR): mark dirty so the toggle state syncs on return.
+      weatherEvents.on(WeatherEvent.SandboxToggle, () => {
+        if (this.disposed) return;
+        if (this.root?.hidden) this.dirty = true;
+        else this.render();
+      }),
     );
     this.unsubscribeLanguage = onLanguageChange(() => {
       if (!this.disposed) this.render();
@@ -617,6 +715,79 @@ export class BrowserPanelSystem extends createSystem({}) {
       if (state === 'granted' && getManualLocation() == null) void this.reloadForced();
       else this.render();
     });
+  }
+
+  /**
+   * IWSDK 1.0.1's launcher has no DOM-overlay option. Use its public
+   * feature/reference builders with standard WebXR and Three session entry;
+   * keep the SDK's session-end and deferred camera-restore invariants.
+   */
+  private async enterXrWithOverlay(): Promise<void> {
+    this.launchingXr = true;
+    this.xrEntryError = null;
+    if (this.enterButton != null) this.enterButton.disabled = true;
+    let session: XRSession | null = null;
+    try {
+      const options = this.world.xrDefaults ?? {};
+      const init = buildSessionInit(options);
+      init.optionalFeatures = [...(init.optionalFeatures ?? []), 'dom-overlay'];
+      init.domOverlay = { root: document.body };
+      // Request synchronously in the originating click's activation turn.
+      session = await navigator.xr!.requestSession(options.sessionMode ?? SessionMode.ImmersiveAR, init);
+      if (this.disposed || this.world.xrSession != null) {
+        await session.end();
+        return;
+      }
+      const active = session;
+      let ended = false;
+      const camera = this.world.camera;
+      const position = camera.position.clone();
+      const quaternion = camera.quaternion.clone();
+      const scale = camera.scale.clone();
+      const { aspect, fov, near, far, zoom } = camera;
+      active.addEventListener('end', () => {
+        ended = true;
+        if (this.world.session === active) this.world.session = undefined;
+        if (options.restoreCameraOnExit !== false) requestAnimationFrame(() => {
+          camera.position.copy(position);
+          camera.quaternion.copy(quaternion);
+          camera.scale.copy(scale);
+          camera.aspect = aspect;
+          camera.fov = fov;
+          camera.near = near;
+          camera.far = far;
+          camera.zoom = zoom;
+          camera.updateProjectionMatrix();
+          camera.updateMatrixWorld(true);
+        });
+      }, { once: true });
+      const reference = normalizeReferenceSpec(options.referenceSpace);
+      const type = await resolveReferenceSpaceType(
+        active, reference.type, reference.required ? [] : reference.fallbackOrder,
+      );
+      if (ended) return;
+      if (this.disposed) {
+        await active.end();
+        return;
+      }
+      this.xrManager.enabled = true;
+      this.xrManager.setReferenceSpaceType(type);
+      // Same single-depth-owner rule as IWSDK's normal session adopter.
+      this.xrManager.getDepthSensingMesh = () => null;
+      await this.xrManager.setSession(active);
+      if (!ended && !this.disposed) this.world.session = active;
+      else if (!ended) await active.end();
+    } catch (error) {
+      this.xrEntryError = error instanceof Error ? error.message : String(error);
+      if (session != null) await session.end().catch((endError: unknown) => {
+        console.warn('[weather-room] XR entry cleanup failed', endError);
+      });
+      if (!this.disposed && this.xrNote != null) this.xrNote.textContent = `${t('xrEntryFailed')} ${this.xrEntryError}`;
+      console.error('[weather-room] XR entry failed', error);
+    } finally {
+      this.launchingXr = false;
+      if (!this.disposed && this.enterButton != null) this.enterButton.disabled = this.xrSupported !== true;
+    }
   }
 
   private buildPanel(): void {
@@ -644,7 +815,7 @@ export class BrowserPanelSystem extends createSystem({}) {
 
     const meta = document.createElement('div');
     meta.className = 'browser-panel-meta';
-    this.badge = el('span', 'mode-badge', 'LIVE');
+    this.badge = el('span', 'mode-badge', t('badgeLoading'));
     this.badge.className = 'browser-panel-badge';
     const declaredRevision: unknown = typeof __WEATHER_ROOM_REVISION__ === 'string' ? __WEATHER_ROOM_REVISION__ : 'unknown';
     const version = el('span', 'version-label', `rev ${typeof declaredRevision === 'string' && declaredRevision.length > 0 ? declaredRevision : 'unknown'}`);
@@ -691,26 +862,37 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.reloadButton.dataset.testid = 'reload';
     this.reloadButton.textContent = 'Reload';
     this.reloadButton.setAttribute('aria-label', 'Reload weather data');
-    // Timeline row keeps the -6h / NOW / +6h buttons; the DOM slider was
-    // removed (scrubbing lives on the spatial timeline in XR).
+    // Native coarse steps and a full-width touch slider; phone AR never
+    // depends on reaching a tracked-hand spatial knob.
     row.append(back, now, forward);
     root.appendChild(row);
+    this.timeScrub = document.createElement('input');
+    this.timeScrub.type = 'range';
+    this.timeScrub.min = '-24';
+    this.timeScrub.max = '24';
+    this.timeScrub.step = '0.5';
+    this.timeScrub.value = '0';
+    this.timeScrub.dataset.testid = 'time-scrub';
+    this.timeScrub.setAttribute('aria-label', t('ariaTimeScrub'));
+    root.appendChild(this.timeScrub);
 
-    // Compact manual-location row: preset select + "lat,lon" field + Set/Auto.
-    // Same row/heading visual language; no new panel styling beyond layout
-    // of the row itself (flex wrap inherited from .browser-panel-row).
-    const locLabel = document.createElement('label');
-    locLabel.className = 'browser-panel-scrub';
-    locLabel.setAttribute('for', `${BROWSER_PANEL_ROOT_ID}-location`);
-    locLabel.dataset.testid = 'location-label';
-    locLabel.textContent = 'Location';
-    root.appendChild(locLabel);
+    // Location controls behind one disclosure: the hero readout and the
+    // timeline dominate the card; picking a place is a deliberate second
+    // step. Testids keep their names, only the container changes.
+    const locationDisclosure = document.createElement('details');
+    locationDisclosure.className = 'browser-panel-location';
+    locationDisclosure.dataset.testid = 'location-disclosure';
+    const locationSummary = document.createElement('summary');
+    locationSummary.dataset.testid = 'location-label';
+    locationSummary.textContent = t('locationLabelPrefix');
+    locationDisclosure.appendChild(locationSummary);
     this.locationWrap = document.createElement('div');
-    this.locationWrap.className = 'browser-panel-row';
+    this.locationWrap.className = 'browser-panel-row browser-panel-location-content';
     this.locationWrap.dataset.testid = 'location-row';
     this.locationSelect = document.createElement('select');
     this.locationSelect.id = `${BROWSER_PANEL_ROOT_ID}-location`;
     this.locationSelect.dataset.testid = 'location-presets';
+    this.locationSelect.setAttribute('aria-label', t('locationChoose'));
     const chooseCity = document.createElement('option');
     chooseCity.value = '';
     chooseCity.textContent = t('locationChoose');
@@ -721,6 +903,8 @@ export class BrowserPanelSystem extends createSystem({}) {
       option.textContent = preset.label;
       this.locationSelect.appendChild(option);
     }
+    const manualRow = document.createElement('div');
+    manualRow.className = 'browser-panel-location-manual';
     this.locationInput = document.createElement('input');
     this.locationInput.type = 'text';
     this.locationInput.dataset.testid = 'location-input';
@@ -731,22 +915,42 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.locationApply.type = 'button';
     this.locationApply.dataset.testid = 'location-set';
     this.locationApply.setAttribute('aria-label', 'Set manual location');
+    manualRow.append(this.locationInput, this.locationApply);
     this.locationClear = document.createElement('button');
     this.locationClear.type = 'button';
     this.locationClear.dataset.testid = 'location-auto';
     this.locationClear.setAttribute('aria-label', t('ariaDetectLocation'));
-    this.locationWrap.append(this.locationSelect, this.locationInput, this.locationApply, this.locationClear);
-    root.appendChild(this.locationWrap);
+    this.locationWrap.append(this.locationSelect, manualRow, this.locationClear);
+    locationDisclosure.appendChild(this.locationWrap);
     this.locationError = el('p', 'location-error', '');
     this.locationError.className = 'browser-panel-note';
     this.locationError.hidden = true;
-    root.appendChild(this.locationError);
+    locationDisclosure.appendChild(this.locationError);
 
     // One short hint line: how to show weather for your own place.
     this.locationHintEl = el('p', 'location-hint', t('locationHint'));
     this.locationHintEl.className = 'browser-panel-note';
-    root.appendChild(this.locationHintEl);
+    locationDisclosure.appendChild(this.locationHintEl);
+    root.appendChild(locationDisclosure);
 
+    // Labelled gesture-sandbox toggle: same store flip as the spatial
+    // Button, with visible OFF/ON state. Phone browsers (and phone XR)
+    // have no hand tracking, so the note says so instead of faking it.
+    const sandboxRow = document.createElement('div');
+    sandboxRow.className = 'browser-panel-row browser-panel-sandbox';
+    sandboxRow.setAttribute('role', 'group');
+    sandboxRow.setAttribute('aria-label', t('ariaSandbox'));
+    this.sandboxButton = document.createElement('button');
+    this.sandboxButton.type = 'button';
+    this.sandboxButton.dataset.testid = 'sandbox-toggle';
+    this.sandboxButton.dataset.state = 'off';
+    this.sandboxButton.textContent = t('sandboxOff');
+    this.sandboxButton.setAttribute('aria-label', t('ariaSandbox'));
+    sandboxRow.append(this.sandboxButton);
+    root.appendChild(sandboxRow);
+    this.sandboxNote = el('p', 'sandbox-note', t('sandboxHint'));
+    this.sandboxNote.className = 'browser-panel-note';
+    root.appendChild(this.sandboxNote);
     // One small utility row (Reload + Enter/Exit): chrome reduction so the
     // hero readout, not buttons, dominates the panel. Testids preserved.
     const xrRow = document.createElement('div');
@@ -784,24 +988,49 @@ export class BrowserPanelSystem extends createSystem({}) {
 
   private applySessionVisibility(): void {
     if (this.root == null) return;
-    // The last XR visibility signal can outlive sessionend until the next render frame.
-    const is2D = !this.xrManager.isPresenting;
-    this.root.hidden = !is2D;
-    this.root.dataset.session = is2D ? 'browser' : 'immersive';
-    if (this.enterButton != null) this.enterButton.hidden = !is2D || !this.world.xrEnabled;
-    if (this.exitButton != null) this.exitButton.hidden = is2D;
+    // Handheld screen/transient-pointer XR has no tracked hands: the DOM
+    // panel stays mounted so native touch controls keep working, while
+    // the spatial panel (PanelSystem, same helper) hides itself.
+    // usesSpatialControls() also re-resolves when delayed tracked sources
+    // arrive, so update() re-checks every frame below.
+    const presenting = this.xrManager.isPresenting;
+    const spatial = presenting && usesSpatialControls(this.world);
+    const phoneXr = presenting && !spatial;
+    const session = this.world.xrSession;
+    if (phoneXr && session != null && session.domOverlayState == null && this.rejectedTouchSession !== session) {
+      for (const source of session.inputSources) {
+        if (source.targetRayMode !== 'screen' && source.targetRayMode !== 'transient-pointer') continue;
+        // A handheld session without a granted overlay has no reachable UI.
+        this.rejectedTouchSession = session;
+        this.xrEntryError = t('xrTouchUnavailable');
+        void this.world.exitXR();
+        break;
+      }
+    }
+    const wasHidden = this.root.hidden;
+    this.root.hidden = spatial;
+    this.root.dataset.session = spatial ? 'immersive' : presenting ? 'phone-xr' : 'browser';
+    if (this.enterButton != null) this.enterButton.hidden = presenting || !this.world.xrEnabled;
+    if (this.exitButton != null) this.exitButton.hidden = !presenting;
     if (this.xrNote != null && !this.world.xrEnabled) {
       this.xrNote.textContent = t('xrDisabled');
+    } else if (this.xrNote != null && phoneXr) {
+      this.xrNote.textContent = t('xrPhoneNote');
+    } else if (this.xrNote != null && !presenting && this.xrEntryError != null) {
+      this.xrNote.textContent = `${t('xrEntryFailed')} ${this.xrEntryError}`;
     }
-    if (!this.root.hidden) this.dirty = true;
+    if (wasHidden !== spatial && !this.root.hidden) this.dirty = true;
     // XR owns the camera while presenting; the 2D orbit owns it otherwise.
     this.syncOrbitListeners();
+    this.syncSandboxNote();
   }
-
   /** Throttled visible refresh: the cached frame advances even without store events. */
   update(): void {
     // Zoom easing runs every frame (before the panel's throttle guard).
     this.stepOrbitZoom();
+    // Delayed tracked-source arrival flips usesSpatialControls mid-session:
+    // re-resolve visibility every frame so neither surface freezes.
+    this.applySessionVisibility();
     if (this.disposed || this.root == null || this.root.hidden) return;
     const now = performance.now();
     if (now - this.lastRenderAt < 500) return;
@@ -852,8 +1081,9 @@ export class BrowserPanelSystem extends createSystem({}) {
 
     if (this.badge != null) {
       const demo = demoDataset || status.kind === 'demo';
-      this.badge.textContent = demo ? t('badgeDemo') : t('badgeLive');
-      this.badge.dataset.mode = demo ? 'demo' : 'live';
+      const loading = current == null || dataset == null;
+      this.badge.textContent = loading ? t('badgeLoading') : demo ? t('badgeDemo') : t('badgeLive');
+      this.badge.dataset.mode = loading ? 'loading' : demo ? 'demo' : 'live';
     }
     if (this.reloadButton != null) {
       const loading = status.kind === 'loading' || status.kind === 'locating';
@@ -861,6 +1091,11 @@ export class BrowserPanelSystem extends createSystem({}) {
       // label never changes, so it can never shift or spill out of the box.
       this.reloadButton.disabled = loading;
       this.reloadButton.setAttribute('aria-busy', loading ? 'true' : 'false');
+    }
+    if (this.timeScrub != null) {
+      this.timeScrub.disabled = current == null;
+      this.timeScrub.value = String(playheadHours);
+      this.timeScrub.setAttribute('aria-valuetext', isLive ? t('playheadNow') : `${playheadHours}h`);
     }
 
     if (current == null || dataset == null) {
@@ -871,8 +1106,7 @@ export class BrowserPanelSystem extends createSystem({}) {
             : t('statusLoading');
       }
       if (this.locationLine != null) this.locationLine.textContent = t('locatingShort');
-      const early = isLive ? t('playheadNow') : `${playheadHours}h`;
-      if (this.timeLine != null) this.timeLine.textContent = early;
+      if (this.timeLine != null) this.timeLine.textContent = '…';
       if (this.heroLine != null) this.heroLine.textContent = t('missingValue');
       if (this.weatherLine != null) this.weatherLine.textContent = t('missingValue');
       return;
@@ -940,6 +1174,12 @@ export class BrowserPanelSystem extends createSystem({}) {
       this.weatherLine.textContent = `${t('rain')} ${rain} (${prob}) · ${t('wind')} ${wind}`;
     }
     this.syncLocationRow(lang);
+    if (this.sandboxButton != null) {
+      const on = weatherStore.state.peek().sandbox;
+      this.sandboxButton.textContent = on ? t('sandboxOn') : t('sandboxOff');
+      this.sandboxButton.dataset.state = on ? 'on' : 'off';
+      this.sandboxButton.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
   }
 
   /** Static chrome: buttons, labels, aria, and the location picker skeleton. */
@@ -956,7 +1196,11 @@ export class BrowserPanelSystem extends createSystem({}) {
     if (back != null) back.textContent = t('stepBack');
     if (now != null) now.textContent = t('goLive');
     if (forward != null) forward.textContent = t('stepForward');
-    if (this.reloadButton != null) this.reloadButton.setAttribute('aria-label', t('ariaReload'));
+    this.timeScrub?.setAttribute('aria-label', t('ariaTimeScrub'));
+    if (this.reloadButton != null) {
+      this.reloadButton.textContent = t('reload');
+      this.reloadButton.setAttribute('aria-label', t('ariaReload'));
+    }
     if (this.langButton != null) {
       this.langButton.textContent = t('langName');
       this.langButton.setAttribute('aria-label', t('ariaSwitchLanguage'));
@@ -964,11 +1208,17 @@ export class BrowserPanelSystem extends createSystem({}) {
     if (this.enterButton != null) this.enterButton.textContent = t('enterAr');
     if (this.exitButton != null) this.exitButton.textContent = t('exit');
     if (this.xrNote != null) {
-      this.xrNote.textContent = t(!this.world.xrEnabled ? 'xrDisabled'
-        : this.xrSupported == null ? 'xrChecking'
-        : this.xrSupported ? 'xrEnterHint' : 'xrUnavailable');
+      const presenting = this.xrManager.isPresenting;
+      const spatial = presenting && usesSpatialControls(this.world);
+      this.xrNote.textContent = !this.world.xrEnabled ? t('xrDisabled')
+        : spatial ? t('xrEnterHint')
+        : presenting ? t('xrPhoneNote')
+        : this.xrEntryError != null ? `${t('xrEntryFailed')} ${this.xrEntryError}`
+        : this.xrSupported == null ? t('xrChecking')
+        : this.xrSupported ? t('xrEnterHint') : t('xrUnavailable');
     }
     this.root?.querySelector('[data-testid="location-label"]')?.replaceChildren(t('locationLabelPrefix'));
+    this.locationSelect?.setAttribute('aria-label', t('locationChoose'));
     if (this.locationInput != null) {
       this.locationInput.placeholder = t('locationPlaceholder');
       this.locationInput.setAttribute('aria-label', t('locationPlaceholder'));
@@ -981,16 +1231,15 @@ export class BrowserPanelSystem extends createSystem({}) {
       this.locationClear.textContent = t('locationClear');
       this.locationClear.setAttribute('aria-label', t('ariaDetectLocation'));
     }
-    if (this.locationHintEl != null) {
-      // A denied permission is stated plainly instead of letting the button
-      // silently fail; the note clears when the precheck sees a grant.
-      this.locationHintEl.textContent = this.permission === 'denied' ? t('geoDenied') : t('locationHint');
+    if (this.sandboxButton != null) {
+      const on = weatherStore.state.peek().sandbox;
+      this.sandboxButton.textContent = on ? t('sandboxOn') : t('sandboxOff');
+      this.sandboxButton.dataset.state = on ? 'on' : 'off';
+      this.sandboxButton.setAttribute('aria-label', t('ariaSandbox'));
+      this.sandboxButton.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
-    if (this.locationError != null) {
-      const active = this.locationError.dataset.state;
-      if (active === 'error' && !this.locationError.hidden) this.locationError.textContent = t('locationInvalid');
-    }
-    void lang;
+    this.root?.querySelector('.browser-panel-sandbox')?.setAttribute('aria-label', t('ariaSandbox'));
+    this.syncSandboxNote();
   }
 
   /** Keep the preset select in sync with the persisted manual location. */
@@ -1009,6 +1258,15 @@ export class BrowserPanelSystem extends createSystem({}) {
     if (this.locationInput != null && document.activeElement !== this.locationInput) {
       this.locationInput.value = manual != null ? `${manual.latitude}, ${manual.longitude}` : '';
     }
+  }
+  /**
+   * Sandbox explainer: gestures require tracked XR input; native touch
+   * controls never claim that a phone/browser can detect a clap.
+   */
+  private syncSandboxNote(): void {
+    if (this.sandboxNote == null) return;
+    const on = weatherStore.state.peek().sandbox;
+    this.sandboxNote.textContent = `${on ? t('sandboxHintOn') : t('sandboxHint')} ${t('sandboxPhoneNote')}`;
   }
 
   /**
@@ -1241,6 +1499,9 @@ export class BrowserPanelSystem extends createSystem({}) {
   }
 
   private readonly onOrbitPointerDown = (event: PointerEvent): void => {
+    // Panel-first: taps that start on the DOM card (or any non-canvas
+    // surface) never start an orbit; the canvas cannot swallow a control.
+    if (event.target !== this.orbitCanvas) return;
     const canvas = this.orbitCanvas;
     if (canvas == null || event.button !== 0) return;
     event.preventDefault();

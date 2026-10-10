@@ -45,6 +45,7 @@ import type { Object3D } from '@iwsdk/core';
 import { WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
 import { Haptics, pulseHaptics } from '../feedback.js';
 import { ContactImpulse, playClapCue } from '../control-placement.js';
+import { trackedInputKind } from '../capabilities.js';
 
 /**
  * Palm centers closer than this (meters) qualify the distance half of a
@@ -103,13 +104,12 @@ export class GestureSandboxSystem extends createSystem({}) {
    * controller mode — the same anchors the hand occluder binds to.
    */
   private palmAnchor(hand: Handedness): Object3D | null {
-    const adapters = this.input.xr.visualAdapters;
-    const model = adapters.hand[hand].visual?.model ?? null;
-    if (model != null) {
-      const palm = model.getObjectByName('middle-finger-metacarpal') ?? model.getObjectByName('wrist');
-      if (palm != null) return palm;
+    const kind = trackedInputKind(this.world, hand);
+    if (kind === 'hand') {
+      const model = this.input.xr.visualAdapters.hand[hand].visual?.model;
+      return model?.getObjectByName('middle-finger-metacarpal') ?? model?.getObjectByName('wrist') ?? null;
     }
-    if (adapters.controller[hand].connected) return this.player.gripSpaces[hand];
+    if (kind === 'controller') return this.player.gripSpaces[hand];
     return null;
   }
 

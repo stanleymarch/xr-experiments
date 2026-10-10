@@ -84,12 +84,19 @@ void main() {
   // Vertical integration: opaque bases, sunlight opening the crowns.
   float light = exp(-density * 2.0) + uSun * clamp(density, 0.0, 1.0);
   float shade = clamp(light, 0.16, 1.7) * mix(0.72, 1.12, vUv.y) * (0.9 + 0.2 * lit);
-  float alpha = edge * (1.0 - exp(-density * 1.7)) * min(0.55, 0.08 + uCloud * 0.5);
+  // The deck is a body, not a lid: overcast needs a real presence, and a
+  // genuinely open sky gets a cool luminous rift instead of a flat gray cap.
+  float alpha = edge * (1.0 - exp(-density * 1.7)) * min(0.72, 0.1 + uCloud * 0.62);
   if (alpha < 0.008) discard;
-  vec3 slate = vec3(0.34, 0.38, 0.45) * shade;
+  // F5/F6: saturated storm slate with darker bases; crowns open warm only
+  // through real sun breaks (uSun), so overcast reads heavy, not pale gray.
+  vec3 slate = vec3(0.22, 0.27, 0.36) * shade;
   float rim = clamp(shade - 0.55, 0.0, 0.63) * 1.6;
   vec3 col = mix(slate, uTint * (0.65 + 0.55 * shade), clamp(uSun * rim, 0.0, 1.0));
   col = mix(col, vec3(0.9, 0.95, 1.0), uFlash * 0.85);
+  // Zenith break: where the cover genuinely opens, a cool luminous rift
+  // instead of a flat gray lid (overcast never gets one — uSun stays low).
+  col = mix(col, vec3(0.82, 0.88, 1.0), smoothstep(0.5, 1.0, uSun) * smoothstep(0.2, 0.6, shade) * 0.5);
   gl_FragColor = vec4(col, alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -100,12 +107,12 @@ const FOG_HUMID = 0.008;
 const DUST_COUNT = 400;
 /** One thick slab now holds the whole deck; the fragment ray-marches it. */
 const PLATE_COUNT = 1;
-const SUN_BRIGHT = 1.0;
-const SUN_DIM = 0.35;
-const SKY_CLEAR = new Color(0x27374a);
-const SKY_CLOUDY = new Color(0x5c6672);
-const HORIZON_CLEAR = new Color(0xa89a90);
-const HORIZON_CLOUDY = new Color(0x8b939c);
+const SUN_DIM = 0.2;
+const SUN_BRIGHT = 0.75;
+const SKY_CLEAR = new Color(0x1e2f45);
+const SKY_CLOUDY = new Color(0x3d4752);
+const HORIZON_CLEAR = new Color(0x76685f);
+const HORIZON_CLOUDY = new Color(0x525b66);
 const FLASH_MIN_INTERVAL_S = 4;
 const FLASH_MAX_INTERVAL_S = 11;
 /** Gaussian sigma and life of one lightning flash: a single ~0.35 s pulse. */
@@ -216,7 +223,7 @@ export class AtmosphereSystem extends createSystem({}) {
           uSeed: { value: i * 0.618033 },
           uSun: { value: 0 },
           uCloudSteps: { value: CLOUD_STEPS_FULL },
-          uTint: { value: new Color(0xdfe8f2) },
+          uTint: { value: new Color(0xa7b8cf) },
         },
         transparent: true,
         depthWrite: false,
@@ -224,6 +231,7 @@ export class AtmosphereSystem extends createSystem({}) {
       const plate = new Mesh(plateGeo, mat);
       plate.rotation.x = Math.PI / 2;
       plate.renderOrder = 5;
+      plate.name = 'Weather Cloud Slab';
       // Cloud sheets hang over the room; real walls and tall furniture must
       // cut them instead of being painted over.
       enableDepthOcclusion(mat);
@@ -251,7 +259,7 @@ export class AtmosphereSystem extends createSystem({}) {
     const dustMaterial = new ShaderMaterial({
       vertexShader: DUST_VERTEX,
       fragmentShader: DUST_FRAGMENT,
-      uniforms: { uColor: { value: new Color(0xcfd8e6) } },
+      uniforms: { uColor: { value: new Color(0x8b98ab) } },
       transparent: true,
       depthWrite: false,
       blending: NormalBlending,
@@ -273,8 +281,8 @@ export class AtmosphereSystem extends createSystem({}) {
     this.dustDummy.updateMatrix();
     for (let i = 0; i < DUST_COUNT; i += 1) this.dust.setMatrixAt(i, this.dustDummy.matrix);
     this.dust.instanceMatrix.needsUpdate = true;
+    this.dust.name = 'Weather Dust Motes';
     this.dustEntity = this.world.createTransformEntity(this.dust);
-
     // Procedural lights are tuned with the current cloud cover and daylight.
     this.sunEntity = this.world.createTransformEntity();
     this.sunEntity.addComponent(DirectionalLightComponent, { intensity: SUN_BRIGHT });
@@ -360,7 +368,7 @@ export class AtmosphereSystem extends createSystem({}) {
     }
     const baseSun =
       (SUN_BRIGHT - (SUN_BRIGHT - SUN_DIM) * cloud) * (0.22 + 0.78 * this.daylightEase);
-    const baseFill = 0.18 + 0.3 * this.daylightEase;
+    const baseFill = 0.1 + 0.18 * this.daylightEase;
 
     // Lightning: one soft Gaussian flash (~0.35 s visible), never a strobe.
     // Storm hours schedule it 4-11 s apart; a Thunder bus event (the hand-clap
@@ -398,6 +406,20 @@ export class AtmosphereSystem extends createSystem({}) {
     let sunIntensity = baseSun * (1 + hourPulse * 0.18) * (1 + flash * 0.9);
     let fillIntensity = baseFill * (1 + hourPulse * 0.12) * (1 + flash * 0.7);
     let plateFlash = hourPulse * 0.25 + flash;
+    // The computed ramp must reach the real lights: day/night, cloud dimming,
+    // the hour pulse and lightning all flow through these two entities.
+    this.sunEntity.setValue(DirectionalLightComponent, 'intensity', sunIntensity);
+    this.fillEntity.setValue(AmbientLightComponent, 'intensity', fillIntensity);
+    // The SEM/project environment map is the biggest radiance source; without
+    // this it holds the room at a flat full-white wash that no light ramp can
+    // cut through. Scale it with the same day/cloud envelope as the lights.
+    const env = this.world.scene;
+    if ('environmentIntensity' in env) {
+      env.environmentIntensity = Math.max(
+        0.12,
+        (0.85 - 0.5 * cloud) * (0.2 + 0.8 * this.daylightEase) * (1 + flash * 0.6),
+      );
+    }
 
     // Cloud sample count follows the measured frame time: 4 samples only while
     // a 72 Hz budget is actually held, 2 the moment it slips. The warmup skips

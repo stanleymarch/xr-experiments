@@ -30,17 +30,17 @@ import { roomModel } from '../room.js';
 import { weatherStore } from '../weather-state.js';
 import { windVectorFromFrame } from '../wind-shared.js';
 
-const MAX_FULL = 2400;
+const MAX_FULL = 3200;
 const MAX_REDUCED = 1200;
 const SPLASH_COUNT = 48;
-const SPLASH_FADE_S = 0.4;
+const SPLASH_FADE_S = 0.6;
 const FALL_BASE_SPEED = 4;
 /** World width of one streak. Wide enough to be macroscopic: at this size the
  * projectile reads as a real object whose apparent thickness grows with
  * proximity, instead of a sub-pixel hairline that aliases to the same 1 px at
  * every depth. */
-const STREAK_WIDTH = 0.014;
-const STREAK_BASE_LEN = 0.45;
+const STREAK_WIDTH = 0.012;
+const STREAK_BASE_LEN = 0.3;
 
 const RAIN_VERTEX = /* glsl */ `
 attribute float aAlpha;
@@ -67,18 +67,24 @@ void main() {
   float core = (cr + cg + cb) * 0.3333;
   float halo = exp(-x * x * 3.0) * 0.32;
   float head = 0.45 + 0.85 * exp(-pow((vUv.y - 0.1) * 3.0, 2.0));
-  float tail = smoothstep(0.0, 0.05, vUv.y) * (1.0 - smoothstep(0.4, 1.0, vUv.y) * 0.7);
+  // Contact must read: the tip stays lit to the surface (a hairline fade
+  // here is what made drops look like they stop above the floor).
+  float tail = smoothstep(0.0, 0.02, vUv.y) * (1.0 - smoothstep(0.4, 1.0, vUv.y) * 0.7);
   // Crossing the light shaft brightens the drop; outside it the rain dims.
   float beam = rBeamFactor(vBeamWorld);
   float a = (core + halo) * head * tail * vAlpha;
   if (a < 0.01) discard;
-  // Dispersion only where the core is; the halo stays neutral blue.
+  // Steel-blue/teal water, not white: saturated core survives ACES tone
+  // mapping instead of washing to pale gray. The halo keeps the drop's
+  // edge dark enough to read against a lit room (a light halo vanished on
+  // pale walls).
   vec3 fringe = vec3(cr, cg, cb) / max(cr + cg + cb, 0.0001);
-  vec3 col = mix(vec3(0.5, 0.66, 0.92), fringe, core);
-  col = mix(col, vec3(0.85, 0.92, 1.0), halo);
-  // Manual premultiplied additive under NormalBlending: the layer reads as
-  // light rather than paint while passthrough composition is preserved.
-  gl_FragColor = vec4(col * a * beam, a);
+  vec3 col = mix(vec3(0.16, 0.42, 0.6), fringe, core * 0.6);
+  col = mix(col, vec3(0.3, 0.55, 0.72), halo * 0.6);
+  // Straight (non-premultiplied) alpha under NormalBlending: the old
+  // col * a output double-multiplied (a^2 effective) and crushed saturated
+  // mid-tones toward pale transparency. Beam scales the color only.
+  gl_FragColor = vec4(col * beam, a);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -106,12 +112,19 @@ void main() {
   float ang = atan(p.y, p.x);
   float comb = pow(0.5 + 0.5 * cos(ang * 6.0), 8.0);
   float radial = smoothstep(1.0, 0.25, d) * (1.0 - smoothstep(0.0, 0.14, d));
-  float glint = exp(-d * d * 9.0) * 0.35;
-  float beam = rBeamFactor(vBeamWorld);
+  float glint = exp(-d * d * 9.0) * 0.8;
   float a = (comb * radial + glint) * vFade;
   if (a < 0.01) discard;
-  float outA = a * 0.65;
-  gl_FragColor = vec4(vec3(0.62, 0.78, 1.0) * beam * outA, outA);
+  // Teal-steel contact mark, straight alpha: legible against pale fog without
+  // going white. Representative contacts only (48-pool vs 2400 drops).
+  float outA = a;
+  // The beam helpers are injected but never pre-evaluated in this shader:
+  // without this line beam is an undeclared identifier and the whole
+  // program fails to compile (the rings then never draw).
+  float beam = rBeamFactor(vBeamWorld);
+  // A physical impact does not dim outside the light shaft: floor the beam
+  // so contact rings stay legible across the whole room.
+  gl_FragColor = vec4(vec3(0.35, 0.62, 0.8) * max(beam, 0.6), outA);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -143,8 +156,12 @@ export class RainSystem extends createSystem({}) {
     this.profile = capabilityProfile(this.world);
 
     // Streak field: thin quads stretched along the fall+wind velocity.
+    // Contact invariant: positions[] is the streak HEAD (leading tip). The
+    // geometry grows upward (+Y) by the per-instance length, so the contact
+    // test below fires exactly when the visible tip reaches a mapped surface
+    // (table) or the room floor. Never recycle pre-impact.
     const geo = new PlaneGeometry(STREAK_WIDTH, 1);
-    geo.translate(0, -0.5, 0); // pivot at the streak head (bottom).
+    geo.translate(0, 0.5, 0);
     const material = new ShaderMaterial({
       vertexShader: RAIN_VERTEX,
       fragmentShader: RAIN_FRAGMENT,
@@ -176,9 +193,11 @@ export class RainSystem extends createSystem({}) {
     for (let i = 0; i < MAX_FULL; i += 1) this.streaks.setMatrixAt(i, this.dummy.matrix);
     this.streaks.instanceMatrix.needsUpdate = true;
     this.streaks.count = 0;
+    this.streaks.name = 'Weather Rain Streaks';
     this.entity = this.world.createTransformEntity(this.streaks);
-
-    const splashGeo = new RingGeometry(0.032, 0.06, 24);
+    // F5/F6 legibility: 9.5 cm outer ring (was 6 cm) reads against fog at 2 m
+    // without going white; representative contacts only (48-pool, see below).
+    const splashGeo = new RingGeometry(0.045, 0.095, 24);
     const fadeAttr = new InstancedBufferAttribute(this.splashFade, 1);
     fadeAttr.setUsage(DynamicDrawUsage);
     splashGeo.setAttribute('aFade', fadeAttr);
@@ -211,6 +230,7 @@ export class RainSystem extends createSystem({}) {
     this.dummy.updateMatrix();
     for (let i = 0; i < SPLASH_COUNT; i += 1) this.splashMesh.setMatrixAt(i, this.dummy.matrix);
     this.splashMesh.instanceMatrix.needsUpdate = true;
+    this.splashMesh.name = 'Weather Rain Contacts';
     this.splashEntity = this.world.createTransformEntity(this.splashMesh);
     this.cleanupFuncs.push(() => {
       this.entity.dispose();
@@ -229,8 +249,9 @@ export class RainSystem extends createSystem({}) {
     }
     const { drivers, frame } = current;
     // Compress the display density range so genuine drizzle remains visible;
-    // zero precipitation still produces zero drops.
-    const live = Math.max(1, Math.floor(Math.sqrt(drivers.rain) * budget));
+    // zero precipitation still produces zero drops. The 0.35 exponent lifts
+    // drizzle out of "a handful of scratches" without flattening downpours.
+    const live = Math.max(1, Math.floor(Math.pow(drivers.rain, 0.35) * budget));
     this.streaks.count = live;
     windVectorFromFrame(frame, 0.35, this.wind);
     this.wind.multiplyScalar(1 + Math.max(0, drivers.gust - drivers.wind) * 0.8);
@@ -258,10 +279,11 @@ export class RainSystem extends createSystem({}) {
         this.positions[ix + 2] = min.z + ((seed * 13) % 1) * spanZ;
         this.speeds[i] = fallBase * (0.85 + 0.3 * ((seed * 29) % 1));
         this.lengths[i] = STREAK_BASE_LEN * (0.7 + 0.6 * drivers.rain + 0.2 * ((seed * 31) % 1));
-        this.alphas[i] = 0.62 + 0.33 * drivers.rain;
+        this.alphas[i] = 0.72 + 0.28 * drivers.rain;
       }
     }
-    // Simulate drops: recycle each one at the first surface it crosses.
+    // positions[] is the leading tip; local +Y is its trailing streak.
+    // Test this tip against the surface, then recycle only on impact.
     for (let i = 0; i < live; i += 1) {
       if (this.alphas[i] <= 0) continue;
       const ix = i * 3;
@@ -272,6 +294,9 @@ export class RainSystem extends createSystem({}) {
       // Wrap horizontally inside the volume.
       this.positions[ix] = min.x + ((this.positions[ix] - min.x) % spanX + spanX) % spanX;
       this.positions[ix + 2] = min.z + ((this.positions[ix + 2] - min.z) % spanZ + spanZ) % spanZ;
+      // surfaceHeightAt(x, z, previousY): highest mapped surface at/below the
+      // pre-step tip. Mapped cell -> splash at that height; null (unmapped)
+      // -> fall through to floorY + 0.02. Null is never faked into geometry.
       const surfaceY = roomModel.surfaceHeightAt(this.positions[ix], this.positions[ix + 2], previousY);
       if (surfaceY != null && this.positions[ix + 1] <= surfaceY) {
         this.spawnSplash(this.positions[ix], this.positions[ix + 2], surfaceY);
@@ -280,6 +305,10 @@ export class RainSystem extends createSystem({}) {
         this.spawnSplash(this.positions[ix], this.positions[ix + 2], floorY);
         this.recycle(i, min, height);
       }
+      // Contact anticipation input: distance left to this drop's stop
+      // surface (mapped surface, or the floor when the cell is unmapped).
+      const stopY = surfaceY ?? floorY + 0.02;
+      const stopGap = stopY - this.positions[ix + 1];
       const toCamYaw = Math.atan2(
         this.cameraPos.x - this.positions[ix],
         this.cameraPos.z - this.positions[ix + 2],
@@ -297,10 +326,13 @@ export class RainSystem extends createSystem({}) {
       const ddz = this.positions[ix + 2] - this.cameraPos.z;
       const distance = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
       const atten = Math.max(
-        0.3,
-        Math.min(1.2, (1.2 / (1 + 0.3 * distance)) * Math.exp(-fogDensity * 6 * distance)),
+        0.42,
+        Math.min(1.2, (1.2 / (1 + 0.3 * distance)) * Math.exp(-fogDensity * 4 * distance)),
       );
-      this.alphasOut[i] = this.alphas[i] * atten;
+      // Contact anticipation: brighten the last 25 cm of fall so the eye
+      // follows the drop onto the surface instead of losing it in the fog.
+      this.alphasOut[i] =
+        this.alphas[i] * atten * (stopGap < 0.25 ? 1 + (1 - Math.max(0, stopGap) / 0.25) * 0.6 : 1);
       // Cylindrical billboard toward the camera, tilted into the wind.
       this.dummy.position.set(this.positions[ix], this.positions[ix + 1], this.positions[ix + 2]);
       this.dummy.rotation.set(0, toCamYaw, tiltZ);
@@ -350,7 +382,7 @@ export class RainSystem extends createSystem({}) {
       this.splashFade[s] = (1 - t) * (1 - t);
       this.dummy.position.set(this.splashPos[si], this.splashPos[si + 1], this.splashPos[si + 2]);
       this.dummy.rotation.set(-Math.PI / 2, 0, 0);
-      this.dummy.scale.setScalar(0.5 + t * 1.9);
+      this.dummy.scale.setScalar(0.7 + t * 1.3);
       this.dummy.updateMatrix();
       this.splashMesh.setMatrixAt(s, this.dummy.matrix);
       splashDirty = true;

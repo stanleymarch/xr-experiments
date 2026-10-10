@@ -76,9 +76,11 @@ void main() {
 }
 `;
 
-const WARM_COLOR = new Color(1.0, 0.82, 0.6);
-const NEUTRAL_COLOR = new Color(0.75, 0.8, 0.88);
-const COLD_COLOR = new Color(0.55, 0.75, 1.0);
+// F5/F6: amber warmth and deep ice-blue cold, both saturated enough to read
+// through fog/tonemapping; neutral stays a quiet gray-blue, never white.
+const WARM_COLOR = new Color(0.98, 0.6, 0.28);
+const NEUTRAL_COLOR = new Color(0.55, 0.62, 0.72);
+const COLD_COLOR = new Color(0.3, 0.55, 0.98);
 
 export class TemperatureSystem extends createSystem({}) {
   private entity!: Entity;
@@ -120,8 +122,8 @@ export class TemperatureSystem extends createSystem({}) {
     this.dummy.updateMatrix();
     for (let i = 0; i < HAZE_COUNT; i += 1) this.haze.setMatrixAt(i, this.dummy.matrix);
     this.haze.instanceMatrix.needsUpdate = true;
+    this.haze.name = 'Weather Temperature Haze';
     this.entity = this.world.createTransformEntity(this.haze);
-
     this.lampEntity = this.world.createTransformEntity();
     this.lampEntity.addComponent(PointLightComponent, { intensity: 0.4, distance: 6 });
     this.cleanupFuncs.push(() => {

@@ -37,6 +37,7 @@ import { createSystem, Vector3 } from '@iwsdk/core';
 import type { Object3D } from '@iwsdk/core';
 import { handFieldUniforms } from '../hand-field.js';
 import { playPushWhoosh } from '../control-placement.js';
+import { trackedInputKind } from '../capabilities.js';
 
 /** Palm capsule radius, meters (~6 cm per the hand-field spec). */
 const PALM_RADIUS = 0.06;
@@ -166,15 +167,13 @@ export class HandFieldSystem extends createSystem({}) {
   /** Match one hand to whichever input source is live for it. */
   private sync(hand: Handedness): void {
     const adapters = this.input.xr.visualAdapters;
-    // A live hand visual means the runtime is tracking that hand, so it wins
-    // over a controller reporting the same handedness — same rule the hand
-    // occluder applies.
+    const kind = trackedInputKind(this.world, hand);
     const model = adapters.hand[hand].visual?.model;
-    if (model != null) {
+    if (kind === 'hand' && model != null) {
       this.bindHand(hand, model);
       return;
     }
-    if (adapters.controller[hand].connected) {
+    if (kind === 'controller') {
       this.bindController(hand);
       return;
     }

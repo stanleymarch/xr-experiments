@@ -478,8 +478,34 @@ too and why this module owns its own decode.
   `Weather Timeline Ray Handle` trigger paths all produced `Grabbed`.
   Near and ray controller drags each set `+12h`; hand and ray drags back
   snapped to NOW. The visible knob remained on the rail after release.
-  `screen-input-smoke.html` additionally verifies exact X→hour mapping,
-  snap-to-live and re-seat through the real TimelineSystem.
+  `interaction-math-smoke.html` (then `screen-input-smoke.html`)
+  additionally verified exact X→hour mapping, snap-to-live and re-seat
+  through the real TimelineSystem.
+  (Superseded 2026-10-10: near grab needed an explicit-intent fix, below.)
+- 2026-10-10 near-grab intent pass (IWER, native session events through the
+  MCP runtime): IWSDK 1.0.1 gives poke (touch) hover priority over grab, so a
+  squeeze with a controller 0-20 cm from a panel could be silently ignored
+  while the grab sphere legitimately intersected the Control Bar shell
+  (verified: squeeze at the exact shell pose produced `squeezestart` but no
+  `Grabbed` until the touch sub-pointer was unregistered for that hand).
+  `ControlGrabIntentSystem` now listens to native session squeeze/pinch
+  starts, and only when the hand's grab sphere reaches a marked
+  `WeatherControlGrip` shell (panel bar, timeline move bar, knob, pinch
+  strip) suppresses that one hand's touch sub-pointer for the hold,
+  restoring it on release/loss/session end. Verified: panel and rail near
+  squeezes now acquire `Grabbed` through native `squeezestart`; panel
+  carried behind the viewer (+2.35 m Z) parks exactly on release; held
+  thumbstick push/pull accumulates 0.54 m and a centered stick stops dead
+  (≤0.054 m bounded settle from the SDK handle equilibrium); the ray path
+  trigger-grabs the far shell from 1.07 m, carries through a full arc behind
+  the viewer and parks exactly on release; ordinary poke clicks on the UIKit
+  `+6h` button still land (pointerdown→up→click, playhead 6) once the touch
+  pointer is within its 2 cm down radius and inside the 800 ms click window.
+  `interaction-math-smoke.html` (renamed from `screen-input-smoke.html`;
+  the phone screen-ray bridge it tested was removed with the phone touch
+  UI cutover) passes: control transforms, movement limits, release edges,
+  held-target accumulation survives a centered stick, room surfaces and
+  probe ownership.
 - Both whole-control bars were moved and released through controller
   proximity grab, hand pinch, and ray grab. For example, a controller move
   `(0.20, 0.10, 0.05)` moved the panel from `(0, 1.90, -1.50)` to
@@ -517,8 +543,129 @@ too and why this module owns its own decode.
   section rhythm is 8/16/24. The picker was opened and closed through real
   MCP controller rays in EN and RU after the changes
   (`artifacts/ui-fix-picker-live-{en,ru}.png`); hover over the move grip
-  still never moves the panel; `screen-input-smoke.html` passes; no new
+  still never moves the panel; the smoke page (now
+  `interaction-math-smoke.html`) passed; no new
   font/glyph/parse errors in the managed console.
+- 2026-10-10 browser card rebuild (phone-first): the flat card had grown
+  into an 820 px wall that covered ~97% of a 390x844 phone screen, hid
+  the room, and its bottom notes overflowed the scrolling body into the
+  action footer (measured `xr-note` painting 34 px past the body edge).
+  Location controls now live behind a native `<details>` disclosure
+  (44 px field-styled summary, same testids), the dead mid-card
+  "Location" label row is gone, the footer can never be overpainted
+  (body scrolls, footer stays in flow), and Reload is localized.
+  Verified on a 390x844 phone viewport: card height 665 px closed (~21%
+  of the screen shows the room), the disclosure opens to 240 px with
+  select/manual/locate rows, taps on step/NOW/sandbox/language all land
+  (hero and scrub track the store), and there is no overlap or clipping
+  in portrait or 1280x600 landscape (captures
+  `.tmp/phone-card-final3.png`, `.tmp/desktop-landscape-card.png`).
+- 2026-10-10 rain-floor pass (IWER + pixel measurement): the simulation
+  was already reaching the floor — live buffers showed the lowest streak
+  tip at y=0.0145 with `floorY+0.02 = 0.0127` and all 48 contact rings
+  refreshing at floor level — but it *read* otherwise: the streak
+  fragment shader faded its bottom tip in over the lowest 5% of the quad
+  and beam-dimmed everything outside the light shaft, so a captured frame
+  carried only 1,362 rain pixels (0.13%) with none near the contact zone.
+  Fixes: the tip now fades in over 2% (lit to the surface), the final
+  25 cm of fall brightens up to 1.6x (contact anticipation), and contact
+  rings floor the beam factor at 0.6 because a physical impact does not
+  dim outside the shaft. After the change the same view carries 32,424
+  rain pixels (6.76%) across every row including the frame bottom, and
+  the vision review confirms streaks continue into the floor mesh with
+  no mid-air stop. Rain/splash materials keep the instance-correct depth
+  occlusion injection (see "Real-world depth occlusion"); visual
+  occlusion cannot be judged against the emulator's untextured room mesh
+  and stays pending the Quest hardware check.
+- 2026-10-10 palette pass (IWER + live uniform inspection): the flat white
+  wash had two concrete causes. (1) `AtmosphereSystem` computed the
+  sun/fill ramp (day/night, cloud dimming, hour pulse, lightning) every
+  frame but never wrote it to the light entities — the room lights sat at
+  their init values forever; the computed intensities now land on the
+  `DirectionalLightComponent`/`AmbientLightComponent` entities. (2) The
+  project environment map ran at full intensity and dominated every lit
+  surface; `scene.environmentIntensity` now follows the same envelope
+  (0.85..0.35 by cloud cover, 0.2..1.0 by daylight, lightning lift).
+  Layer tints were deepened with it: fog/horizon ramp (was pale
+  0x9fb4cc base), sky 0x46505c -> 0x3d4752, horizon cloudy -> 0x525b66,
+  dust 0xaeb9c8 -> 0x8b98ab, cloud crown tint 0xb9c8dc -> 0xa7b8cf.
+  Verified live: fog 5d5f64 @ 0.0292, cloud deck uSun 0.16 over a slate
+  base, env intensity 0.48 at 73% cover. The emulator's own room render
+  is not part of the app scene (scene-level paint probes do not appear in
+  captures), so on-device contrast of the virtual layers over real
+  passthrough stays part of the Quest check.
+- 2026-10-10 designer audit + fixes (independent review of app-only
+  stills): must-fix findings were rain volume ("10-12 thick scratches,
+  reads as debug vectors"), the look-up view reading as a flat gray lid,
+  and no spatial UI visible in the reviewed stills. Fixed/closed: rain
+  display curve now uses a 0.35 exponent (drizzle 590 -> 890 drops at
+  budget 3200, demo rain 2519), streaks are shorter/thinner (0.45 ->
+  0.30 m, 14 -> 12 mm) so they read as a field rather than scratches,
+  contrast raised (seed alpha 0.72+, fog attenuation softened, floor
+  0.42) and the follow-up capture reads as "moderate rain, ~100-120
+  streaks" instead of ~12; the cloud deck's opacity cap rose 0.55 -> 0.72
+  so overcast has presence and a clear sky gets a cool zenith rift; the
+  spatial panel and timeline rail do spawn in frame (verified live:
+  panel visible at 1.41 m in front of the viewer — the audit stills had
+  simply been posed away from them). Optional art-direction items from
+  the audit (desktop right-third storm field, a warm counter-accent,
+  folding helper copy behind a disclosure, warm horizon glow) are
+  recorded as deferred experiments.
+- 2026-10-10 gesture-sandbox pass (IWER, native session + store probes):
+  the sandbox entry is now explicit instead of a bare toggle. The hint
+  line states the entry action and the controller path in both languages
+  ("Turn Sandbox on, then clap for thunder or sweep a hand to part the
+  rain. Controllers clap too." / "Включите песочницу, затем хлопните…"),
+  and while the sandbox is ON the hint switches to the armed form
+  ("Sandbox on: clap for thunder, sweep a hand to part the rain."),
+  verified live through `ui_inspect` on both states and in the browser
+  card note. Actions verified end-to-end in one XR session: a controller
+  clap (palms = grip spaces, closed to 4 cm in two steps) fired
+  `WeatherEvent.Thunder {source:'clap'}` with the atmosphere flash peak
+  0.59; with the sandbox OFF the identical clap fired nothing; in hand
+  mode a real hand clap (metacarpal centers to 7.6 cm) fired the thunder
+  and flash (peak 0.60) and the detector disarmed for hysteresis as
+  designed. Rain parting rides the always-on hand push field, not the
+  sandbox flag.
+- 2026-10-10 verification sweep (current build): `npm run build` and
+  `tsc --noEmit` clean; `interaction-math-smoke.html` passes; one XR
+  session exercised near squeeze on the rail bar, far ray grab + carry
+  behind the viewer with exact release persistence, ray-knob scrub
+  (playhead 0 -> 7.7 h), and a poke click on the spatial `+6h` button
+  (7.7 -> 13.7 h); phone touch sweep after XR exit stepped +6h, returned
+  to NOW, and flipped the sandbox label both ways. Console check found a
+  real bug: the rain-contact fragment used `beam` without declaring it
+  (`enableBeamLighting` injects only the helpers), so the splash program
+  never compiled — `useProgram: program not valid` every frame and no
+  contact rings could ever draw. Declaring `float beam = rBeamFactor(...)`
+  in the splash fragment fixed the program (console clean, splash adds
+  its 2 draw calls again); ring legibility on the downscaled emulator
+  capture is still weak and stays part of the Quest check.
+- 2026-10-10 Quest hardware check (blocked by environment, no user
+  participation): a Quest 3 was connected over ADB
+  (`2G0YC5ZG5203DD`, model `Quest_3`) and driven without the user: device
+  woken, proximity override applied, `adb reverse tcp:8081` set, and the
+  Quest Browser launched with the paired bootstrap URL
+  (`com.oculus.browser/.BrowserActivity`). The headset could not start a
+  WebXR session: the guardian dialog "Finding position in room — your
+  headset can't detect your movement right now" stayed up (dim room,
+  headset unworn), so 6DOF tracking never became available and
+  immersive-ar could not be entered. Proximity was restored afterwards.
+  This is the hardware limitation to separate from the emulator evidence:
+  Quest-only sensing (planes, meshes, depth occlusion, hand tracking,
+  passthrough contrast) is verified only up to the point where a worn,
+  tracked session exists; those checks still need a lit room and the
+  user in the headset.
+- 2026-10-10 independent small-model vision check + fix: a separate
+  low-capability vision model scored the app-only captures with a fixed
+  rubric — UI legibility 5/5 on all three (phone card, desktop card, XR
+  view; no unreadable, clipped or overlapping text) but weather-layer
+  legibility only 1-2/5 ("thin sparse streaks, washed out over light
+  areas"). Fix: the rain fragment's core/halo colors deepened
+  (0.23/0.52/0.68 -> 0.16/0.42/0.6 core, 0.45/0.68/0.82 -> 0.3/0.55/0.72
+  halo) so drops keep an edge against lit walls; the same view then
+  scored 4/5 ("visible over both light and dark areas, weakest but not
+  invisible on the brightest white"). UI text findings were clean.
 - 2026-10-09 carry/rotate pass (IWER, scripted controller through the CLI):
   near squeeze on the blue plank grabs at touch range (0.045 m engages,
   0.18 m does not - near means near), then the panel follows the hand 1:1 on
@@ -538,11 +685,15 @@ too and why this module owns its own decode.
   panel and rail face the viewer automatically. The measurements above still
   document the kinematic 1:1 carry rule, which the rework preserves.)
 - The spatial panel is a world-space UIKitML surface; the browser DOM panel
-  is separate native HTML. `screen-input-smoke.html` proves a synthetic
-  unhanded XR screen ray clicks the real UIKit `+6h` button (playhead 6),
-  tracked-pointer selects are not double-handled, controls stay room-fixed
-  through focus transitions, recenter on a new session, and the DOM controls
-  return immediately after `sessionend`. Desktop DOM controls were exercised
+  is separate native HTML. The smoke page proved (before its 2026-10-10
+  rename to `interaction-math-smoke.html` and the removal of the phone
+  screen-ray bridge) that a synthetic unhanded XR screen ray clicked the
+  real UIKit `+6h` button, tracked-pointer selects were not double-handled,
+  controls stayed room-fixed through focus transitions and recentered on a
+  new session, and the DOM controls returned immediately after
+  `sessionend`. Phone-mode touch was re-verified natively on 2026-10-10
+  (step buttons, scrub drag to +12.5 h, NOW, sandbox and language toggles,
+  spatial controls hidden outside XR). Desktop DOM controls were exercised
   headlessly (step/live/scrub to 24h). Physical Android touch remains
   unverified.
 - `asset render-preview` for `timeline-control` (material + clay): 15 meshes,

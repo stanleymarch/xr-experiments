@@ -11,7 +11,7 @@
   "world": {
     "xr": {
       "mode": "ar",
-      "offer": "always",
+      "offer": "none",
       "features": {
         "handTracking": true,
         "anchors": true,

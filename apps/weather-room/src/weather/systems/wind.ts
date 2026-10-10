@@ -77,7 +77,8 @@ void main() {
   float a = core * torn * tips * pulse * vAlpha * beam;
   if (a < 0.01) discard;
   float outA = a * 0.6;
-  gl_FragColor = vec4(vec3(0.66, 0.86, 1.0) * outA, outA);
+  // Green-gray air: distinct from steel-blue rain at a glance.
+  gl_FragColor = vec4(vec3(0.55, 0.72, 0.62) * beam, outA);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -111,7 +112,7 @@ void main() {
   float a = dot_ * twinkle * vAlpha;
   if (a < 0.01) discard;
   float outA = a * 0.55 * beam;
-  gl_FragColor = vec4(vec3(0.72, 0.88, 1.0) * outA, outA);
+  gl_FragColor = vec4(vec3(0.6, 0.74, 0.62), outA);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -176,8 +177,8 @@ export class WindSystem extends createSystem({}) {
     this.streaks.frustumCulled = false;
     this.streaks.instanceMatrix.setUsage(DynamicDrawUsage);
     this.parkAll(this.streaks, STREAK_FULL);
+    this.streaks.name = 'Weather Wind Streaks';
     this.streakEntity = this.world.createTransformEntity(this.streaks);
-
     const sparkGeo = new PlaneGeometry(1, 1);
     const sparkAlphaAttr = new InstancedBufferAttribute(this.sparkAlphas, 1);
     sparkAlphaAttr.setUsage(DynamicDrawUsage);
@@ -199,8 +200,8 @@ export class WindSystem extends createSystem({}) {
     this.sparks.frustumCulled = false;
     this.sparks.instanceMatrix.setUsage(DynamicDrawUsage);
     this.parkAll(this.sparks, SPARK_FULL);
+    this.sparks.name = 'Weather Wind Sparks';
     this.sparkEntity = this.world.createTransformEntity(this.sparks);
-
     this.cleanupFuncs.push(() => {
       // InstancedMesh GPU buffers release only through their own dispose event.
       this.streaks.dispose();

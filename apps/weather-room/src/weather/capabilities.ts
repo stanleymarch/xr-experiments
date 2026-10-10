@@ -65,6 +65,40 @@ export function detectCapabilities(world: World): CapabilityProfile {
   };
 }
 
+/**
+ * World-space controls require tracked hands/controllers. Handheld screen AR
+ * keeps native touch controls even though it is an immersive session.
+ */
+export function usesSpatialControls(world: World): boolean {
+  const session = world.xrSession;
+  if (session == null) return false;
+  for (const source of session.inputSources) {
+    if (source.targetRayMode === 'tracked-pointer' && source.handedness !== 'none') return true;
+  }
+  // Hand tracking may be granted before the first tracked source arrives.
+  return session.enabledFeatures?.includes('hand-tracking') === true;
+}
+
+/** A rendered hand model can outlive its tracking; require poses this frame. */
+export function trackedInputKind(world: World, hand: 'left' | 'right'): 'hand' | 'controller' | null {
+  const session = world.xrSession;
+  const frame = world.xrFrame;
+  const reference = world.xrReferenceSpace;
+  if (session == null || frame == null || reference == null) return null;
+  for (const source of session.inputSources) {
+    if (source.handedness !== hand || source.targetRayMode !== 'tracked-pointer') continue;
+    if (source.hand != null) {
+      const palm = source.hand.get('middle-finger-metacarpal');
+      const wrist = source.hand.get('wrist');
+      return palm != null && wrist != null &&
+        frame.getJointPose?.(palm, reference) != null &&
+        frame.getJointPose?.(wrist, reference) != null ? 'hand' : null;
+    }
+    return source.gripSpace != null && frame.getPose(source.gripSpace, reference) != null ? 'controller' : null;
+  }
+  return null;
+}
+
 const profileSignal = signal<CapabilityProfile>({ ...FULL });
 let installed = false;
 

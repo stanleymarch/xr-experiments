@@ -17,7 +17,7 @@ import { AtmosphereSystem } from './weather/systems/atmosphere.js';
 import { WeatherAudioSystem } from './weather/systems/audio.js';
 import { PanelSystem } from './weather/systems/panel.js';
 import { RoomSensingSystem } from './weather/systems/room-sensing.js';
-import { ScreenInputSystem } from './weather/systems/screen-input.js';
+import { ControlGrabIntentSystem } from './weather/systems/control-grab-intent.js';
 import { PuddlesSystem } from './weather/systems/puddles.js';
 import { SnowSystem } from './weather/systems/snow.js';
 import { RainSystem } from './weather/systems/rain.js';
@@ -27,7 +27,7 @@ import { WeatherLoaderSystem } from './weather/systems/weather-loader.js';
 import { WindSystem } from './weather/systems/wind.js';
 
 const boot = (world: World): void => {
-  world.registerSystem(ScreenInputSystem, { priority: -3.9 });
+  world.registerSystem(ControlGrabIntentSystem, { priority: -3.9 });
   // Real-world depth image -> occlusion. The framework system stays registered
   // for the depth feature diagnostics only (its texture work is off: nothing
   // samples it), while DepthOcclusionSystem drives the app's own copy of the

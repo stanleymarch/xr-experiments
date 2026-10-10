@@ -19,8 +19,10 @@ import { enableBeamLighting } from '../light-shared.js';
 import { roomModel } from '../room.js';
 import { weatherStore } from '../weather-state.js';
 
-const SKY_DAY_CLEAR = new Color(0x86a2b8);
-const SKY_OVERCAST = new Color(0x8e969e);
+// F5/F6: saturated slate mirror — clear day carries steel blue, overcast a
+// darker storm slate, so puddles read as water rather than pale haze.
+const SKY_DAY_CLEAR = new Color(0x4a7a9e);
+const SKY_OVERCAST = new Color(0x4c5a68);
 
 const PATCH_COUNT = 14;
 const VERTEX = /* glsl */ `
@@ -142,6 +144,7 @@ export class PuddlesSystem extends createSystem({}) {
     this.dummy.updateMatrix();
     for (let i = 0; i < PATCH_COUNT; i += 1) this.patches.setMatrixAt(i, this.dummy.matrix);
     this.patches.instanceMatrix.needsUpdate = true;
+    this.patches.name = 'Weather Puddle Patches';
     this.entity = this.world.createTransformEntity(this.patches);
     this.cleanupFuncs.push(() => this.entity.dispose());
   }

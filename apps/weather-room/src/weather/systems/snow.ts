@@ -64,7 +64,9 @@ void main() {
   vec3 viewDir = normalize(cameraPosition - vBeamWorld);
   float glint = pow(max(0.0, dot(viewDir, -uBeamDir)), 6.0);
   float shine = 0.85 + 0.3 * sin(uTime * 2.6 + vAlpha * 47.0);
-  gl_FragColor = vec4(vec3(0.82, 0.92, 1.0) * shine, min(1.0, alpha * 0.8 * (1.0 + glint * 1.4)));
+  // Snow keeps white by design (the one layer allowed it); straight alpha so
+  // the shade survives instead of crushing toward transparent gray.
+  gl_FragColor = vec4(vec3(0.9, 0.95, 1.0) * shine, min(1.0, alpha * 0.8 * (1.0 + glint * 1.4)));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -116,6 +118,7 @@ export class SnowSystem extends createSystem({}) {
     for (let i = 0; i < MAX_FLAKES; i += 1) this.flakes.setMatrixAt(i, this.dummy.matrix);
     this.flakes.instanceMatrix.needsUpdate = true;
     this.flakes.count = 0;
+    this.flakes.name = 'Weather Snow Flakes';
     this.entity = this.world.createTransformEntity(this.flakes);
     this.cleanupFuncs.push(() => this.entity.dispose());
   }

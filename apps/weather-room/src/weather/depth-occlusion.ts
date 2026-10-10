@@ -99,8 +99,8 @@ export const depthOcclusionUniforms = {
    * using three's builtin. Written per draw from `onBeforeRender` below.
    */
   uWrEye: { value: 0 },
-  /** True when a real normDepthBufferFromNormView transform is uploaded. */
-  uWrUseMatrix: { value: false },
+  /** Transform selection is independent for each stereo eye. */
+  uWrUseMatrix: { value: new Int32Array(2) },
   /** Legacy convention only: flip the depth UV vertically (CPU images). */
   uWrFlipV: { value: false },
   uWrEnabled: { value: false },
@@ -138,7 +138,7 @@ uniform float uWrDepthNear;
 uniform float uWrDepthFar;
 uniform int uWrDecode;
 uniform int uWrEye;
-uniform bool uWrUseMatrix;
+uniform bool uWrUseMatrix[2];
 uniform bool uWrFlipV;
 uniform bool uWrEnabled;
 #ifdef VIEW_ID
@@ -156,7 +156,7 @@ const OCCLUSION_HELPERS = /* glsl */ `
 // convention is the fallback for runtimes that hand over an identity stub.
 vec2 wrDepthUv() {
   vec2 ndc = vWrClipXyw.xy / max(vWrClipXyw.z, 0.000001);
-  if (uWrUseMatrix) {
+  if (uWrUseMatrix[int(WR_VIEW_ID)]) {
     // Spec normalized view coordinates: origin top-left, y growing downward.
     vec2 normView = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     return (uWrDepthFromView[int(WR_VIEW_ID)] * vec4(normView, 0.0, 1.0)).xy;

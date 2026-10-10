@@ -23,6 +23,7 @@ export const LANG_STORAGE_KEY = 'weather-room.lang';
 const en = {
   badgeLive: 'LIVE',
   badgeDemo: 'DEMO',
+  badgeLoading: 'LOADING',
   playheadNow: 'NOW',
   // Status lines (spatial panel + browser panel).
   statusLoading: 'Loading weather…',
@@ -79,11 +80,12 @@ const en = {
   locationInvalid: 'Enter as lat, lon',
   xrChecking: 'Checking XR support…',
   xrDisabled: 'XR is not enabled in this build. Timeline and reload work in the browser.',
-  xrEnterHint: 'Enter AR: use controller rays, hand pinch, or tap the spatial buttons on a phone.',
+  xrEnterHint: 'Enter AR: tracked hands/controllers use spatial controls; phones use touch controls.',
   xrUnavailable:
     'AR is not available in this browser. Timeline and reload work here; use a WebXR browser or headset for immersion.',
   ariaPanel: 'Weather room browser controls',
   ariaTimelineGroup: 'Timeline controls',
+  ariaTimeScrub: 'Weather time, hours from now',
   ariaXrGroup: 'Immersive session controls',
   ariaStepBack: 'Back 6 hours',
   ariaGoLive: 'Return to live time',
@@ -106,6 +108,16 @@ const en = {
   toastDeviceToIp: 'Device location unavailable: showing approximate place by IP.',
   toastDeviceToFixed: 'Device location unavailable: showing the fixed fallback (Moscow).',
   ariaDetectLocation: 'Detect my location',
+  sandboxOff: 'Sandbox: OFF',
+  sandboxOn: 'Sandbox: ON',
+  sandboxHint:
+    'Turn Sandbox on, then clap for thunder or sweep a hand to part the rain. Controllers clap too.',
+  sandboxHintOn: 'Sandbox on: clap for thunder, sweep a hand to part the rain.',
+  sandboxPhoneNote: 'Gestures need XR hand tracking. Phones keep touch controls.',
+  ariaSandbox: 'Toggle gesture sandbox',
+  xrPhoneNote: 'Phone AR: touch controls stay on this screen.',
+  xrEntryFailed: 'AR could not start.',
+  xrTouchUnavailable: 'This runtime has no touch overlay. Continue with the browser controls.',
 } as const;
 
 export type StringKey = keyof typeof en;
@@ -113,6 +125,7 @@ export type StringKey = keyof typeof en;
 const ru: Record<StringKey, string> = {
   badgeLive: 'ЛАЙВ',
   badgeDemo: 'ДЕМО',
+  badgeLoading: 'ЗАГРУЗКА',
   playheadNow: 'СЕЙЧАС',
   statusLoading: 'Загрузка погоды…',
   statusLocating: 'Поиск местоположения…',
@@ -164,11 +177,12 @@ const ru: Record<StringKey, string> = {
   locationInvalid: 'Формат: шир., долг.',
   xrChecking: 'Проверка XR…',
   xrDisabled: 'XR выключен в этой сборке. Шкала и обновление работают в браузере.',
-  xrEnterHint: 'Войти в AR: лучи контроллеров, щипок или кнопки панели на телефоне.',
+  xrEnterHint: 'В AR: руки и контроллеры управляют пространственной панелью; на телефоне — касания.',
   xrUnavailable:
     'AR недоступен в этом браузере. Шкала и обновление работают здесь; для погружения нужен WebXR-браузер или гарнитура.',
   ariaPanel: 'Панель управления погодой',
   ariaTimelineGroup: 'Управление шкалой',
+  ariaTimeScrub: 'Время погоды, часы от текущего момента',
   ariaXrGroup: 'Иммерсивный режим',
   ariaStepBack: 'Назад на 6 часов',
   ariaGoLive: 'Вернуться к текущему времени',
@@ -189,6 +203,16 @@ const ru: Record<StringKey, string> = {
   toastDeviceToIp: 'Геопозиция устройства недоступна: показываю примерное место по IP.',
   toastDeviceToFixed: 'Геопозиция устройства недоступна: показываю фиксированное место (Москва).',
   ariaDetectLocation: 'Определить моё местоположение',
+  sandboxOff: 'Песочница: ВЫКЛ',
+  sandboxOn: 'Песочница: ВКЛ',
+  sandboxHint:
+    'Включите песочницу, затем хлопните для грома или взмахните рукой, чтобы раздвинуть дождь. Контроллеры тоже работают.',
+  sandboxHintOn: 'Песочница включена: хлопок — гром, взмах руки раздвигает дождь.',
+  sandboxPhoneNote: 'Жесты требуют XR с трекингом рук. На телефоне — управление касаниями.',
+  ariaSandbox: 'Переключить песочницу жестов',
+  xrPhoneNote: 'AR на телефоне: управление остаётся на этом экране.',
+  xrEntryFailed: 'Не удалось войти в AR.',
+  xrTouchUnavailable: 'Этот XR-браузер не поддерживает экранное управление. Продолжайте в браузере.',
 };
 
 const STRINGS: Record<Language, Record<StringKey, string>> = {

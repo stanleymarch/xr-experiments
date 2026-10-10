@@ -43,6 +43,7 @@ import {
   Vector3,
 } from '@iwsdk/core';
 import type { Entity } from '@iwsdk/core';
+import { trackedInputKind } from '../capabilities.js';
 
 /** Sphere radius baked into the shared geometry, in meters. */
 const SPHERE_RADIUS = 0.018;
@@ -131,27 +132,30 @@ export class HandOccluderSystem extends createSystem({}) {
     this.sync('left');
     this.sync('right');
     const left = this.proxies.left;
-    if (left != null) this.place(left);
+    if (left != null && left.mesh.visible) this.place(left);
     const right = this.proxies.right;
-    if (right != null) this.place(right);
+    if (right != null && right.mesh.visible) this.place(right);
   }
 
   /** Match one hand's proxy to whichever input source is live for it. */
   private sync(hand: Handedness): void {
     const adapters = this.input.xr.visualAdapters;
-    // A live hand visual means the runtime is tracking that hand, whether or
-    // not the framework chose to show the mesh (it hides the non-primary one),
-    // so the hand wins over a controller reporting the same handedness.
+    const kind = trackedInputKind(this.world, hand);
     const model = adapters.hand[hand].visual?.model;
-    if (model != null) {
+    if (kind === 'hand' && model != null) {
       this.bindHand(hand, model);
+      this.proxies[hand]!.mesh.visible = true;
       return;
     }
-    if (adapters.controller[hand].connected) {
+    if (kind === 'controller') {
       this.bindController(hand);
+      this.proxies[hand]!.mesh.visible = true;
       return;
     }
-    this.drop(hand);
+    // Keep the binding through transient pose loss without a stale depth cut
+    // or allocating a fresh mesh/entity on every reacquired tracking frame.
+    const current = this.proxies[hand];
+    if (current != null) current.mesh.visible = false;
   }
 
   private bindHand(hand: Handedness, model: Object3D): void {

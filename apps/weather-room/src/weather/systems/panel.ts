@@ -1,9 +1,8 @@
 /**
- * Panel wiring for the WEATHER//ROOM spatial control: concise data hierarchy
- * (playhead hero, location, key values, honest source status), NOW/Reload
- * actions, and the template Enter/Exit XR behavior. Text pushes are throttled
- * to 2 Hz and only fire on actual changes. Placement stays once-per-session
- * via placeControlAtViewer; visibility handling is unchanged.
+ * Panel system: weather hero, selected time, key values and honest source
+ * status; explicit sandbox, location and XR controls. Text pushes are
+ * throttled to 2 Hz and deduplicated. Initial placement is once per session;
+ * handheld screen AR uses native DOM controls instead of this spatial panel.
  */
 
 import {
@@ -23,6 +22,8 @@ import {
 } from '@iwsdk/core';
 import type { Component as UIKitComponent } from '@pmndrs/uikit';
 import type { Entity, Object3D } from '@iwsdk/core';
+import { WeatherControlGrip } from './control-grab-intent.js';
+import { usesSpatialControls } from '../capabilities.js';
 import { WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
 import type { HourCrossedDetail, SandboxToggleDetail } from '../weather-state.js';
 import { playheadTime } from '../weather-state.js';
@@ -72,16 +73,18 @@ const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const;
 /** Mode-pill surfaces: live cyan / demo amber (existing panel tokens). */
 const PILL_BASE_LIVE = '#79d7f2';
 const PILL_BASE_DEMO = '#f2b63d';
+const PILL_BASE_LOADING = '#2a3c5e';
 /** Hover highlight = base lightened ~30 %; precomputed, no per-frame mix. */
 const PILL_HOVER_LIVE = '#a5e5f7';
 const PILL_HOVER_DEMO = '#f7d084';
 const PILL_FLASH = '#ffffff';
-/** Sandbox toggle row: hint palette (cyan) flips to amber while armed. */
-const SANDBOX_HINT_COLOR_OFF = '#79d7f2';
-const SANDBOX_HINT_COLOR_ON = '#f2b63d';
-const SANDBOX_HINT_EN = 'CLAP = THUNDER · TAP TO TURN OFF';
-const SANDBOX_HINT_RU = 'ХЛОПОК = ГРОМ · КОСНИТЕСЬ: ВЫКЛ';
-/** Poke impulse color: icy white-cyan. */
+/** Sandbox button surfaces: neutral slate OFF, amber ON (live pill stays cyan). */
+const SANDBOX_BG_OFF = '#1d2f52';
+const SANDBOX_BG_ON = '#f2b63d';
+const SANDBOX_TEXT_OFF = '#d7e6fb';
+const SANDBOX_TEXT_ON = '#060b18';
+const SANDBOX_VARIANT_OFF = 'secondary';
+const SANDBOX_VARIANT_ON = 'primary';
 const POKE_IMPULSE_COLOR = 0xbfe9ff;
 
 function compassFrom(metDegrees: number): string {
@@ -121,8 +124,10 @@ export class PanelSystem extends createSystem({
   private lastText = '';
   private needsPlacement = false;
   private placedInSession = false;
+  /** Last computed spatial-panel visibility (usesSpatialControls gate). */
+  private spatialVisible = false;
   private snapFlashT = -1;
-  private pillBase = '#79d7f2';
+  private pillBase = PILL_BASE_LOADING;
   /** Whole-panel move affordance (Control Bar + edge handles). */
   private affordance: Affordance | null = null;
   private affordanceEntity: Entity | null = null;
@@ -143,10 +148,11 @@ export class PanelSystem extends createSystem({
   private pokeEntity: Entity | null = null;
   /** Raw pill element, the anchor for the poke impulse flash. */
   private modeElement: Object3D | null = null;
-  /** Raw hint row element: sandbox toggle anchor + impulse site. */
-  private hintElement: Object3D | null = null;
-  /** Hint row as a text line for the sandbox toggle copy. */
-  private hintTextEl: TextLine | null = null;
+  private sandboxElement: Object3D | null = null;
+  /** Sandbox button + hint rows as text lines for the toggle copy. */
+  private sandboxButtonEl: TextLine | null = null;
+  private sandboxLabelEl: TextLine | null = null;
+  private sandboxHintEl: TextLine | null = null;
   /** Paired visual for poke presses and sandbox flips. */
   private pokeImpulse: ContactImpulse | null = null;
   /** Poke/ray press flash on the pill: 0 = idle, seconds since start. */
@@ -163,13 +169,22 @@ export class PanelSystem extends createSystem({
     installSpatialFonts(panel);
     this.enableSurfaceDepth(panel);
     const panelRoot = panel.requireElementById('weather-root');
-    this.cleanupFuncs.push(this.world.visibilityState.subscribe((state) => {
-      panel.visible = state !== VisibilityState.NonImmersive;
-      panelRoot.setProperties({ display: panel.visible ? 'flex' : 'none' });
+    // Phone XR (screen/transient-pointer only) keeps native touch controls:
+    // the spatial panel + rail are hidden since unhanded taps cannot reach
+    // poke/ray targets designed for tracked hands. Checked on visibility
+    // edges AND every frame (update) + input-source transitions reveal
+    // delayed tracked hands without freezing the UI either way.
+    const syncSpatialVisibility = (state: VisibilityState): void => {
+      const spatial = state !== VisibilityState.NonImmersive && usesSpatialControls(this.world);
+      panel.visible = spatial;
+      panelRoot.setProperties({ display: spatial ? 'flex' : 'none' });
       if (state === VisibilityState.NonImmersive) this.placedInSession = false;
       if (state === VisibilityState.Visible) unlockGripAudio();
-      this.needsPlacement = state === VisibilityState.Visible && !this.placedInSession;
-    }));
+      this.needsPlacement = state === VisibilityState.Visible && !this.placedInSession && spatial;
+      this.spatialVisible = spatial;
+    };
+    this.cleanupFuncs.push(this.world.visibilityState.subscribe(syncSpatialVisibility));
+    syncSpatialVisibility(this.world.visibilityState.peek());
     this.statusEl = asTextLine(panel.getElementById('status-line'));
     this.locationEl = asTextLine(panel.getElementById('location-line'));
     this.pickerLocationEl = asTextLine(panel.getElementById('picker-location-line'));
@@ -187,8 +202,10 @@ export class PanelSystem extends createSystem({
       this.pokeEntity = pokeEntity;
     }
     this.modeElement = panel.requireElementById('mode-badge');
-    this.hintElement = panel.requireElementById('timeline-hint');
-    this.hintTextEl = asTextLine(panel.getElementById('timeline-hint'));
+    this.sandboxElement = panel.requireElementById('sandbox-button');
+    this.sandboxButtonEl = asTextLine(panel.getElementById('sandbox-button'));
+    this.sandboxLabelEl = asTextLine(panel.getElementById('sandbox-label'));
+    this.sandboxHintEl = asTextLine(panel.getElementById('sandbox-hint'));
     this.pokeImpulse = new ContactImpulse(this.world, POKE_IMPULSE_COLOR, 'Panel Poke Impulse');
     this.cleanupFuncs.push(
       () => {
@@ -285,18 +302,17 @@ export class PanelSystem extends createSystem({
     const locationButton = panel.getElementById('location-button');
     if (locationButton != null) locationButton.name = 'weather-open-locations';
     locationButton?.addEventListener('click', openLocations);
-    // Clap-sandbox toggle: the timeline hint row doubles as the tappable
-    // switch (weather.uikitml is owned by another slice, so the toggle is
-    // wired from the existing element set). The row's text/color flip is
-    // the mode indicator; the clap detector lives in gesture-sandbox.ts.
-    const hintToggle = panel.requireElementById('timeline-hint');
-    hintToggle.name = 'weather-toggle-sandbox';
+    // Clap-sandbox toggle: a labelled Button with visible OFF/ON status.
+    // The clap detector lives in gesture-sandbox.ts and only fires while
+    // the flag is on; hand push (hand-field) is a separate XR-only path.
+    const sandboxToggle = panel.requireElementById('sandbox-button');
+    sandboxToggle.name = 'weather-toggle-sandbox';
     const toggleSandbox = () => {
       tick();
       weatherStore.setSandbox(!weatherStore.state.peek().sandbox);
     };
-    hintToggle.addEventListener('click', toggleSandbox);
-    this.cleanupFuncs.push(() => hintToggle.removeEventListener('click', toggleSandbox));
+    sandboxToggle.addEventListener('click', toggleSandbox);
+    this.cleanupFuncs.push(() => sandboxToggle.removeEventListener('click', toggleSandbox));
     if (exitButton != null && this.world.xrEnabled) {
       exitButton.name = 'weather-exit-xr';
       const exitXR = () => {
@@ -329,17 +345,17 @@ export class PanelSystem extends createSystem({
         if (crossed?.isLive === true) this.snapFlashT = 0;
         this.lastPushAt = -PANEL_PUSH_INTERVAL_S;
       }),
-      // Sandbox flip: restyle the toggle row immediately and answer with
-      // the gesture cue pair (audio sweep + impulse at the row) and a
-      // controller haptic — hands get the cue pair instead.
+      // Sandbox flip: restyle the labelled button immediately and answer
+      // with the gesture cue pair (audio sweep + impulse at the button)
+      // and a controller haptic — hands get the cue pair instead.
       weatherEvents.on(WeatherEvent.SandboxToggle, (detail: unknown) => {
         const on = (detail as SandboxToggleDetail | undefined)?.on === true;
-        this.applySandboxHint(on);
+        this.applySandboxState(on);
         playSandboxCue(on);
         pulseHaptics(this.world, Haptics.sandboxToggle.intensity, Haptics.sandboxToggle.durationMs);
-        const hint = this.hintElement;
-        if (hint != null && this.pokeImpulse != null) {
-          hint.getWorldPosition(this.impulseAt);
+        const anchor = this.sandboxElement;
+        if (anchor != null && this.pokeImpulse != null) {
+          anchor.getWorldPosition(this.impulseAt);
           this.pokeImpulse.trigger(this.impulseAt);
         }
         this.lastText = '';
@@ -402,9 +418,9 @@ export class PanelSystem extends createSystem({
   }
 
   /**
-   * Whole-panel move affordance, scene-level so the driver stays 1:1. At rest
-   * nothing is drawn; hovering the panel or its frame reveals the Control Bar
-   * and edge handles in the platform colors.
+   * Whole-panel move affordance, scene-level so the driver stays 1:1. The
+   * resting bar remains discoverable; hover reveals its edge handles in the
+   * platform colors.
    */
   private ensureAffordance(panel: UIKitMLAsset): void {
     if (this.affordance != null) return;
@@ -413,7 +429,7 @@ export class PanelSystem extends createSystem({
     panel.document.getWorldScale(this.gripWorldScale);
     const worldScale = Math.max(1e-4, this.gripWorldScale.x);
     this.affordanceBaseScale = worldScale;
-    const heightM = (size?.[1] ?? 480) / 100 * worldScale;
+    const heightM = (size?.[1] ?? 410) / 100 * worldScale;
     const affordance = buildAffordance({ name: 'Weather Panel Move Affordance', heightM });
     this.affordance = affordance;
     this.affordanceEntity = this.world.createTransformEntity(affordance.group);
@@ -426,10 +442,11 @@ export class PanelSystem extends createSystem({
     this.affordanceNearEntity.addComponent(RayInteractable, {});
     this.affordanceFarEntity.addComponent(RayInteractable, {});
     this.affordanceNearEntity.addComponent(OneHandGrabbable, { rotate: false });
+    this.affordanceNearEntity.addComponent(WeatherControlGrip, {});
     this.affordanceFarEntity.addComponent(DistanceGrabbable, {
       rotate: false,
       scale: false,
-      movementMode: MovementMode.MoveAtSource,
+      movementMode: MovementMode.MoveFromTarget,
       returnToOrigin: false,
     });
     this.moveDriver = createGripDriver(this.world, this.affordanceNearEntity, this.affordanceFarEntity, affordance, {
@@ -492,6 +509,16 @@ export class PanelSystem extends createSystem({
     const dt = Number.isFinite(delta) ? Math.min(Math.max(delta, 0), 0.1) : 0.016;
     const panelObject = this.world.getSceneObject<UIKitMLAsset>('weather-panel') ?? this.panelObject;
     this.panelObject = panelObject;
+    // Delayed input-source arrival (tracked hands appear after session
+    // start) must unhide the spatial panel without a visibility edge.
+    const wantSpatial =
+      this.world.visibilityState.peek() !== VisibilityState.NonImmersive && usesSpatialControls(this.world);
+    if (wantSpatial !== this.spatialVisible && panelObject != null) {
+      this.spatialVisible = wantSpatial;
+      panelObject.visible = wantSpatial;
+      panelObject.requireElementById('weather-root').setProperties({ display: wantSpatial ? 'flex' : 'none' });
+      if (wantSpatial && !this.placedInSession) this.needsPlacement = true;
+    }
     const carried = this.affordanceNearEntity?.hasComponent(Grabbed) === true
       || this.affordanceFarEntity?.hasComponent(Grabbed) === true;
     if (panelObject != null) {
@@ -556,6 +583,11 @@ export class PanelSystem extends createSystem({
     }
     if (current == null) {
       const status = state.status;
+      this.pillBase = PILL_BASE_LOADING;
+      this.modeEl?.setProperties({ text: t('badgeLoading') });
+      this.playheadEl.setProperties({ text: '…' });
+      this.heroEl?.setProperties({ text: t('missingValue') });
+      this.valuesEl.setProperties({ text: t('missingValue') });
       this.pushStatus(
         status.kind === 'loading' ? `${t('loadingPrefix')}${localizeLoadingLabel(status.label, lang)}` : t('statusLoading'),
         status.kind === 'loading' ? t('statusWaiting') : t('missingValue'),
@@ -658,17 +690,19 @@ export class PanelSystem extends createSystem({
   }
 
   /**
-   * Sandbox toggle row copy: the timeline hint line doubles as the switch
-   * and its state indicator. Copy stays in this module (EN/RU inline):
-   * the shared dictionary belongs to another slice.
+   * Sandbox toggle state: labelled Button text flips OFF/ON (whole button
+   * repaints via variant + background), the hint line keeps the gesture
+   * instructions in both languages. Everything reads from the dictionary.
    */
-  private applySandboxHint(on: boolean): void {
-    const hint = this.hintTextEl;
-    if (hint == null) return;
-    hint.setProperties({
-      text: on ? (getLanguage() === 'ru' ? SANDBOX_HINT_RU : SANDBOX_HINT_EN) : t('timelineHint'),
-      color: on ? SANDBOX_HINT_COLOR_ON : SANDBOX_HINT_COLOR_OFF,
+  private applySandboxState(on: boolean): void {
+    const label = this.sandboxLabelEl ?? this.sandboxButtonEl;
+    label?.setProperties({ text: on ? t('sandboxOn') : t('sandboxOff') });
+    this.sandboxButtonEl?.setProperties({
+      variant: on ? SANDBOX_VARIANT_ON : SANDBOX_VARIANT_OFF,
+      backgroundColor: on ? SANDBOX_BG_ON : SANDBOX_BG_OFF,
+      color: on ? SANDBOX_TEXT_ON : SANDBOX_TEXT_OFF,
     });
+    this.sandboxHintEl?.setProperties({ text: on ? t('sandboxHintOn') : t('sandboxHint') });
   }
 
   /** Static button/hint labels (markup defaults are English-only). */
@@ -685,7 +719,7 @@ export class PanelSystem extends createSystem({
     setLabel('reload-label', t('reload'));
     setLabel('exit-label', t('exit'));
     setLabel('lang-label', t('langName'));
-    this.applySandboxHint(weatherStore.state.peek().sandbox);
+    this.applySandboxState(weatherStore.state.peek().sandbox);
     setLabel('location-label', t('locationLabelPrefix'));
     setLabel('location-picker-title', t('locationChoose'));
     setLabel('location-picker-hint', t('locationPickerHint'));
@@ -705,5 +739,6 @@ export class PanelSystem extends createSystem({
     // disabled styling (already applied above) plus the status line, so the
     // label always fits its box and never reflows.
     setLabel('reload-label', t('reload'));
+    setLabel('timeline-hint', t('timelineHint'));
   }
 }

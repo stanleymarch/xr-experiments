@@ -5,9 +5,9 @@
  * Horizon OS window pattern implemented in-application (WebXR has no system
  * chrome, so the app must draw the handles the platform would):
  *
- * - nothing is drawn at rest; hovering the surface reveals one modest Control
- *   Bar pill below the window, which strengthens into the platform state
- *   colors (#FFFFFF hover, #001E78 select) over the platform transition times
+ * - a modest 38% baseline Control Bar pill sits below the window at rest for
+ *   discoverability (F1), strengthening into the platform state colors
+ *   (#FFFFFF hover, #001E78 select) over the platform transition times
  *   (0.3 s hover in/out, 0.08 s press, 0.1 s release). No edge handles: the
  *   native windows the owner compared against show only the bar;
  * - the grab target is larger than the visible bar (>= 55 mm, ~3.1 deg at
@@ -223,27 +223,27 @@ export interface AffordanceSpec {
 }
 
 /**
- * Build the rest-invisible affordance: one modest Control Bar pill below the
- * surface. The visible bar is thinner than its grab target, and the ray target
- * can grow outward without covering the surface, so nothing is drawn over the
- * control itself.
+ * Build the move affordance: one modest Control Bar pill below the surface
+ * with a 38% baseline at rest (F1 discoverability). The visible bar is
+ * thinner than its grab target, and the ray target can grow outward without
+ * covering the surface, so nothing is drawn over the control itself.
  */
 export function buildAffordance(spec: AffordanceSpec): Affordance {
   const pillWidth = spec.pillWidthM ?? 0.12;
   const halfH = spec.heightM / 2;
 
-  // Rest state is invisible: the platform shows the bar on hover, not always.
-  // depthWrite stays on so the plaque orders by depth against the panel UI and
-  // the rail instead of riding the transparent sort; `visual.visible` is off
-  // while it fades out, so it never blocks anything at rest.
+  // F1 baseline: a modest 38% bar at rest for discoverability; the driver
+  // strengthens it into the platform hover/select states. depthWrite stays
+  // on so the plaque orders by depth against the panel UI and the rail
+  // instead of riding the transparent sort.
   const material = new MeshStandardMaterial({
     color: 0xffffff,
     emissive: 0xffffff,
-    emissiveIntensity: 0.22,
+    emissiveIntensity: HOVER_GLOW,
     metalness: 0.1,
     roughness: 0.35,
     transparent: true,
-    opacity: 0,
+    opacity: BASELINE_OPACITY,
     depthWrite: true,
   });
   const shellMaterial = new MeshBasicMaterial({ colorWrite: false, depthWrite: false });
@@ -252,7 +252,7 @@ export function buildAffordance(spec: AffordanceSpec): Affordance {
   group.name = spec.name;
   const visual = new Group();
   visual.name = `${spec.name} Visual`;
-  visual.visible = false;
+  visual.visible = true;
   const near = new Group();
   near.name = `${spec.name} Near`;
   const far = new Group();
@@ -355,8 +355,10 @@ const pullDirection = new Vector3();
  * Native "pull it in / push it away" on the pad: while a control is held, the
  * holding hand's thumbstick moves it along the view ray (head to control), with
  * the speed easing in from the stick deflection and stopping dead at the
- * distance limits. The caller's angular-size step then keeps the apparent size
- * constant, exactly as when carrying along z. Positive stick = closer.
+ * distance limits. A centered stick stops dead immediately, so ordinary
+ * zero-stick carry stays exactly 1:1 and never drifts on residual velocity.
+ * The caller's angular-size step then keeps the apparent size constant,
+ * exactly as when carrying along z. Positive stick = closer.
  */
 export function stepViewDistance(
   root: Object3D,
@@ -375,10 +377,16 @@ export function stepViewDistance(
   pullDirection.divideScalar(distance);
 
   const deflection = Math.min(1, Math.abs(stickY));
+  // Centered stick stops dead: ordinary zero-stick carry stays exactly 1:1
+  // and never drifts on residual velocity.
+  if (deflection === 0) {
+    state.velocity = 0;
+    return;
+  }
   const target = Math.sign(stickY) * VIEW_PULL_MAX_SPEED_M_S * Math.pow(deflection, VIEW_PULL_GAMMA);
   const ease = 1 - Math.exp(-Math.max(0, delta) / VIEW_PULL_TAU_S);
   state.velocity += (target - state.velocity) * ease;
-  if (Math.abs(state.velocity) < 1e-4 && deflection === 0) {
+  if (Math.abs(state.velocity) < 1e-4) {
     state.velocity = 0;
     return;
   }
@@ -874,8 +882,9 @@ function translateWorld(object: Object3D, delta: Vector3): void {
  * 1:1 move-follow for one held affordance: shift `root` (the weather panel or
  * the timeline rail) by the affordance's world delta since the last step, then
  * pin the grabbed root back to its rest local transform. No per-frame
- * allocation. `onHeld` runs between the translation and the pin, so an owner
- * that re-orients or rescales the root keeps this frame's baseline clean.
+ * allocation. Keep the SDK's unmodified world target as the motion baseline:
+ * owner's push/pull, facing and scale adjustments are not hand motion and
+ * must not be subtracted back out on the next handle update.
  *
  * The caller checks `Grabbed` and handles grab/release edges (haptics,
  * `previousWorld` re-baseline). Released transforms stay exactly where the
@@ -893,7 +902,7 @@ export function stepGripFollow(
   onHeld?.(root);
   grabbed.position.copy(state.restPosition);
   grabbed.quaternion.copy(state.restQuaternion);
-  grabbed.getWorldPosition(state.previousWorld);
+  state.previousWorld.copy(followCurrent);
 }
 
 /** Platform state transitions: hover 0.3 s, press 0.08 s, release 0.1 s. */
@@ -911,18 +920,19 @@ interface AffordanceStyle {
   readonly color: number;
   readonly glow: number;
 }
-
+const BASELINE_OPACITY = 0.38;
+const BASELINE_STYLE: AffordanceStyle = { opacity: BASELINE_OPACITY, color: HOVER_COLOR, glow: HOVER_GLOW };
 const HOVER_STYLE: AffordanceStyle = { opacity: 1, color: HOVER_COLOR, glow: HOVER_GLOW };
 const SELECT_STYLE: AffordanceStyle = { opacity: 1, color: SELECT_COLOR, glow: SELECT_GLOW };
-const REST_STYLE: AffordanceStyle = { opacity: 0, color: HOVER_COLOR, glow: HOVER_GLOW };
 
 /**
  * Drives one move affordance: while either shell is held, `root` follows the
  * active shell 1:1 and the shell is pinned to its rest local transform; on
  * release both shells are pinned and the root stays exactly where the hand left
- * it. Hover (with enter/exit hysteresis), select, and release drive the
- * platform colors, a holding-hand-only haptic, and an audio cue. Emits no
- * weather events: the knob/snap haptic and audio bus stays untouched.
+ * it (anywhere, including behind the viewer). At rest a modest 38% baseline
+ * bar stays visible; hover/select drive the platform colors, a
+ * holding-hand-only haptic, and an audio cue. Emits no weather events: the
+ * knob/snap haptic and audio bus stays untouched.
  */
 export interface GripDriver {
   update(root: Object3D, delta: number): void;
@@ -977,9 +987,9 @@ export function createGripDriver(
   const colorFrom = new Color(HOVER_COLOR);
   const colorTo = new Color(HOVER_COLOR);
   const colorNow = new Color(HOVER_COLOR);
-  let opacityFrom = 0;
-  let opacityTo = 0;
-  let opacityNow = 0;
+  let opacityFrom = BASELINE_OPACITY;
+  let opacityTo = BASELINE_OPACITY;
+  let opacityNow = BASELINE_OPACITY;
   let glowFrom = HOVER_GLOW;
   let glowTo = HOVER_GLOW;
   let glowNow = HOVER_GLOW;
@@ -992,7 +1002,7 @@ export function createGripDriver(
   const hoverHands: Handedness[] = [];
 
   const applyState = (next: 'rest' | 'hover' | 'select'): void => {
-    const style = next === 'select' ? SELECT_STYLE : next === 'hover' ? HOVER_STYLE : REST_STYLE;
+    const style = next === 'select' ? SELECT_STYLE : next === 'hover' ? HOVER_STYLE : BASELINE_STYLE;
     const duration =
       next === 'select' ? PRESS_SECONDS : next === 'hover' && state === 'select' ? RELEASE_SECONDS : HOVER_SECONDS;
     if (next === state) return;

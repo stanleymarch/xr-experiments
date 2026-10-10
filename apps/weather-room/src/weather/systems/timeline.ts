@@ -30,6 +30,7 @@ import {
   VisibilityState,
 } from '@iwsdk/core';
 import type { Entity, Object3D } from '@iwsdk/core';
+import { WeatherControlGrip } from './control-grab-intent.js';
 import {
   TIMELINE_CONTROL_ASSET_ID,
   TIMELINE_KNOB_PART,
@@ -54,9 +55,10 @@ import {
   unlockGripAudio,
 } from '../control-placement.js';
 import type { Affordance, AngularSizeState, GripDriver, Handedness, SurfaceGrab, ViewPullState } from '../control-placement.js';
+import { usesSpatialControls } from '../capabilities.js';
+import { Haptics, pulseHaptics } from '../feedback.js';
 import { PLAYHEAD_MAX_H, PLAYHEAD_MIN_H, WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
 import type { HourCrossedDetail } from '../weather-state.js';
-import { Haptics, pulseHaptics } from '../feedback.js';
 
 const RAIL_HALF = TIMELINE_TRAVEL_HALF;
 const SNAP_HOURS = 0.75;
@@ -125,6 +127,8 @@ export class TimelineSystem extends createSystem({
   private readonly viewPull: ViewPullState = createViewPullState();
   private needsPlacement = false;
   private placedInSession = false;
+  /** Last computed rail visibility (usesSpatialControls gate). */
+  private spatialVisible = false;
   private readonly handleWorld = new Vector3();
   private glowMaterial: MeshStandardMaterial | null = null;
   private crownMaterial: MeshStandardMaterial | null = null;
@@ -141,13 +145,15 @@ export class TimelineSystem extends createSystem({
       this.world.visibilityState.subscribe((state) => {
         if (state === VisibilityState.NonImmersive) this.placedInSession = false;
         if (state === VisibilityState.Visible) unlockGripAudio();
-        this.needsPlacement = state === VisibilityState.Visible && !this.placedInSession;
-        // The flat page shows the DOM panel only: the whole rail rig —
-        // housing, knob, scrub proxies, move affordance — hangs off
-        // the rail entity, so hiding its root hides all of it, mirroring the
-        // panel's own NonImmersive behaviour.
+        // Spatial rail needs tracked hands/controllers: handheld screen AR
+        // (immersive but unhanded) keeps the DOM slider, so the spatial rail
+        // hides there exactly like it hides on the flat page. Late tracked
+        // sources are picked up by the per-frame recheck in update().
+        const spatial = state !== VisibilityState.NonImmersive && usesSpatialControls(this.world);
+        this.needsPlacement = state === VisibilityState.Visible && !this.placedInSession && spatial;
+        this.spatialVisible = spatial;
         const railObject = this.railEntity?.object3D;
-        if (railObject != null) railObject.visible = state !== VisibilityState.NonImmersive;
+        if (railObject != null) railObject.visible = spatial;
       }),
       this.queries.grabbed.subscribe('qualify', (entity) => {
         // The shared `grabbed` query also matches the rail move-grip
@@ -259,8 +265,11 @@ export class TimelineSystem extends createSystem({
     this.surfaceHit = surfaceHit;
     // Fresh 2D loads subscribe before this model exists and NonImmersive never
     // re-fires, so apply the current visibility now; the init() subscription
-    // still handles later session transitions.
-    model.visible = this.world.visibilityState.peek() !== VisibilityState.NonImmersive;
+    // still handles later session transitions. The spatial gate also hides
+    // the rail in handheld screen AR (immersive but unhanded).
+    this.spatialVisible =
+      this.world.visibilityState.peek() !== VisibilityState.NonImmersive && usesSpatialControls(this.world);
+    model.visible = this.spatialVisible;
 
     // One-time material clones for per-instance state feedback (the manifest
     // contract: reassigning mesh.material on a clone restyles one instance).
@@ -307,6 +316,7 @@ export class TimelineSystem extends createSystem({
     this.handleEntity.addComponent(RayInteractable, {});
     // SDK grab components are mutually exclusive on one entity.
     this.handleEntity.addComponent(OneHandGrabbable, { rotate: false });
+    this.handleEntity.addComponent(WeatherControlGrip, {});
     const rayTarget = new Mesh(
       new SphereGeometry(0.032, 12, 8),
       new MeshBasicMaterial({ colorWrite: false, depthWrite: false }),
@@ -338,6 +348,7 @@ export class TimelineSystem extends createSystem({
     this.scrubStripEntity = this.world.createTransformEntity(scrubStrip, { parent: this.railEntity });
     this.scrubStripEntity.addComponent(TimelineHandle, {});
     this.scrubStripEntity.addComponent(OneHandGrabbable, { rotate: false });
+    this.scrubStripEntity.addComponent(WeatherControlGrip, {});
     // Whole-rail move affordance: a Control Bar pill below the housing, clear
     // of the knob travel band (|x| <= 0.45) and the cue tag above. The rail is
     // a bar instrument, not a window, so it gets the platform Control Bar only
@@ -360,10 +371,14 @@ export class TimelineSystem extends createSystem({
     this.moveNearEntity.addComponent(RayInteractable, {});
     this.moveFarEntity.addComponent(RayInteractable, {});
     this.moveNearEntity.addComponent(OneHandGrabbable, { rotate: false });
+    this.moveNearEntity.addComponent(WeatherControlGrip, {});
     this.moveFarEntity.addComponent(DistanceGrabbable, {
       rotate: false,
       scale: false,
-      movementMode: MovementMode.MoveAtSource,
+      // Ray carry tracks the ray endpoint (aim rotation swings the rail
+      // through the full side arc to behind the viewer); near squeeze keeps
+      // its 1:1 OneHand path.
+      movementMode: MovementMode.MoveFromTarget,
       returnToOrigin: false,
     });
     this.moveDriver = createGripDriver(this.world, this.moveNearEntity, this.moveFarEntity, moveAffordance, {
@@ -426,6 +441,16 @@ export class TimelineSystem extends createSystem({
 
   update(delta: number): void {
     if (this.railEntity == null || this.handleEntity == null) return;
+    // Late tracked-source arrival (grant-before-sources bootstrap) must
+    // unhide the spatial rail without a visibility edge, mirroring panel.ts.
+    const wantSpatial =
+      this.world.visibilityState.peek() !== VisibilityState.NonImmersive && usesSpatialControls(this.world);
+    if (wantSpatial !== this.spatialVisible) {
+      this.spatialVisible = wantSpatial;
+      const railObject = this.railEntity.object3D;
+      if (railObject != null) railObject.visible = wantSpatial;
+      if (wantSpatial && !this.placedInSession) this.needsPlacement = true;
+    }
     // Whole-rail move affordance runs before knob math: the rail (and
     // therefore the knob constraint frame) may move under the hand. Moving
     // the rail never writes the playhead; the knob pass below still maps the
@@ -459,8 +484,7 @@ export class TimelineSystem extends createSystem({
     // NOW-snap flash: the store announces every live arrival on the shared
     // hour bus (knob drag, step buttons, DOM scrub alike); the ring flashes
     // bright once then decays over ~0.45 s. Decay from the passed delta so
-    // the flash reads identically at any frame rate. Direct update() calls
-    // without a delta (as in screen-input-smoke.html) fall back to 16 ms.
+    // the flash reads identically at any frame rate.
     const dt = Number.isFinite(delta) ? Math.min(Math.max(delta, 0), 0.1) : 0.016;
     if (this.snapFlashT >= 0) this.snapFlashT += dt;
     if (this.snapFlashT > 0.45) this.snapFlashT = -1;

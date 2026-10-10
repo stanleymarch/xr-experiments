@@ -26,9 +26,9 @@
  * a unitless inverse depth into R32F, and CPU data is raw units times
  * `rawValueToMeters`. This system therefore probes the live image, decides
  * whether the samples are normalized, scores the candidate interpretations
- * against a room-sized range and logs everything — format, the texture's actual
- * internal format, the chosen decoding and the decoded center depth — so a
- * headset run can be judged from the console without looking at the screen.
+ * against a room-sized range and logs the chosen decoding and sampled values.
+ * Plausible distances are diagnostics, not proof of physical silhouettes;
+ * geometric occlusion still requires a rendered furniture/floor check.
  *
  * Degradation: outside XR the uniforms stay disabled and nothing is logged;
  * inside XR without the `depth-sensing` grant (denied Spatial permission, or a
@@ -173,6 +173,7 @@ export class DepthOcclusionSystem extends createSystem({}) {
   private probeBlit: {
     program: WebGLProgram;
     quad: WebGLBuffer;
+    vao: WebGLVertexArrayObject;
     probeUv: WebGLUniformLocation | null;
     depthArray: WebGLUniformLocation | null;
     depthLayer: WebGLUniformLocation | null;
@@ -197,7 +198,7 @@ export class DepthOcclusionSystem extends createSystem({}) {
       // image; reset both before any new frame can enable occlusion, so a new
       // session can never inherit stale values.
       depthOcclusionUniforms.uWrDecode.value = DepthDecodeMode.SpecRaw;
-      depthOcclusionUniforms.uWrUseMatrix.value = false;
+      depthOcclusionUniforms.uWrUseMatrix.value.fill(0);
       this.releaseTextures();
       // Capabilities are session-scoped: recompute at the session edge rather
       // than trusting the value captured at init.
@@ -274,11 +275,8 @@ export class DepthOcclusionSystem extends createSystem({}) {
       this.publishTransform(first, 0);
       if (pose.views.length > 1) {
         const second = binding != null ? binding.getDepthInformation(pose.views[1]) : null;
-        if (second == null) {
-          uniforms.uWrUseMatrix.value = false;
-        } else {
-          this.publishTransform(second, 1);
-        }
+        if (second == null) return null;
+        this.publishTransform(second, 1);
       }
       uniforms.uWrDepthArray.value = texture;
       uniforms.uWrRawToMeters.value = first.rawValueToMeters;
@@ -337,19 +335,19 @@ export class DepthOcclusionSystem extends createSystem({}) {
    * Publish `normDepthBufferFromNormView` into one stereo slot. A runtime that
    * hands over the identity stub (the emulator does) gets the plain UV
    * convention instead, so a no-op matrix is never applied to already-correct
-   * UVs. A missing transform clears the combined flag so one eye can never
-   * sample through the other eye's matrix.
+   * UVs. Each eye owns its selection flag, so an identity/missing transform
+   * cannot invalidate the other eye's valid matrix.
    */
   private publishTransform(info: XRWebGLDepthInformation | XRCPUDepthInformation, viewId: number): void {
     const uniforms = depthOcclusionUniforms;
     if (viewId < 0 || viewId > 1) return;
     const transform = info.normDepthBufferFromNormView;
     if (transform == null) {
-      uniforms.uWrUseMatrix.value = false;
+      uniforms.uWrUseMatrix.value[viewId] = 0;
       return;
     }
     const matrix = transform.matrix;
-    uniforms.uWrUseMatrix.value = !isIdentityMatrix(matrix);
+    uniforms.uWrUseMatrix.value[viewId] = isIdentityMatrix(matrix) ? 0 : 1;
     const target = uniforms.uWrDepthFromView.value;
     for (let index = 0; index < 16; index += 1) target[viewId * 16 + index] = matrix[index] ?? 0;
   }
@@ -389,7 +387,7 @@ export class DepthOcclusionSystem extends createSystem({}) {
       this.calibratedMode = null;
       this.probeMode = DepthDecodeMode.SpecRaw;
       depthOcclusionUniforms.uWrDecode.value = this.probeMode;
-      depthOcclusionUniforms.uWrUseMatrix.value = false;
+      depthOcclusionUniforms.uWrUseMatrix.value.fill(0);
     }
   }
 
@@ -458,7 +456,7 @@ export class DepthOcclusionSystem extends createSystem({}) {
     console.info(
       `[weather-room] depth probe: format=${session.depthDataFormat ?? 'unknown'} tex=${textureName} ` +
         `normalized=${normalized ? 'yes' : 'no'} decode=${DECODE_NAMES[liveMode] ?? liveMode} ` +
-        `matrix=${depthOcclusionUniforms.uWrUseMatrix.value ? 'on' : 'off'} ` +
+        `matrix=${depthOcclusionUniforms.uWrUseMatrix.value.join('/')} ` +
         `raw[center]=${center} -> ${decoded.toFixed(2)}m ` +
         `raw[min..max]=${min}..${max} -> ${decodeSample(liveMode, min, rawToMeters, depthNear, depthFar).toFixed(2)}` +
         `..${decodeSample(liveMode, max, rawToMeters, depthNear, depthFar).toFixed(2)}m ` +
@@ -531,10 +529,10 @@ export class DepthOcclusionSystem extends createSystem({}) {
     // instead of sprinkling casts over every constant below.
     if (!(context instanceof WebGL2RenderingContext)) return null;
     const gl = context;
-    const program = this.probeProgram(gl);
-    if (program == null) return null;
-    const previousFramebuffer = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    const previousTarget = this.renderer.getRenderTarget();
     try {
+      const program = this.probeProgram(gl);
+      if (program == null) return null;
       // Prefer a float staging target (exact raw values); without the float
       // color-buffer extension — or when the float target cannot be completed —
       // fall back to an 8-bit target (coarse values).
@@ -556,18 +554,23 @@ export class DepthOcclusionSystem extends createSystem({}) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
       if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) return null;
       gl.viewport(0, 0, PROBE_COLUMNS.length, 1);
+      // Staging overwrites raw samples; it never inherits additive weather
+      // blending, depth/stencil tests, scissor or a partial color mask.
+      gl.disable(gl.BLEND);
+      gl.disable(gl.DEPTH_TEST);
+      gl.disable(gl.STENCIL_TEST);
+      gl.disable(gl.SCISSOR_TEST);
+      gl.disable(gl.CULL_FACE);
+      gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+      gl.colorMask(true, true, true, true);
       gl.useProgram(program.program);
       gl.uniform2fv(program.probeUv, probeUv);
       gl.uniform1i(program.depthLayer, layer);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D_ARRAY, info.texture);
       gl.uniform1i(program.depthArray, 0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, program.quad);
-      gl.enableVertexAttribArray(0);
-      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      gl.bindVertexArray(program.vao);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      gl.disableVertexAttribArray(0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, null);
       const samples: number[] = [];
       if (floatTarget) {
         const texels = new Float32Array(PROBE_COLUMNS.length * 4);
@@ -595,11 +598,12 @@ export class DepthOcclusionSystem extends createSystem({}) {
       console.warn('[weather-room] depth probe unavailable on this runtime', error);
       return null;
     } finally {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, previousFramebuffer);
-      // The staging work binds raw handles below three's state tracker
-      // (program, array buffer, texture unit 0, viewport, framebuffer), so
-      // reset three's cached state rather than restoring each handle.
+      gl.bindVertexArray(null);
+      // Reset the renderer's caches after raw GL work, then restore its
+      // actual XR target. Restoring only the framebuffer before resetState
+      // loses the current immersive frame.
       this.renderer.resetState();
+      this.renderer.setRenderTarget(previousTarget);
     }
   }
 
@@ -612,7 +616,7 @@ export class DepthOcclusionSystem extends createSystem({}) {
    */
   private probeProgram(
     gl: WebGL2RenderingContext,
-  ): { program: WebGLProgram; quad: WebGLBuffer; probeUv: WebGLUniformLocation | null; depthArray: WebGLUniformLocation | null; depthLayer: WebGLUniformLocation | null } | null {
+  ): NonNullable<DepthOcclusionSystem['probeBlit']> | null {
     if (this.probeBlit != null) return this.probeBlit;
     const vertex = gl.createShader(gl.VERTEX_SHADER);
     const fragment = gl.createShader(gl.FRAGMENT_SHADER);
@@ -667,16 +671,25 @@ void main() {
       return null;
     }
     const quad = gl.createBuffer();
-    if (quad == null) {
+    const vao = gl.createVertexArray();
+    if (quad == null || vao == null) {
+      if (quad != null) gl.deleteBuffer(quad);
+      if (vao != null) gl.deleteVertexArray(vao);
       gl.deleteProgram(program);
       return null;
     }
+    const previousVao = gl.getParameter(gl.VERTEX_ARRAY_BINDING) as WebGLVertexArrayObject | null;
+    gl.bindVertexArray(vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(previousVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
     this.probeBlit = {
       program,
       quad,
+      vao,
       probeUv: gl.getUniformLocation(program, 'probeUv'),
       depthArray: gl.getUniformLocation(program, 'depthArray'),
       depthLayer: gl.getUniformLocation(program, 'depthLayer'),
@@ -760,6 +773,7 @@ void main() {
       }
       if (this.probeBlit != null) {
         gl.deleteBuffer(this.probeBlit.quad);
+        gl.deleteVertexArray(this.probeBlit.vao);
         gl.deleteProgram(this.probeBlit.program);
       }
     }

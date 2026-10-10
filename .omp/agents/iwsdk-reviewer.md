@@ -2,7 +2,7 @@
 name: iwsdk-reviewer
 description: Senior technical reviewer for IWSDK architecture, API correctness, XR capability handling, physics and verification.
 model: "@advisor"
-autoloadSkills: [iwsdk-dev, iwsdk-debug, iwsdk-physics, iwsdk-depth-occlusion, iwsdk-ray, iwsdk-ui]
+autoloadSkills: [iwsdk-dev, iwsdk-ui, iwsdk-debug, iwsdk-physics, iwsdk-depth-occlusion, iwsdk-ray, iwsdk-grab, iwsdk-compose-scene, iwsdk-native-xr-test, iwsdk-pwa-packaging]
 blocking: true
 ---
 

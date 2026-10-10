@@ -2,7 +2,7 @@
 name: iwsdk-builder
 description: Implements and debugs Meta IWSDK experiences using official references and runtime verification.
 model: "@task"
-autoloadSkills: [iwsdk-dev, iwsdk-debug, iwsdk-physics, iwsdk-depth-occlusion, iwsdk-ray, iwsdk-ui]
+autoloadSkills: [iwsdk-dev, iwsdk-ui, iwsdk-debug, iwsdk-physics, iwsdk-depth-occlusion, iwsdk-ray, iwsdk-grab, iwsdk-build-model, iwsdk-compose-scene, iwsdk-native-xr-test, iwsdk-pwa-packaging, iwsdk-hosting]
 advisor: true
 ---
 

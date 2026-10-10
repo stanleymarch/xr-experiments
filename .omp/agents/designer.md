@@ -2,7 +2,7 @@
 name: designer
 description: Spatial XR art director and game-feel reviewer for playable IWSDK milestones.
 model: "@designer"
-autoloadSkills: [iwsdk-dev, iwsdk-ui, iwsdk-debug]
+autoloadSkills: [iwsdk-dev, iwsdk-ui, iwsdk-debug, iwsdk-compose-scene, iwsdk-build-model, iwsdk-grab, iwsdk-ray]
 blocking: true
 ---
 

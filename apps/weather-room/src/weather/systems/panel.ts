@@ -10,6 +10,7 @@ import {
   createSystem,
   DistanceGrabbable,
   Grabbed,
+  GrabSystem,
   Hovered,
   MovementMode,
   OneHandGrabbable,
@@ -106,7 +107,9 @@ function asTextLine(el: UIKitComponent | null): TextLine | null {
   return typeof candidate.setProperties === 'function' ? candidate : null;
 }
 
-export class PanelSystem extends createSystem({}) {
+export class PanelSystem extends createSystem({
+  grabbed: { required: [Grabbed] },
+}) {
   private statusEl: TextLine | null = null;
   private locationEl: TextLine | null = null;
   private playheadEl: TextLine | null = null;
@@ -438,7 +441,21 @@ export class PanelSystem extends createSystem({}) {
       probeHoverHands: (out) => { collectHoverHands(this.world, this.probeTargets, out); },
     });
     // Native window grab: pointing anywhere at the panel and squeezing moves it.
-    this.surfaceGrab = createSurfaceGrab(this.world, this.probeTargets, affordance.far, this.affordanceNearEntity);
+    // A hand already holding the trigger elsewhere (or a direct grab on this
+    // hand) keeps its capture; promotion is skipped for that hand.
+    this.surfaceGrab = createSurfaceGrab(this.world, this.probeTargets, affordance.far, this.affordanceNearEntity, {
+      isHandBusy: (hand) => this.isHandBusy(hand),
+    });
+  }
+
+  /** True while `hand` already holds any grabbed entity (ray or direct grab). */
+  private isHandBusy(hand: Handedness): boolean {
+    const grabSystem = this.world.getSystem(GrabSystem) ?? null;
+    if (grabSystem == null) return false;
+    for (const entity of this.queries.grabbed.entities) {
+      if (grabSystem.getHolderHand(entity) === hand) return true;
+    }
+    return false;
   }
 
   /**

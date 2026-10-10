@@ -93,6 +93,12 @@ export const depthOcclusionUniforms = {
   uWrDepthFar: { value: 0 },
   /** Interpretation of the raw texel; see DepthDecodeMode in the system. */
   uWrDecode: { value: 0 },
+  /**
+   * Stereo eye for this draw (0 left, 1 right). Read only when three did not
+   * define VIEW_ID (the ArrayCamera per-eye fallback); multiview programs keep
+   * using three's builtin. Written per draw from `onBeforeRender` below.
+   */
+  uWrEye: { value: 0 },
   /** True when a real normDepthBufferFromNormView transform is uploaded. */
   uWrUseMatrix: { value: false },
   /** Legacy convention only: flip the depth UV vertically (CPU images). */
@@ -131,13 +137,18 @@ uniform float uWrRawToMeters;
 uniform float uWrDepthNear;
 uniform float uWrDepthFar;
 uniform int uWrDecode;
+uniform int uWrEye;
 uniform bool uWrUseMatrix;
 uniform bool uWrFlipV;
 uniform bool uWrEnabled;
-#ifndef VIEW_ID
-#define VIEW_ID 0
-#endif
+#ifdef VIEW_ID
+// Multiview program: three defines VIEW_ID as gl_ViewID_OVR.
 #define WR_VIEW_ID VIEW_ID
+#else
+// ArrayCamera per-eye fallback: three defines no VIEW_ID, so each draw reads
+// the eye index the onBeforeRender hook below wrote for that draw.
+#define WR_VIEW_ID uWrEye
+#endif
 `;
 
 const OCCLUSION_HELPERS = /* glsl */ `
@@ -154,15 +165,18 @@ vec2 wrDepthUv() {
   return uWrFlipV ? vec2(uv.x, 1.0 - uv.y) : uv;
 }
 
-// Linearize a normalized session depth buffer value (0 at the near plane,
-// 1 at the far plane) under a standard perspective projection.
-float wrWindowDepth(float normalized, float near, float far) {
-  float range = max(far - near, 0.001);
-  return (2.0 * near * far) / max(far + near - normalized * range, 0.001);
+// Linearize a [0,1] window-depth value (0 at the near plane, 1 at the far
+// plane) under a standard perspective projection. Window depth d is NDC depth
+// 2d-1, so with the projection's depth coefficients the view distance is
+// near*far/(far-d*(far-near)). The guard is a pure numerical epsilon.
+float wrWindowDepth(float windowDepth, float near, float far) {
+  float range = max(far - near, 0.000001);
+  return (near * far) / max(far - windowDepth * range, 0.000001);
 }
 
-// Raw texel value -> meters. Every division is guarded; a raw value of 0 means
-// "invalid depth" per the spec and must leave the fragment visible.
+// Raw texel value -> meters. The guards are pure numerical epsilons, never
+// range clamps; a raw value of 0 means "invalid depth" per the spec and must
+// leave the fragment visible.
 float wrDecodeDepth(float raw) {
   if (raw <= 0.0) return 0.0;
   if (uWrDecode == 1) {
@@ -172,7 +186,7 @@ float wrDecodeDepth(float raw) {
     return wrWindowDepth(1.0 - raw, uWrDepthNear, uWrDepthFar);
   }
   if (uWrDecode == 3) {
-    return uWrRawToMeters * uWrDepthNear / max(1.0 - raw, 0.001);
+    return uWrRawToMeters * uWrDepthNear / max(1.0 - raw, 0.000001);
   }
   if (uWrDecode == 4) {
     return raw * 0.001;
@@ -258,6 +272,20 @@ export function enableDepthOcclusion(material: ShaderMaterial): void {
   material.onBeforeCompile = (shader, renderer) => {
     previous?.(shader, renderer);
     injectDepthOcclusion(shader);
+  };
+  // ArrayCamera per-eye fallback path only (multiview programs ignore uWrEye:
+  // WR_VIEW_ID is VIEW_ID there). The draw's camera is the sub-camera three is
+  // rendering for; its position in the XR ArrayCamera's .cameras array, ordered
+  // [left, right], is the eye. This runs before three uploads uniforms for the
+  // draw, and three re-uploads on camera and material changes, so the value the
+  // shader reads is always this draw's eye. Outside XR the camera list is empty
+  // and the eye stays 0, which is a no-op while uWrEnabled is false.
+  const previousRender = material.onBeforeRender;
+  material.onBeforeRender = (renderer, scene, camera, geometry, object, group) => {
+    previousRender.call(material, renderer, scene, camera, geometry, object, group);
+    const eye = renderer.xr.getCamera().cameras.findIndex((sub) => sub === camera);
+    // Only two depth-transform slots exist, so anything unexpected is the left eye.
+    depthOcclusionUniforms.uWrEye.value = eye >= 0 && eye < 2 ? eye : 0;
   };
   material.needsUpdate = true;
 }

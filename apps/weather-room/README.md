@@ -170,12 +170,25 @@ holding hand.
 
 Carry keeps the platform's kinematic rule — exact 1:1 tracking, no physics —
 while the panel turns itself to face the viewer (yaw and pitch follow the
-view vector, roll pinned at 0) and preserves its angular size (eased, clamped
-0.6x..2x) as it moves along z. The rail faces the viewer the same way but
-keeps its authored 16 deg up-tilt. The pointing laser dims while a
-distance drag is active so it never obscures the carried surface. Release
-parks the control exactly where it was left; hovering or moving a hand
+view vector, roll pinned at 0) and keeps its apparent size constant by scaling
+the physical size with distance (eased, clamped 0.6x..2x). The rail faces the
+viewer the same way but keeps its authored 16 deg up-tilt. The pointing laser
+dims while a distance drag is active so it never obscures the carried surface.
+Release parks the control exactly where it was left; hovering or moving a hand
 afterwards never moves it, and moving the rail never scrubs time.
+
+Squeezing anywhere on a surface to move it is an app-specific extension, not a
+platform-parity claim: Meta documents moving a panel by grabbing an edge or the
+Control Bar. The app implements the shortcut by routing the squeeze into the ray
+pointer's distance-grab handle, which uses `MultiPointer` members outside the
+documented public surface (`getPointer('ray')`, `setIntersection`, `commit`,
+`routeDown`, `routeUp`; the documented surface is `toggleSubPointer`,
+`getSubPointerState`, `getActiveKind`, `getRayBusy`). Those reads are
+version-bound to IWSDK 1.0.1 and every call is guarded, so a missing member
+degrades to the standard paths — the Control Bar plaque and the ray trigger —
+instead of failing silently. Promotion is refused while that hand already owns a
+grab, so a trigger-held scrub is never hijacked, and the routing latch is
+cleared on source loss or session exit.
 
 Released positions persist for the current XR session, including focus
 transitions. A new XR session places the panel 1.4 m forward / 0.18 m above
@@ -628,10 +641,13 @@ before the weather visuals at 30.5-36.5):
   on hover and a flash plus click cue on press.
 - **Pinch scrub** (`timeline.ts`): an invisible 0.90 x 0.02 x 0.02 m strip over
   the rail with `OneHandGrabbable`; a pinch anywhere on the scale scrubs with the
-  existing ±0.45 m ⇔ ±24 h mapping and the ±0.75 h snap-to-live, fires a detent
-  impulse on every hour crossed, and the strip is pinned back to rest each held
-  frame so a grab can never drag it out of place. The ray and knob paths are
-  unchanged.
+  existing ±0.45 m ⇔ ±24 h mapping and the ±0.75 h snap-to-live. The strip rests
+  at rail-local 0, so its measured X is the hand's displacement since the grab
+  started; the mapping adds the playhead's rail-local X captured at grab start,
+  which makes the scrub relative and keeps the playhead where it was instead of
+  snapping it to NOW. It fires a detent impulse on every hour crossed, and the
+  strip is pinned back to rest each held frame so a grab can never drag it out
+  of place. The ray and knob paths are unchanged and stay absolute.
 
 Sandbox mode is a store flag with a `SandboxToggle` event; its switch is the
 panel's existing hint row (runtime name `weather-toggle-sandbox`), which flips
@@ -786,3 +802,64 @@ Still hardware-only, listed so the next headset run can close it:
   can exercise);
 - visible rain/haze occlusion and the haze band height against a real room;
 - the cloud deck height in a room whose scan has no ceiling.
+
+### Independent review round on the AR-defect commit (2026-10-10)
+
+Two read-only reviewer passes over `ee3431b` produced sixteen findings; the
+material ones are fixed in the follow-up commit.
+
+Depth (device-critical, in `depth-occlusion.ts` and
+`systems/depth-occlusion.ts`):
+
+- the session's fallback decode is now published before occlusion is enabled
+  instead of leaving the shader on its initial value, and a calibrated
+  `SpecRaw` is no longer mistaken for "uncalibrated";
+- window depth is converted to NDC before linearizing
+  (`near*far/(far - d*(far-near))`) in both the shader and the calibration
+  math, so a 2 m surface no longer decodes as ~4 m;
+- the GPU probe reads through a color staging target: the previous
+  depth-attachment read was invalid in GLES3 and left an incomplete
+  framebuffer, so the calibration could never sample the Quest
+  normalized-depth texture;
+- a spec-encoded float32 GPU image no longer requires the Meta-only
+  `depthNear`; each view publishes its own `normDepthBufferFromNormView`; CPU
+  sessions stay on `SpecRaw` with the reported `rawValueToMeters` and the probe
+  is diagnostic-only there; the eye index falls back to a per-draw uniform when
+  multiview is unavailable; the inverse-depth denominator guard no longer
+  saturates every distance beyond ~1 m; and `stop()` clears the sampler so a
+  paused system cannot keep a session-owned texture bound.
+
+Interaction and UI:
+
+- squeeze promotion is refused while that hand already owns a grab, so a
+  trigger-held scrub is no longer hijacked; the routing latch is cleared on
+  source loss and session exit;
+- the angular-size ratio is no longer inverted: measured in IWER, the panel
+  carried from 1.4 m to 1.8 m grew from 0.18 to 0.2224, where the old ratio
+  would have shrunk it toward 0.108;
+- the pinch-strip scrub keeps the playhead instead of snapping it to NOW, and
+  the rail is hidden on a fresh 2D load instead of only after an XR exit
+  (measured: `Visibility.isVisible = false` for both the rail and the panel
+  right after a reload with no session);
+- the rail's bare housing is reachable by the ray through a dedicated
+  invisible hit box that is a *sibling* of the knob, ray-proxy and strip
+  shells. Putting `RayInteractable` on the rail root instead made the housing
+  win the ray hit for its own descendants — measured: aiming at the knob
+  column put `Hovered` on the housing and never on the knob. With the hit box,
+  the knob column hovers the ray proxy and the bare housing hovers the box.
+
+Verified in the same IWER session after the fixes: aiming at the bare housing
+and squeezing grabs the rail's move shell (`Grabbed` + `Handle`) and moves the
+rail 1:1 (`(0, 1.2, -1.05) -> (0.2, 1.32, -1.05)`); with the trigger held on
+the ray proxy, a squeeze leaves the move shell ungrabbed while the proxy keeps
+`Grabbed`; the panel's surface squeeze still carries it 1:1
+(`(0, 1.78, -1.4) -> (0, 1.88, -1.8)`); and the depth lines return
+`decode=inverse-unit` with `raw[center]=0.9436 -> 1.77m` through the new
+readback.
+
+Not verified in this session: the near-grab path (`OneHandGrabbable` on the
+knob, the strip and both move shells) did not engage for any controller pose
+the emulator API can set — it exposes one pose per controller, while the SDK's
+grab sphere follows the grip space, so the strip's relative-scrub mapping is
+covered by review and typecheck only and needs a headset or an emulator that
+exposes the grip pose.

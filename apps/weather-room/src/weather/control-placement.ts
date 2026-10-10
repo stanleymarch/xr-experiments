@@ -35,6 +35,7 @@ import {
   Quaternion,
   SphereGeometry,
   Vector3,
+  VisibilityState,
 } from '@iwsdk/core';
 import type { Entity, Object3D, World } from '@iwsdk/core';
 import { bevelBox } from '../scene-assets/lib/hardsurface.js';
@@ -140,10 +141,11 @@ export function baselineAngularSize(
 }
 
 /**
- * Keep the control's angular size constant while it is carried toward or away
- * from the viewer: the relative scale eases toward `baseDistance / distance`,
- * clamped to the grab-pose limits. The released size stays where the hand left
- * it (nothing re-centers), matching the "released transforms persist" rule.
+ * Keep the control's apparent size steady while it is carried toward or away
+ * from the viewer: physical size grows with distance, easing toward
+ * `distance / baseDistance` clamped to the grab-pose limits. The released
+ * size stays where the hand left it (nothing re-centers), matching the
+ * "released transforms persist" rule.
  */
 export function stepAngularSize(
   root: Object3D,
@@ -156,7 +158,7 @@ export function stepAngularSize(
   head.getWorldPosition(headPosition);
   root.getWorldPosition(facePosition);
   const distance = Math.max(0.2, headPosition.distanceTo(facePosition));
-  const target = Math.min(max, Math.max(min, state.baseDistance / distance));
+  const target = Math.min(max, Math.max(min, distance / state.baseDistance));
   const ease = 1 - Math.exp(-Math.max(0, delta) / ANGULAR_SIZE_TAU_S);
   state.current += (target - state.current) * ease;
   root.scale.setScalar(state.baseScale * state.current);
@@ -401,7 +403,7 @@ export function thumbstickY(world: World, hand: Handedness | null): number {
 }
 
 /* ------------------------------------------------------------------ *
- * Window grab: squeeze anywhere on the surface (Horizon OS parity)
+ * Window grab: squeeze anywhere on the surface (app-owned shortcut)
  * ------------------------------------------------------------------ */
 
 interface RoutedRayPointer extends PointerLike {
@@ -416,8 +418,12 @@ interface RoutingMultiPointer {
 }
 
 /**
- * Native-style window grab: pointing anywhere at the surface and squeezing
- * moves the window, while the trigger keeps clicking the UIKit buttons.
+ * App-owned shortcut (not platform parity): pointing anywhere at the surface
+ * and squeezing moves the window, while the trigger keeps clicking the UIKit
+ * buttons. Meta's panel/window guidance moves panels by the edge or the
+ * Control Bar below the panel, not by arbitrary content, so this squeeze-
+ * anywhere behaviour is our own decision layered on top; the stock path
+ * (Control Bar pill + trigger) keeps working with or without it.
  *
  * IWSDK routes the squeeze only to the near-grab pointer and the trigger only
  * to the ray pointer, so a distance grab on squeeze uses the routing the SDK
@@ -431,9 +437,23 @@ interface RoutingMultiPointer {
  * grab and the existing driver carries it. Nothing is added over the surface,
  * so ray and poke clicks on the buttons are untouched, and the near-grab pill
  * keeps its own squeeze path.
+ *
+ * Boundary honesty: `getPointer('ray')`, `setIntersection`, `commit`,
+ * `routeDown`, and `routeUp` are NOT documented `MultiPointer` API — the
+ * documented public surface is only `toggleSubPointer`, `getSubPointerState`,
+ * `getActiveKind`, and `getRayBusy`. Every call here goes through the
+ * structural casts above (verified against IWSDK 1.0.1) with optional
+ * chaining, so if any of these methods disappears in a newer SDK the bridge
+ * degrades to the stock path (Control Bar pill + trigger) instead of
+ * breaking silently.
  */
 export interface SurfaceGrab {
   update(): void;
+}
+
+export interface SurfaceGrabOptions {
+  /** True while this hand already owns a grab elsewhere; promotion is then skipped. */
+  readonly isHandBusy?: (hand: Handedness) => boolean;
 }
 
 export function createSurfaceGrab(
@@ -443,6 +463,7 @@ export function createSurfaceGrab(
   /** The DistanceGrabbable shell whose handle performs the move. */
   shell: Object3D,
   nearEntity: Entity,
+  options?: SurfaceGrabOptions,
 ): SurfaceGrab {
   const routed: Record<Handedness, boolean> = { left: false, right: false };
   const grabTargets = [...surface, shell];
@@ -452,6 +473,16 @@ export function createSurfaceGrab(
         const pad = world.input.xr.gamepads[hand];
         const squeezeDown = pad?.getButtonDown(InputComponent.Squeeze) === true;
         const squeezeUp = pad?.getButtonUp(InputComponent.Squeeze) === true;
+        // The squeeze-up edge never arrives when the controller disconnects,
+        // the input mode changes, or the session ends mid-squeeze: release
+        // the routed ray once instead of leaving the latch set, which would
+        // swallow the next squeeze.
+        if (routed[hand] && (world.visibilityState.peek() === VisibilityState.NonImmersive || pad == null)) {
+          const multi = world.input.xr.multiPointers[hand] as unknown as RoutingMultiPointer;
+          multi?.routeUp?.('squeeze', 'ray', { timeStamp: performance.now() });
+          routed[hand] = false;
+          continue;
+        }
         if (!routed[hand] && !squeezeDown) continue;
         // Named boundary value: structural read of the SDK pointer bundle.
         const multi = world.input.xr.multiPointers[hand] as unknown as RoutingMultiPointer;
@@ -464,6 +495,9 @@ export function createSurfaceGrab(
           }
           continue;
         }
+        // Never steal an in-flight ray capture: a hand already holding the
+        // trigger on another target (or a direct grab on this hand) keeps it.
+        if (options?.isHandBusy?.(hand) === true) continue;
         if (
           squeezeDown &&
           hit != null &&
@@ -521,8 +555,9 @@ export function collectHoverHands(
   for (const hand of HANDS) {
     if (out.includes(hand)) continue;
     const multi = world.input.xr.multiPointers[hand];
-    const ray = (multi.getPointer('ray') as unknown as PointerLike).getIntersection?.();
-    const grab = (multi.getPointer('grab') as unknown as PointerLike).getIntersection?.();
+    // A missing pointer bundle degrades to "no hover", never a throw.
+    const ray = (multi?.getPointer?.('ray') as unknown as PointerLike | undefined)?.getIntersection?.();
+    const grab = (multi?.getPointer?.('grab') as unknown as PointerLike | undefined)?.getIntersection?.();
     if (intersectsAny(ray?.object, targets) || intersectsAny(grab?.object, targets)) out.push(hand);
   }
   return out;
@@ -1007,6 +1042,12 @@ export function createGripDriver(
           heldHand = null;
           released = true;
         }
+      }
+      // Same-shell handoff: while held, follow the current holder so carry
+      // input, ray dimming, and the release haptic use the live hand.
+      if (active != null && activeEntity != null) {
+        const holder = grabSystem?.getHolderHand(activeEntity) ?? null;
+        if (holder != null && holder !== heldHand) heldHand = holder;
       }
 
       if (active != null) {

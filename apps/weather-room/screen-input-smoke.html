@@ -138,11 +138,11 @@ try {
     target.position.set(0, 0, -2);
     target.updateMatrixWorld(true);
     for (let i = 0; i < 200; i += 1) stepAngularSize(target, head, angular, 0.016);
-    if (Math.abs(target.scale.x - 0.18 * 0.6) > 0.002) throw new Error(`Carrying away must hit the 0.6x floor (${target.scale.x.toFixed(3)})`);
+    if (Math.abs(target.scale.x - 0.18 * 2) > 0.002) throw new Error(`Carrying away must hit the 2x ceiling (${target.scale.x.toFixed(3)})`);
     target.position.set(0, 0, -0.5);
     target.updateMatrixWorld(true);
     for (let i = 0; i < 200; i += 1) stepAngularSize(target, head, angular, 0.016);
-    if (Math.abs(target.scale.x - 0.18 * 2) > 0.002) throw new Error(`Carrying closer must hit the 2x ceiling (${target.scale.x.toFixed(3)})`);
+    if (Math.abs(target.scale.x - 0.18 * 0.6) > 0.002) throw new Error(`Carrying closer must hit the 0.6x floor (${target.scale.x.toFixed(3)})`);
 
     // Push / pull along the view ray: a small deflection only nudges, full
     // deflection eases up and stops dead at the platform distance limits.

@@ -17,6 +17,7 @@ import {
   createSystem,
   DistanceGrabbable,
   Grabbed,
+  GrabSystem,
   Hovered,
   Mesh,
   MeshBasicMaterial,
@@ -39,6 +40,7 @@ import { TimelineHandle, TimelineMoveGrip } from '../components/timeline-handle.
 import {
   baselineAngularSize,
   buildAffordance,
+  collectHoverHands,
   ContactImpulse,
   createAngularSizeState,
   createGripDriver,
@@ -100,6 +102,13 @@ export class TimelineSystem extends createSystem({
   private scrubProxyEntity: Entity | null = null;
   /** Wide invisible pinch-scrub shell across the whole scale. */
   private scrubStripEntity: Entity | null = null;
+  /** Invisible bare-housing hit target; sibling of the scrub shells. */
+  private surfaceHitEntity: Entity | null = null;
+  private surfaceHit: Mesh | null = null;
+  /** Grab-start playhead position in rail-local X: the strip rests at 0, so its
+   *  measured X is hand displacement; adding this baseline makes the scrub
+   *  relative instead of snapping the playhead to NOW. */
+  private scrubStripBaselineX = 0;
   /** Paired visual for the hourly detent tick while pinch-scrubbing. */
   private detentImpulse: ContactImpulse | null = null;
   /** Whole-rail move affordance: Control Bar pill below the housing. */
@@ -147,6 +156,15 @@ export class TimelineSystem extends createSystem({
         // driver, so ignoring it here changes no bus behavior.
         if (!entity.hasComponent(TimelineHandle)) return;
         this.grabbedHandle = entity;
+        // The strip rests at rail-local 0 while the playhead may sit anywhere:
+        // anchor this scrub at the playhead's current rail-local X so the update
+        // below adds hand displacement to it instead of snapping to NOW. The
+        // knob and the ray proxy already follow the playhead and need no anchor.
+        if (entity === this.scrubStripEntity) {
+          const hours = weatherStore.state.peek().playheadHours;
+          const t = (hours - PLAYHEAD_MIN_H) / (PLAYHEAD_MAX_H - PLAYHEAD_MIN_H);
+          this.scrubStripBaselineX = -RAIL_HALF + t * RAIL_HALF * 2;
+        }
         weatherEvents.emit(WeatherEvent.TimelineGrab);
         pulseHaptics(this.world, Haptics.grab.intensity, Haptics.grab.durationMs);
       }),
@@ -222,6 +240,27 @@ export class TimelineSystem extends createSystem({
     model.position.copy(DEFAULT_POS);
     model.rotation.x = FACE_TILT_X;
     this.railEntity = this.world.createTransformEntity(model);
+    // Bare-rail hit target: an invisible box on the housing's own envelope
+    // (0.96 x 0.074, front face behind the knob/scrub shells at z = 0.0416), as
+    // a SIBLING of the knob, the ray proxy and the strip. A `RayInteractable`
+    // ancestor would win the ray hit for every descendant and shadow the whole
+    // scrub path - measured: with the flag on the rail root, aiming at the knob
+    // column put `Hovered` on the housing and never on the knob. This box sits
+    // behind them, so direct aims keep resolving to the knob, the ray proxy or
+    // the strip first, while bare housing aims land here.
+    const surfaceHit = new Mesh(
+      new BoxGeometry(0.96, 0.074, 0.02),
+      new MeshBasicMaterial({ colorWrite: false, depthWrite: false }),
+    );
+    surfaceHit.name = 'Weather Timeline Surface';
+    surfaceHit.position.set(0, 0, 0.006);
+    this.surfaceHitEntity = this.world.createTransformEntity(surfaceHit, { parent: this.railEntity });
+    this.surfaceHitEntity.addComponent(RayInteractable, {});
+    this.surfaceHit = surfaceHit;
+    // Fresh 2D loads subscribe before this model exists and NonImmersive never
+    // re-fires, so apply the current visibility now; the init() subscription
+    // still handles later session transitions.
+    model.visible = this.world.visibilityState.peek() !== VisibilityState.NonImmersive;
 
     // One-time material clones for per-instance state feedback (the manifest
     // contract: reassigning mesh.material on a clone restyles one instance).
@@ -287,9 +326,9 @@ export class TimelineSystem extends createSystem({
     // scale. OneHandGrabbable only (the ray already owns the knob proxy
     // above), so pointing behavior is unchanged; a pinch anywhere along
     // the rail grabs the strip and the TimelineHandle mapping below writes
-    // the playhead from its world X (same ±0.45 m ⇔ ±24 h route as the
-    // knob). The strip is pinned back to rest every held frame, so grabs
-    // never drift it along the rail.
+    // the playhead from its hand displacement plus the grab-start playhead
+    // baseline (relative scrub: no snap to NOW). The strip is pinned back
+    // to rest every held frame, so grabs never drift it along the rail.
     const scrubStrip = new Mesh(
       new BoxGeometry(SCRUB_STRIP_W_M, SCRUB_STRIP_T_M, SCRUB_STRIP_T_M),
       new MeshBasicMaterial({ colorWrite: false, depthWrite: false }),
@@ -337,16 +376,31 @@ export class TimelineSystem extends createSystem({
         stepViewDistance(root, head, thumbstickY(this.world, hand), this.viewPull, dt);
         stepAngularSize(root, head, this.angularSize, dt);
       },
+      // Aiming anywhere on the rail housing counts as aiming at the window,
+      // so the Control Bar reveals on housing hover like the panel's does.
+      probeHoverHands: (out) => { collectHoverHands(this.world, this.carrySurface, out); },
     });
     // Native window grab: pointing anywhere at the rail and squeezing moves it.
-    this.carrySurface.push(model);
-    this.surfaceGrab = createSurfaceGrab(this.world, this.carrySurface, moveAffordance.far, this.moveNearEntity);
+    // A hand already scrubbing (knob, ray proxy, or strip) keeps its capture;
+    // promotion is skipped for that hand so a scrub never becomes a rail move.
+    // The bare-housing hit box is the surface the bridge and the hover probe
+    // test against: it is the only rail object the ray can intersect outside
+    // the knob, the ray proxy and the strip.
+    if (this.surfaceHit != null) this.carrySurface.push(this.surfaceHit);
+    this.surfaceGrab = createSurfaceGrab(this.world, this.carrySurface, moveAffordance.far, this.moveNearEntity, {
+      isHandBusy: (hand) => this.isHandBusy(hand),
+    });
 
     this.cleanupFuncs.push(() => {
       this.moveNearEntity?.dispose();
       this.moveFarEntity?.dispose();
       this.scrubProxyEntity?.dispose();
       this.scrubStripEntity?.dispose();
+      this.surfaceHitEntity?.dispose();
+      this.surfaceHit?.geometry.dispose();
+      const surfaceHitMaterial = this.surfaceHit?.material;
+      if (surfaceHitMaterial != null && !Array.isArray(surfaceHitMaterial)) surfaceHitMaterial.dispose();
+      this.surfaceHit = null;
       scrubStrip.geometry.dispose();
       scrubStrip.material.dispose();
       rayTarget.geometry.dispose();
@@ -358,6 +412,16 @@ export class TimelineSystem extends createSystem({
       this.handleEntity?.dispose();
       this.railEntity?.dispose();
     });
+  }
+
+  /** True while `hand` already holds a TimelineHandle (knob, ray proxy, or strip). */
+  private isHandBusy(hand: Handedness): boolean {
+    const grabSystem = this.world.getSystem(GrabSystem) ?? null;
+    if (grabSystem == null) return false;
+    for (const entity of this.queries.grabbed.entities) {
+      if (grabSystem.getHolderHand(entity) === hand) return true;
+    }
+    return false;
   }
 
   update(delta: number): void {
@@ -426,7 +490,15 @@ export class TimelineSystem extends createSystem({
       // Map the held near knob or separate ray target into rail-local X.
       handle.object3D?.getWorldPosition(this.handleWorld);
       this.railEntity.object3D?.worldToLocal(this.handleWorld);
-      const localX = Math.max(-RAIL_HALF, Math.min(RAIL_HALF, this.handleWorld.x));
+      const measuredX = Math.max(-RAIL_HALF, Math.min(RAIL_HALF, this.handleWorld.x));
+      // The strip rests at 0, so its measured X is hand displacement since grab
+      // start: re-anchor it at the grab-start playhead baseline (relative scrub,
+      // clamped to the rail like every other playhead write). The knob and the
+      // ray proxy follow the playhead and keep their absolute behaviour.
+      const localX =
+        handle === this.scrubStripEntity
+          ? Math.max(-RAIL_HALF, Math.min(RAIL_HALF, measuredX + this.scrubStripBaselineX))
+          : measuredX;
       const t = (localX + RAIL_HALF) / (RAIL_HALF * 2);
       const hours = PLAYHEAD_MIN_H + t * (PLAYHEAD_MAX_H - PLAYHEAD_MIN_H);
       // Snap routing stays identical (±0.75 h zone collapses to live) but the

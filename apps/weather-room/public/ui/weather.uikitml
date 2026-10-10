@@ -290,7 +290,7 @@
       <div class="mode-row">
         <div id="mode-badge" class="mode-pill">LOADING</div>
       </div>
-      <div id="playhead-line" class="playhead">…</div>
+      <div id="playhead-line" class="playhead">--</div>
       <div id="hero-line" class="hero-temp">--</div>
       <div id="location-line" class="subhead">Locating...</div>
       <div id="values-line" class="values">--</div>

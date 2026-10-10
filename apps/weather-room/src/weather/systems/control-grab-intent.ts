@@ -32,6 +32,10 @@ export class ControlGrabIntentSystem extends createSystem({
 }) {
   private session: XRSession | null = null;
   private readonly locked: Record<Hand, XRInputSource | null> = { left: null, right: null };
+  /** True between a hand's squeeze/pinch start and its matching end. */
+  private readonly pressed: Record<Hand, boolean> = { left: false, right: false };
+  /** True while a held press was routed into the grab sub-pointer by a late lock. */
+  private readonly routedPress: Record<Hand, boolean> = { left: false, right: false };
   private readonly gripPosition = new Vector3();
   private readonly localPosition = new Vector3();
   private readonly nearestPosition = new Vector3();
@@ -50,11 +54,61 @@ export class ControlGrabIntentSystem extends createSystem({
   }
 
   update(): void {
+    const frame = this.world.xrFrame;
+    const reference = this.world.xrReferenceSpace;
     for (const hand of HANDS) {
       const source = this.locked[hand];
       if (source != null && (!this.hasSource(source) ||
-          trackedInputKind(this.world, hand) == null)) this.release(hand);
+          trackedInputKind(this.world, hand) == null)) {
+        this.release(hand);
+        continue;
+      }
+      // Late lock: a squeeze that started beside the control and slid onto it
+      // mid-press must still capture — the start event already passed.
+      if (source == null && this.pressed[hand] && frame != null && reference != null) {
+        const active = this.trackedSource(hand);
+        if (active != null && this.tryLock(hand, active, frame, reference)) {
+          // Locked this frame; nothing else to do for this hand.
+        }
+      }
     }
+  }
+
+  /** The tracked-pointer source for one hand, or null when none is live. */
+  private trackedSource(hand: Hand): XRInputSource | null {
+    if (this.session == null) return null;
+    for (const source of this.session.inputSources) {
+      if (source.handedness === hand && source.targetRayMode === 'tracked-pointer') return source;
+    }
+    return null;
+  }
+
+  private tryLock(
+    hand: Hand,
+    source: XRInputSource,
+    frame: XRFrame,
+    reference: XRReferenceSpace,
+  ): boolean {
+    const pointers = this.input.xr.multiPointers[hand];
+    if (!pointers.getSubPointerState('touch').registered) return false;
+    const grab = this.world.getSystem(GrabSystem);
+    for (const entity of this.queries.held.entities) {
+      if (grab?.getHolderHand(entity) === hand) return false;
+    }
+    if (!this.readGripAt(frame, reference, source) || !this.hitsControl()) return false;
+    this.locked[hand] = source;
+    pointers.toggleSubPointer('touch', false);
+    // Boundary honesty: `routeDown`/`routeUp` are not documented MultiPointer
+    // API (the same structural shortcut `createSurfaceGrab` already uses).
+    // The press edge happened before the lock, so it must be routed into the
+    // grab sub-pointer now or the handle would never capture this squeeze.
+    const multi = pointers as unknown as {
+      routeDown?: (button: string, kind: string, event: { timeStamp: number }) => unknown;
+      routeUp?: (button: string, kind: string, event: { timeStamp: number }) => unknown;
+    };
+    multi.routeDown?.('squeeze', 'grab', { timeStamp: performance.now() });
+    this.routedPress[hand] = true;
+    return true;
   }
 
   private hasSource(source: XRInputSource): boolean {
@@ -91,17 +145,19 @@ export class ControlGrabIntentSystem extends createSystem({
   private readonly onStart = (event: XRInputSourceEvent): void => {
     const source = event.inputSource;
     const hand = source.handedness;
-    if ((hand !== 'left' && hand !== 'right') || source.targetRayMode !== 'tracked-pointer' ||
-        this.locked[hand] != null) return;
+    if ((hand !== 'left' && hand !== 'right') || source.targetRayMode !== 'tracked-pointer') return;
     // Controllers squeeze; hands pinch. A controller trigger is still a ray select.
     if (event.type !== (source.hand == null ? 'squeezestart' : 'selectstart')) return;
+    this.pressed[hand] = true;
+    if (this.locked[hand] != null) return;
     const pointers = this.input.xr.multiPointers[hand];
     if (!pointers.getSubPointerState('touch').registered) return;
     const grab = this.world.getSystem(GrabSystem);
     for (const entity of this.queries.held.entities) {
       if (grab?.getHolderHand(entity) === hand) return;
     }
-    if (!this.readGrip(event.frame, source) || !this.hitsControl()) return;
+    const reference = this.xrManager.getReferenceSpace();
+    if (reference == null || !this.readGripAt(event.frame, reference, source) || !this.hitsControl()) return;
     this.locked[hand] = source;
     pointers.toggleSubPointer('touch', false);
   };
@@ -109,8 +165,10 @@ export class ControlGrabIntentSystem extends createSystem({
   private readonly onEnd = (event: XRInputSourceEvent): void => {
     const source = event.inputSource;
     const hand = source.handedness;
-    if ((hand === 'left' || hand === 'right') && this.locked[hand] === source &&
-        event.type === (source.hand == null ? 'squeezeend' : 'selectend')) this.release(hand);
+    if (hand !== 'left' && hand !== 'right') return;
+    if (event.type !== (source.hand == null ? 'squeezeend' : 'selectend')) return;
+    this.pressed[hand] = false;
+    if (this.locked[hand] === source) this.release(hand);
   };
 
   private readonly onSourcesChange = (event: XRInputSourcesChangeEvent): void => {
@@ -129,13 +187,21 @@ export class ControlGrabIntentSystem extends createSystem({
   private release(hand: Hand): void {
     if (this.locked[hand] == null) return;
     this.locked[hand] = null;
-    // We only lock pointers that were registered, never enable a user's disabled pointer.
-    this.input.xr.multiPointers[hand].toggleSubPointer('touch', true);
+    const pointers = this.input.xr.multiPointers[hand];
+    if (this.routedPress[hand]) {
+      this.routedPress[hand] = false;
+      const multi = pointers as unknown as {
+        routeUp?: (button: string, kind: string, event: { timeStamp: number }) => unknown;
+      };
+      multi.routeUp?.('squeeze', 'grab', { timeStamp: performance.now() });
+    }
+    // Restore only what we suppressed: if the pointer is already registered
+    // again (someone re-enabled it while we held the lock), leave it alone
+    // instead of resurrecting it a second time.
+    if (!pointers.getSubPointerState('touch').registered) pointers.toggleSubPointer('touch', true);
   }
 
-  private readGrip(frame: XRFrame, source: XRInputSource): boolean {
-    const reference = this.xrManager.getReferenceSpace();
-    if (reference == null) return false;
+  private readGripAt(frame: XRFrame, reference: XRReferenceSpace, source: XRInputSource): boolean {
     const palm = source.hand?.get('middle-finger-metacarpal');
     const palmPose = palm != null ? frame.getJointPose?.(palm, reference) : null;
     if (source.hand != null) {

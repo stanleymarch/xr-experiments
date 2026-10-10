@@ -585,7 +585,7 @@ export class PanelSystem extends createSystem({
       const status = state.status;
       this.pillBase = PILL_BASE_LOADING;
       this.modeEl?.setProperties({ text: t('badgeLoading') });
-      this.playheadEl.setProperties({ text: '…' });
+      this.playheadEl.setProperties({ text: '...' });
       this.heroEl?.setProperties({ text: t('missingValue') });
       this.valuesEl.setProperties({ text: t('missingValue') });
       this.pushStatus(

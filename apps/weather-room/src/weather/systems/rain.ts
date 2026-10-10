@@ -1,5 +1,5 @@
 /**
- * Rain: CPU-simulated instanced streak quads (max 2400 full / 1200 reduced)
+ * Rain: CPU-simulated instanced streak quads (max 3200 full / 1200 reduced)
  * filling the RoomModel bounds, plus a 48-instance splash ring field.
  * Density <- drivers.rain, fall speed 4+8*rain m/s, tilt <- shared wind.
  * Instanced quads replace point sprites: point sprites render as solid
@@ -27,6 +27,7 @@ import { enableDepthOcclusion } from '../depth-occlusion.js';
 import { enableHandField, HAND_FIELD_LAYERS } from '../hand-field.js';
 import { enableBeamLighting } from '../light-shared.js';
 import { roomModel } from '../room.js';
+import { sandboxGustFactor } from '../sandbox-gust.js';
 import { weatherStore } from '../weather-state.js';
 import { windVectorFromFrame } from '../wind-shared.js';
 
@@ -116,7 +117,7 @@ void main() {
   float a = (comb * radial + glint) * vFade;
   if (a < 0.01) discard;
   // Teal-steel contact mark, straight alpha: legible against pale fog without
-  // going white. Representative contacts only (48-pool vs 2400 drops).
+  // going white. Representative contacts only (48-pool vs 3200 drops).
   float outA = a;
   // The beam helpers are injected but never pre-evaluated in this shader:
   // without this line beam is an undeclared identifier and the whole
@@ -255,6 +256,8 @@ export class RainSystem extends createSystem({}) {
     this.streaks.count = live;
     windVectorFromFrame(frame, 0.35, this.wind);
     this.wind.multiplyScalar(1 + Math.max(0, drivers.gust - drivers.wind) * 0.8);
+    // A sandbox gust bends the streaks harder than any forecast wind.
+    this.wind.multiplyScalar(1 + sandboxGustFactor() * 1.1);
     const { min, max } = roomModel;
     const spanX = Math.max(0.5, max.x - min.x);
     const spanZ = Math.max(0.5, max.z - min.z);

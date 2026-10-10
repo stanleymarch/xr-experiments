@@ -44,8 +44,15 @@ import { createSystem, Vector3 } from '@iwsdk/core';
 import type { Object3D } from '@iwsdk/core';
 import { WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
 import { Haptics, pulseHaptics } from '../feedback.js';
-import { ContactImpulse, playClapCue } from '../control-placement.js';
+import { ContactImpulse, playClapCue, playPushWhoosh } from '../control-placement.js';
 import { trackedInputKind } from '../capabilities.js';
+import {
+  SANDBOX_GUST_COOLDOWN_S,
+  SANDBOX_GUST_FULL_SPEED_M_S,
+  SANDBOX_GUST_MIN_SPEED_M_S,
+  stepSandboxGust,
+  triggerSandboxGust,
+} from '../sandbox-gust.js';
 
 /**
  * Palm centers closer than this (meters) qualify the distance half of a
@@ -89,6 +96,24 @@ export class GestureSandboxSystem extends createSystem({}) {
   private cooldown = 0;
   /** False between a fire and the palms separating past the re-arm radius. */
   private armed = true;
+  /** Previous frame's palm anchors, for per-hand sweep speed. */
+  private readonly lastPalm: Record<Handedness, Vector3> = {
+    left: new Vector3(),
+    right: new Vector3(),
+  };
+  /** Whether lastPalm holds a valid sample for this hand. */
+  private readonly palmSeen: Record<Handedness, boolean> = { left: false, right: false };
+  /** Smoothed horizontal sweep speed per hand (m/s). */
+  private readonly sweepSpeed: Record<Handedness, number> = { left: 0, right: 0 };
+  /** Per-hand gust cooldown, seconds. */
+  private readonly gustCooldown: Record<Handedness, number> = { left: 0, right: 0 };
+  /** Seconds since the last accepted clap; a clap must not double as a gust. */
+  private sinceClap = Number.POSITIVE_INFINITY;
+  /** Head world position this frame and its per-frame delta (XZ used). */
+  private readonly headNow = new Vector3();
+  private readonly headPrev = new Vector3();
+  private readonly headDelta = new Vector3();
+  private headSeen = false;
 
   init(): void {
     this.impulse = new ContactImpulse(this.world, CLAP_IMPULSE_COLOR, 'Gesture Clap Impulse');
@@ -116,6 +141,13 @@ export class GestureSandboxSystem extends createSystem({}) {
   update(delta: number): void {
     const impulse = this.impulse;
     if (impulse != null) impulse.update(delta);
+    // The gust envelope decays every frame, sandbox or not, so a flip of the
+    // sandbox toggle can never leave a gust frozen mid-air.
+    stepSandboxGust(delta);
+    const dt = Number.isFinite(delta) ? Math.min(Math.max(delta, 1e-4), 0.1) : 0.016;
+    this.sinceClap += dt;
+    if (this.gustCooldown.left > 0) this.gustCooldown.left = Math.max(0, this.gustCooldown.left - dt);
+    if (this.gustCooldown.right > 0) this.gustCooldown.right = Math.max(0, this.gustCooldown.right - dt);
 
     // Outside an immersive session there are no palm anchors at all; the
     // reset below also covers tracking loss for one or both hands.
@@ -132,9 +164,34 @@ export class GestureSandboxSystem extends createSystem({}) {
     right.getWorldPosition(this.palmRight);
     const distance = this.palmLeft.distanceTo(this.palmRight);
 
-    const dt = Number.isFinite(delta) ? Math.min(Math.max(delta, 1e-4), 0.1) : 0.016;
     if (this.cooldown > 0) this.cooldown = Math.max(0, this.cooldown - dt);
 
+    // Head motion baseline for the sweep channel: walking must not count as
+    // waving. Leaf-node getWorldPosition refreshes the chain on the way up.
+    this.world.player.head.getWorldPosition(this.headNow);
+    if (!this.headSeen) {
+      this.headDelta.set(0, 0, 0);
+      this.headSeen = true;
+    } else {
+      this.headDelta.copy(this.headNow).sub(this.headPrev);
+    }
+    this.headPrev.copy(this.headNow);
+
+    // Clap first: its fresh closing speed and timestamp are what tell the
+    // sweep channel that this motion was a clap, not a wave.
+    this.stepClap(distance, dt);
+    // Sweep gusts ride the same anchors: a fast horizontal wave of one hand
+    // whips up a gust while the sandbox is on.
+    this.stepSweep('left', this.palmLeft, dt);
+    this.stepSweep('right', this.palmRight, dt);
+  }
+
+  /**
+   * Clap detection: hysteresis re-arm, damped closing speed, then the
+   * close+fast trigger. Split out so the sweep channel always runs after it
+   * and can see this frame's closing speed.
+   */
+  private stepClap(distance: number, dt: number): void {
     // Hysteresis: after a fire, wait for a real separation before listening
     // again, independent of the time cooldown.
     if (!this.armed) {
@@ -173,11 +230,53 @@ export class GestureSandboxSystem extends createSystem({}) {
     this.lastDistance = Number.NaN;
     this.closingSpeed = Number.NaN;
     this.armed = true;
+    this.palmSeen.left = false;
+    this.palmSeen.right = false;
+    this.sweepSpeed.left = 0;
+    this.sweepSpeed.right = 0;
+    this.headSeen = false;
+  }
+
+  /**
+   * One hand's sweep channel: smoothed horizontal speed against the gust
+   * thresholds, measured in HEAD-LOCAL space (the head's own displacement is
+   * subtracted), so walking through the room with still hands can never fire
+   * a gust. Fires only while the sandbox is on and never during a clap (fast
+   * convergence belongs to the clap detector) or within a short window after
+   * one, so a single motion can only mean one thing.
+   */
+  private stepSweep(hand: Handedness, palm: Vector3, dt: number): void {
+    const previous = this.lastPalm[hand];
+    if (!this.palmSeen[hand]) {
+      previous.copy(palm);
+      this.palmSeen[hand] = true;
+      return;
+    }
+    // The head delta is subtracted from every hand: a wave is relative motion.
+    const dx = palm.x - previous.x - this.headDelta.x;
+    const dz = palm.z - previous.z - this.headDelta.z;
+    previous.copy(palm);
+    const raw = Math.sqrt(dx * dx + dz * dz) / dt;
+    this.sweepSpeed[hand] += (raw - this.sweepSpeed[hand]) * CLAP_SPEED_EMA;
+    if (!weatherStore.state.peek().sandbox) return;
+    if (this.gustCooldown[hand] > 0) return;
+    // A clap (or its recoil) is fast convergence: leave it to the clap path.
+    if (this.sinceClap < 0.35) return;
+    if (Number.isFinite(this.closingSpeed) && this.closingSpeed >= CLAP_MIN_CLOSING_SPEED_M_S) return;
+    const speed = this.sweepSpeed[hand];
+    if (speed < SANDBOX_GUST_MIN_SPEED_M_S) return;
+    const strength = Math.min(1, speed / SANDBOX_GUST_FULL_SPEED_M_S);
+    if (!triggerSandboxGust(strength)) return;
+    this.gustCooldown[hand] = SANDBOX_GUST_COOLDOWN_S;
+    // The audible half: the same whoosh the push field uses, at gust gain.
+    playPushWhoosh(Math.max(0.45, strength));
+    pulseHaptics(this.world, Haptics.firmTap.intensity, Haptics.firmTap.durationMs);
   }
 
   private fire(): void {
     this.cooldown = CLAP_COOLDOWN_S;
     this.armed = false;
+    this.sinceClap = 0;
     this.lastDistance = Number.NaN;
     this.closingSpeed = Number.NaN;
     // Outside the sandbox the clap is detected but deliberately ignored:

@@ -33,6 +33,7 @@ import { enableDepthOcclusion } from '../depth-occlusion.js';
 import { enableHandField, HAND_FIELD_LAYERS } from '../hand-field.js';
 import { beamGateAt, SUN_DAY_COLOR, SUN_NIGHT_COLOR } from '../light-shared.js';
 import { roomModel } from '../room.js';
+import { sandboxGustFactor } from '../sandbox-gust.js';
 import { WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
 import type { HourCrossedDetail } from '../weather-state.js';
 import { Haptics, pulseHaptics } from '../feedback.js';
@@ -96,7 +97,10 @@ void main() {
   col = mix(col, vec3(0.9, 0.95, 1.0), uFlash * 0.85);
   // Zenith break: where the cover genuinely opens, a cool luminous rift
   // instead of a flat gray lid (overcast never gets one — uSun stays low).
-  col = mix(col, vec3(0.82, 0.88, 1.0), smoothstep(0.5, 1.0, uSun) * smoothstep(0.2, 0.6, shade) * 0.5);
+  // A strong break warms toward sunlight: the one deliberate warm accent in
+  // the palette, earned by a real hole in the deck.
+  float rift = smoothstep(0.5, 1.0, uSun) * smoothstep(0.2, 0.6, shade);
+  col = mix(col, mix(vec3(0.82, 0.88, 1.0), vec3(1.0, 0.86, 0.62), clamp(uSun, 0.0, 1.0)), rift * 0.5);
   gl_FragColor = vec4(col, alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -448,8 +452,11 @@ export class AtmosphereSystem extends createSystem({}) {
     // wrapped inside the room footprint; a slow wander keeps edges alive.
     const spanX = Math.max(0.5, max.x - min.x);
     const spanZ = Math.max(0.5, max.z - min.z);
-    this.cloudDriftX += this.wind.x * dt * 0.05;
-    this.cloudDriftZ += this.wind.z * dt * 0.05;
+    // A sandbox gust hurries the deck and the motes with the same envelope
+    // the rain and the wind streaks read.
+    const gustFlow = 1 + sandboxGustFactor() * 2;
+    this.cloudDriftX += this.wind.x * dt * 0.05 * gustFlow;
+    this.cloudDriftZ += this.wind.z * dt * 0.05 * gustFlow;
     // Sun breakthrough: warm rims only when daylight actually escapes the cover.
     const sunBreak = this.daylightEase * Math.max(0, 1 - cloud * 1.15);
     const cx = (min.x + max.x) / 2;
@@ -487,9 +494,10 @@ export class AtmosphereSystem extends createSystem({}) {
     const colH = Math.max(0.5, max.y - min.y);
     const snowing = (current?.drivers.snow ?? 0) > 0.02;
     const gateFloor = snowing ? 0.5 : 0;
-    // Normalized wind phase so the mote field slides with the shared flow.
-    this.dustPhaseX += (this.wind.x * dt * 0.04) / spanX;
-    this.dustPhaseZ += (this.wind.z * dt * 0.04) / spanZ;
+    // Normalized wind phase so the mote field slides with the shared flow,
+    // at the same gust gain the cloud deck uses (one wave moves both).
+    this.dustPhaseX += (this.wind.x * dt * 0.04 * gustFlow) / spanX;
+    this.dustPhaseZ += (this.wind.z * dt * 0.04 * gustFlow) / spanZ;
     const camPos = (this.xrManager.isPresenting ? this.world.player.head : this.world.camera).getWorldPosition(this.cameraPosition);
     for (let i = 0; i < DUST_COUNT; i += 1) {
       const p = this.dustParts[i];

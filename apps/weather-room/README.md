@@ -656,6 +656,13 @@ too and why this module owns its own decode.
   passthrough contrast) is verified only up to the point where a worn,
   tracked session exists; those checks still need a lit room and the
   user in the headset.
+- 2026-10-10 Quest retry (same device, second attempt): re-woken, adb
+  reverse confirmed (`UsbFfs tcp:8081 tcp:8081`), Quest Browser relaunched
+  with the paired bootstrap URL — the guardian dialog
+  (`GuardianDialogActivity`) still owned the foreground within 10 s, so
+  the immersive session again could not start without a worn headset in
+  a trackable room. Proximity override restored afterwards. Conclusion
+  unchanged: the remaining hardware checks need the user present.
 - 2026-10-10 independent small-model vision check + fix: a separate
   low-capability vision model scored the app-only captures with a fixed
   rubric — UI legibility 5/5 on all three (phone card, desktop card, XR
@@ -666,6 +673,77 @@ too and why this module owns its own decode.
   halo) so drops keep an edge against lit walls; the same view then
   scored 4/5 ("visible over both light and dark areas, weakest but not
   invisible on the brightest white"). UI text findings were clean.
+- 2026-10-10 sandbox weather control (IWER, hand and controller anchors):
+  the sandbox now lets the user drive three weather channels by hand.
+  Clap = thunder (existing). Sweeping a hand through the rain parts the
+  particles (existing push field). New: a fast horizontal wave whips up a
+  *gust* — `sandbox-gust.ts` holds one decaying envelope (tau 0.9 s, per
+  hand, 0.8 s cooldown, 1.1 m/s trigger, 2.4 m/s full) that the rain
+  (wind vector x(1+1.1g)), wind streaks (strength + 0.8g), and cloud/dust
+  drift (x(1+2g)) all read, so one wave bends the rain, speeds the
+  streaks and hurries the deck without touching the fetched data. The
+  sweep channel runs after the clap detector and is suppressed by a
+  fresh closing speed or a clap within 0.35 s, so a single motion means
+  one thing. Verified in one session: hand clap fired thunder with gust
+  held at 0; a fast hand wave raised gust 0 -> 0.674 and the rain wind
+  vector 2.105 -> 3.655; a controller wave raised 0.663; a slow
+  continuous hand motion (0.2 m/s) and a sandbox-off wave raised nothing;
+  the envelope decays back to 0 in ~2.5 s. Hints updated in EN/RU.
+- 2026-10-10 full emulator scenario sweep (one build, one session chain):
+  weather matrix verified by live drivers + meshes — heavy thunderstorm
+  hour (code 95, rain 0.52, 2545 drops, cloud 0.74, puddles present),
+  snowfall hour (code 71, snow 0.25, 420 flakes), dry hour (rain 0,
+  drops 0, cloud 0.45), night rain (daylight 0, fog darkened 0x5e5f63 ->
+  0x37322f, 1070 drops), all with wind streaks live (120) and the rain
+  material's depth occlusion enabled (uWrEnabled true, calibratedMode 3).
+  Found and fixed a real gap: `SnowSystem` was imported but never
+  registered, so snow hours drew nothing at all — registered at priority
+  32.7; snow flakes then render (draw calls +2) with a legible budget
+  (size 6-14 cm, composite alpha ~0.26-0.47, cool blue-gray rim so white
+  flakes read against lit walls). Hand occlusion of the UI confirmed
+  live: a hand placed between the viewer and the panel cuts the panel
+  content (light blob over the panel exactly at the hand pose). Desktop
+  2D view: card readable (400x667), virtual layers over the dark dome.
+  Phone card and touch sweep re-verified. Console: zero errors; one
+  benign driver warning (`X4000 use of potentially uninitialized variable
+  (f_wrDepthUv)`) on a depth-occlusion program whose guard makes the
+  path unreachable — recorded, not a functional defect (the hand cut
+  proves the depth path works).
+- 2026-10-10 art check with a small vision model + capture limits: a
+  low-capability vision model scored five app-only captures with a fixed
+  rubric. Raw scores came back low (artistry 1/5, weather legibility 1-3/5)
+  but the notes show the cause: every emulator capture composites the IWER
+  dev chrome (toolbar, Controller L/R panels, editor gizmo, Runtime/Editor
+  switcher) and the emulator's own untextured room render — neither is part
+  of the app. The one frame judged on the app surface alone ("app iframe
+  only") rated the scene 4/5 atmosphere ("dense rain in an enclosed grey
+  shelter reads moody/immersive") with the weather card's body text the
+  weak point. The emulator overlay cannot be hidden from captures (it is
+  drawn inside the runtime frame, verified by hiding every shadow host in
+  both frames); chrome-free art judgment therefore requires the headset.
+  Recorded as a harness limitation, not an app defect. The same pass
+  motivated the one deliberate warm accent now in the palette: a strong
+  sun break warms the cloud rift toward sunlight (`uSun` 0.97 live at a
+  clear hour, no console errors).
+- 2026-10-10 independent technical review (separate agent) + fixes: six
+  findings, all addressed. (1) The sweep gust measured palm motion in world
+  space, so walking with still hands could fire a gust — the sweep channel
+  now subtracts the head's per-frame displacement, so only hand-relative
+  motion counts (same-frame deltas cancel; the emulator cannot move head and
+  hands in one frame, so this is verified by construction, not by an
+  emulator walk). (2) Snow ignored the gust envelope — flakes now advect
+  with x(1+1.5g). (3) Dust drift did not read the gust while the comment
+  claimed it did — both dustPhase axes now use the same gustFlow as the
+  cloud deck. (4) A squeeze that started beside a control and slid onto it
+  mid-press was never captured (the press edge had passed) — the intent
+  system now re-tests while a press is held and routes the held press into
+  the grab sub-pointer; verified live: touch suppressed, `Grabbed` acquired
+  during the slide, and release restores both. (5) `release()` no longer
+  re-enables a touch pointer that is already registered again. (6) The
+  ASCII-punctuation purge finished (four remaining runtime ellipsis
+  literals, stale 2400-streak header, dead import). Reviewer confirmed
+  clean: session-end/loss restore paths, all weather GLSL identifiers,
+  atmosphere light writes, snow registration order, hot-loop allocations.
 - 2026-10-09 carry/rotate pass (IWER, scripted controller through the CLI):
   near squeeze on the blue plank grabs at touch range (0.045 m engages,
   0.18 m does not - near means near), then the panel follows the hand 1:1 on

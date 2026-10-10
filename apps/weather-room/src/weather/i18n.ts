@@ -26,12 +26,12 @@ const en = {
   badgeLoading: 'LOADING',
   playheadNow: 'NOW',
   // Status lines (spatial panel + browser panel).
-  statusLoading: 'Loading weather…',
-  statusLocating: 'Locating…',
+  statusLoading: 'Loading weather...',
+  statusLocating: 'Locating...',
   statusReady: 'Ready',
   statusWaiting: 'Waiting for device location / forecast...',
   statusRequestingLocation: 'Requesting device location...',
-  statusStarting: 'Starting…',
+  statusStarting: 'Starting...',
   statusLive: 'Source: Open-Meteo',
   statusDemoRetained: 'Demo data — retained while reloading',
   statusDemoSynthetic: 'DEMO synthetic data',
@@ -78,7 +78,7 @@ const en = {
   locationBack: 'Back',
   presetPetersburgShort: 'St Petersburg',
   locationInvalid: 'Enter as lat, lon',
-  xrChecking: 'Checking XR support…',
+  xrChecking: 'Checking XR support...',
   xrDisabled: 'XR is not enabled in this build. Timeline and reload work in the browser.',
   xrEnterHint: 'Enter AR: tracked hands/controllers use spatial controls; phones use touch controls.',
   xrUnavailable:
@@ -92,7 +92,7 @@ const en = {
   ariaStepForward: 'Forward 6 hours',
   ariaReload: 'Reload weather data',
   ariaSwitchLanguage: 'Switch language',
-  locatingShort: 'Locating…',
+  locatingShort: 'Locating...',
   // Honest location origin states (device / manual / IP / fixed) + errors.
   locationOriginDevice: 'My location',
   locationOriginManual: 'Manual location',
@@ -100,7 +100,7 @@ const en = {
   locationOriginFallback: 'Moscow (not determined)',
   /** `{m}` is replaced with the measured accuracy in metres. */
   locationAccuracyM: '±{m} m',
-  locationDetecting: 'Locating…',
+  locationDetecting: 'Locating...',
   geoDenied: 'Location permission denied. Approximate place (IP) instead.',
   geoUnavailable: 'Device has no location fix (no GPS or Wi-Fi). Approximate place (IP) instead.',
   geoTimeout: 'Location request timed out. Approximate place (IP) instead.',
@@ -111,8 +111,8 @@ const en = {
   sandboxOff: 'Sandbox: OFF',
   sandboxOn: 'Sandbox: ON',
   sandboxHint:
-    'Turn Sandbox on, then clap for thunder or sweep a hand to part the rain. Controllers clap too.',
-  sandboxHintOn: 'Sandbox on: clap for thunder, sweep a hand to part the rain.',
+    'Turn Sandbox on, then clap for thunder, sweep a hand through the rain or wave fast for a gust. Controllers clap too.',
+  sandboxHintOn: 'Sandbox on: clap for thunder, sweep a hand to part the rain, wave fast for a gust.',
   sandboxPhoneNote: 'Gestures need XR hand tracking. Phones keep touch controls.',
   ariaSandbox: 'Toggle gesture sandbox',
   xrPhoneNote: 'Phone AR: touch controls stay on this screen.',
@@ -127,12 +127,12 @@ const ru: Record<StringKey, string> = {
   badgeDemo: 'ДЕМО',
   badgeLoading: 'ЗАГРУЗКА',
   playheadNow: 'СЕЙЧАС',
-  statusLoading: 'Загрузка погоды…',
-  statusLocating: 'Поиск местоположения…',
+  statusLoading: 'Загрузка погоды...',
+  statusLocating: 'Поиск местоположения...',
   statusReady: 'Готово',
   statusWaiting: 'Ожидание геопозиции / прогноза...',
-  statusRequestingLocation: 'Запрос геопозиции…',
-  statusStarting: 'Запуск…',
+  statusRequestingLocation: 'Запрос геопозиции...',
+  statusStarting: 'Запуск...',
   statusLive: 'Источник: Open-Meteo',
   statusDemoRetained: 'Демо-данные · идёт обновление',
   statusDemoSynthetic: 'ДЕМО · синтетические данные',
@@ -175,7 +175,7 @@ const ru: Record<StringKey, string> = {
   locationBack: 'Назад',
   presetPetersburgShort: 'Петербург',
   locationInvalid: 'Формат: шир., долг.',
-  xrChecking: 'Проверка XR…',
+  xrChecking: 'Проверка XR...',
   xrDisabled: 'XR выключен в этой сборке. Шкала и обновление работают в браузере.',
   xrEnterHint: 'В AR: руки и контроллеры управляют пространственной панелью; на телефоне — касания.',
   xrUnavailable:
@@ -189,13 +189,13 @@ const ru: Record<StringKey, string> = {
   ariaStepForward: 'Вперёд на 6 часов',
   ariaReload: 'Обновить данные погоды',
   ariaSwitchLanguage: 'Переключить язык',
-  locatingShort: 'Поиск…',
+  locatingShort: 'Поиск...',
   locationOriginDevice: 'Моё местоположение',
   locationOriginManual: 'Указано вручную',
   locationOriginIp: 'Примерно, по IP (точность города)',
   locationOriginFallback: 'Москва (не определено)',
   locationAccuracyM: '±{m} м',
-  locationDetecting: 'Поиск…',
+  locationDetecting: 'Поиск...',
   geoDenied: 'Доступ к геолокации запрещён. Показываю примерное место (IP).',
   geoUnavailable: 'На устройстве нет определения места (нет GPS или Wi-Fi). Показываю примерное место (IP).',
   geoTimeout: 'Запрос местоположения истёк. Показываю примерное место (IP).',
@@ -206,8 +206,8 @@ const ru: Record<StringKey, string> = {
   sandboxOff: 'Песочница: ВЫКЛ',
   sandboxOn: 'Песочница: ВКЛ',
   sandboxHint:
-    'Включите песочницу, затем хлопните для грома или взмахните рукой, чтобы раздвинуть дождь. Контроллеры тоже работают.',
-  sandboxHintOn: 'Песочница включена: хлопок — гром, взмах руки раздвигает дождь.',
+    'Включите песочницу, затем хлопните для грома, проведите рукой сквозь дождь или резко взмахните для порыва ветра. Контроллеры тоже работают.',
+  sandboxHintOn: 'Песочница включена: хлопок — гром, взмах руки раздвигает дождь, резкий взмах — порыв ветра.',
   sandboxPhoneNote: 'Жесты требуют XR с трекингом рук. На телефоне — управление касаниями.',
   ariaSandbox: 'Переключить песочницу жестов',
   xrPhoneNote: 'AR на телефоне: управление остаётся на этом экране.',
@@ -358,7 +358,7 @@ function mapPhrases(text: string, lang: Language): string {
   return out;
 }
 
-/** Display form of a loader status label (`Loading: …`). */
+/** Display form of a loader status label (`Loading: ...`). */
 export function localizeLoadingLabel(label: string, lang: Language = current): string {
   const known = LOADER_LABELS[label];
   if (known != null) return known[lang];

@@ -30,6 +30,7 @@ import { enableDepthOcclusion } from '../depth-occlusion.js';
 import { enableHandField, HAND_FIELD_LAYERS } from '../hand-field.js';
 import { enableBeamLighting } from '../light-shared.js';
 import { roomModel } from '../room.js';
+import { sandboxGustFactor } from '../sandbox-gust.js';
 import { weatherStore } from '../weather-state.js';
 import { windVectorFromFrame } from '../wind-shared.js';
 
@@ -220,7 +221,9 @@ export class WindSystem extends createSystem({}) {
     }
     const meanWind = current?.drivers.wind ?? 0;
     const gust = current?.drivers.gust ?? 0;
-    const strength = Math.min(1, meanWind + Math.max(0, gust - meanWind) * 0.55);
+    // A sandbox sweep gust counts as a full gust surge on top of the forecast.
+    const sweepGust = sandboxGustFactor();
+    const strength = Math.min(1, meanWind + Math.max(0, gust - meanWind) * 0.55 + sweepGust * 0.8);
     const dt = Math.min(delta, 0.05);
     const { min, max } = roomModel;
     const spanX = Math.max(0.5, max.x - min.x);

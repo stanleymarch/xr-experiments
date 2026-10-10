@@ -22,6 +22,7 @@ import { enableDepthOcclusion } from '../depth-occlusion.js';
 import { enableHandField, HAND_FIELD_LAYERS } from '../hand-field.js';
 import { enableBeamLighting } from '../light-shared.js';
 import { roomModel } from '../room.js';
+import { sandboxGustFactor } from '../sandbox-gust.js';
 import { weatherStore } from '../weather-state.js';
 import { windVectorFromFrame } from '../wind-shared.js';
 
@@ -38,7 +39,9 @@ void main() {
   vBeamWorld = (modelMatrix * instanceMatrix * vec4(position, 1.0)).xyz;
   // Snow is "motes in the shaft": crystals grow inside the light cone and
   // shrink outside it, so the field has a cause instead of filling the room.
-  float sizeMul = 0.55 + 0.45 * rBeamGate(center);
+  // The outside-the-cone floor stays high enough that a snow hour reads as
+  // snowfall everywhere, not only in the beam.
+  float sizeMul = 0.72 + 0.28 * rBeamGate(center);
   gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix *
     vec4(position.xy * sizeMul, position.z, 1.0);
 }
@@ -58,15 +61,19 @@ void main() {
   float body = 1.0 - smoothstep(0.12, 0.42 + 0.4 * arms, r);
   float core = exp(-r * r * 14.0);
   // Faint rather than absent outside the shaft: snowfall must stay readable
-  // at night, when there is no shaft at all.
-  float alpha = max(body * 0.6, core) * vAlpha * mix(0.12, 1.0, rBeamGate(vBeamWorld));
+  // at night, when there is no shaft at all. The composite alpha stays in a
+  // visible band: vAlpha x body x cone-floor landed near 10% before and the
+  // flakes disappeared on a lit room.
+  float alpha = max(body * 0.85, core) * vAlpha * mix(0.55, 1.0, rBeamGate(vBeamWorld));
   if (alpha < 0.01) discard;
   vec3 viewDir = normalize(cameraPosition - vBeamWorld);
   float glint = pow(max(0.0, dot(viewDir, -uBeamDir)), 6.0);
   float shine = 0.85 + 0.3 * sin(uTime * 2.6 + vAlpha * 47.0);
-  // Snow keeps white by design (the one layer allowed it); straight alpha so
-  // the shade survives instead of crushing toward transparent gray.
-  gl_FragColor = vec4(vec3(0.9, 0.95, 1.0) * shine, min(1.0, alpha * 0.8 * (1.0 + glint * 1.4)));
+  // White flakes vanish on a lit room: the soft outer body carries a cool
+  // blue-gray rim (reads against pale walls) while the core stays snow-white
+  // (reads against dark backgrounds). Straight alpha so the shade survives.
+  vec3 flake = mix(vec3(0.66, 0.74, 0.88), vec3(0.98, 0.99, 1.0), clamp(core * 1.2, 0.0, 1.0));
+  gl_FragColor = vec4(flake * shine, min(1.0, alpha * (1.0 + glint * 1.4)));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -137,6 +144,9 @@ export class SnowSystem extends createSystem({}) {
     const spanZ = Math.max(0.5, max.z - min.z);
     const height = Math.max(0.5, max.y - min.y);
     windVectorFromFrame(current.frame, 0.12, this.wind);
+    // A sandbox gust hurries the flakes with the same envelope rain and wind
+    // read, so one wave moves every precipitation layer together.
+    this.wind.multiplyScalar(1 + sandboxGustFactor() * 1.5);
     const time = performance.now() / 1000;
     (this.flakes.material as ShaderMaterial).uniforms.uTime.value = time;
     (this.xrManager.isPresenting ? this.world.player.head : this.world.camera).getWorldPosition(this.cameraPos);
@@ -187,7 +197,10 @@ export class SnowSystem extends createSystem({}) {
     this.positions[ix + 1] = minY + height * (0.65 + 0.35 * ((seed * 17.3) % 1));
     this.positions[ix + 2] = minZ + ((seed * 31.7) % 1) * spanZ;
     this.speeds[i] = 0.25 + 0.55 * intensity + 0.25 * ((seed * 13.1) % 1);
-    this.sizes[i] = 0.035 + 0.055 * ((seed * 19.9) % 1);
+    // Room-scale installation, not a macro lens: flakes are deliberately
+    // large (6-14 cm) so snowfall reads at 2-4 m, the same reason the rain
+    // streaks are 30 cm long.
+    this.sizes[i] = 0.06 + 0.08 * ((seed * 19.9) % 1);
     this.alphas[i] = 0.35 + 0.55 * intensity;
   }
 

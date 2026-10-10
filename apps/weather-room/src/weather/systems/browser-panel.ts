@@ -828,7 +828,7 @@ export class BrowserPanelSystem extends createSystem({}) {
     const info = document.createElement('div');
     info.className = 'browser-panel-info';
     info.setAttribute('aria-live', 'polite');
-    this.statusLine = el('p', 'status-line', 'Starting…');
+    this.statusLine = el('p', 'status-line', 'Starting...');
     this.locationLine = el('p', 'location-line', '--');
     this.timeLine = el('p', 'time-line', 'NOW');
     this.heroLine = el('p', 'weather-hero', '--');
@@ -970,7 +970,7 @@ export class BrowserPanelSystem extends createSystem({}) {
     if (utilityReload != null) xrRow.append(utilityReload);
     xrRow.append(this.enterButton, this.exitButton);
     root.appendChild(xrRow);
-    this.xrNote = el('p', 'xr-note', 'Checking XR support…');
+    this.xrNote = el('p', 'xr-note', 'Checking XR support...');
     this.xrNote.className = 'browser-panel-note';
     root.appendChild(this.xrNote);
 
@@ -1106,7 +1106,7 @@ export class BrowserPanelSystem extends createSystem({}) {
             : t('statusLoading');
       }
       if (this.locationLine != null) this.locationLine.textContent = t('locatingShort');
-      if (this.timeLine != null) this.timeLine.textContent = '…';
+      if (this.timeLine != null) this.timeLine.textContent = '...';
       if (this.heroLine != null) this.heroLine.textContent = t('missingValue');
       if (this.weatherLine != null) this.weatherLine.textContent = t('missingValue');
       return;

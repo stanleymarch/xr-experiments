@@ -69,6 +69,9 @@ const boot = (world: World): void => {
   world.registerSystem(LightFieldSystem, { priority: 30.5 });
   world.registerSystem(PuddlesSystem, { priority: 31 });
   world.registerSystem(RainSystem, { priority: 32.5 });
+  // Snow sits with rain: same room volume, same shared light/hand uniforms.
+  // (It was imported but never registered — snow hours drew nothing.)
+  world.registerSystem(SnowSystem, { priority: 32.7 });
   world.registerSystem(WindSystem, { priority: 33 });
   world.registerSystem(AtmosphereSystem, { priority: 34 });
   world.registerSystem(TemperatureSystem, { priority: 35 });

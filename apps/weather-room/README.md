@@ -663,6 +663,19 @@ too and why this module owns its own decode.
   the immersive session again could not start without a worn headset in
   a trackable room. Proximity override restored afterwards. Conclusion
   unchanged: the remaining hardware checks need the user present.
+- 2026-10-10 real Quest 3 immersive session (device now lies with its
+  cameras facing the room, so tracking works): paired the headset to the
+  dev session (`runtime_pair_headset` -> bootstrap URL), opened it in the
+  Quest Browser over `adb reverse`, tapped "Войти в AR" through
+  uiautomator, granted the immersive prompt, and the app ran a real
+  `immersive-ar` session (`com.oculus.browser/.WebVRActivity`): the
+  spatial weather panel and the timeline rail render in the real room over
+  passthrough, the panel text is legible at headset distance, and no crash
+  or boot error appeared. This is the first on-device render evidence for
+  the experience; controller/hand interaction on hardware still needs
+  someone holding the controllers, and a fresh WebXR permission prompt
+  must be tapped in the headset (the browser does not remember the grant
+  for `localhost`).
 - 2026-10-10 independent small-model vision check + fix: a separate
   low-capability vision model scored the app-only captures with a fixed
   rubric — UI legibility 5/5 on all three (phone card, desktop card, XR
@@ -744,6 +757,23 @@ too and why this module owns its own decode.
   literals, stale 2400-streak header, dead import). Reviewer confirmed
   clean: session-end/loss restore paths, all weather GLSL identifiers,
   atmosphere light writes, snow registration order, hot-loop allocations.
+- 2026-10-10 phone layout + flat-view sky (user feedback: the card covered
+  the whole screen without entering AR, and the space around it read as one
+  big dark void). Card: on viewports <= 520 px the secondary block
+  (location, sandbox, notes, revision hash, source line) is hidden behind a
+  new chevron toggle in the meta row — the hero readout, the timeline and
+  the footer actions stay visible; measured 401 px of 844 (48%) versus the
+  820 px wall the rebuild started from, and the toggle restores everything
+  on demand (state follows the viewport until the user chooses). Sky: the
+  framework owns the renderer's clear state, so neither `setClearColor` nor
+  `scene.background` survives to the frame (both verified against the live
+  app); the backdrop is now real geometry — one back-faced sky dome in the
+  scene, fed by a preview palette (bright blue-slate zenith to warm
+  horizon) that is deliberately brighter than the immersive night sky, and
+  hidden the moment a session starts so passthrough is never blocked
+  (verified live: `domeVisible` true flat / false in session, background
+  in XR stays the room render). Verified on a 390x844 phone viewport and
+  by build + typecheck.
 - 2026-10-09 carry/rotate pass (IWER, scripted controller through the CLI):
   near squeeze on the blue plank grabs at touch range (0.045 m engages,
   0.18 m does not - near means near), then the panel follows the hand 1:1 on

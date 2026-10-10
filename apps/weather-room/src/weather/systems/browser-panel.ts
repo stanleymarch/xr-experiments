@@ -23,6 +23,7 @@ import {
 import { PROVIDER_DISPLAY } from '../providers.js';
 import {
   LOCATION_PRESETS,
+  buildDemoDataset,
   forgetDeviceLocation,
   geolocationPermissionState,
   getManualLocation,
@@ -422,6 +423,38 @@ body:xr-overlay #scene-container {
 /* Short desktop/landscape windows: tighten rhythm so the card scrolls as one
    clean column instead of stacking content under a floating bar. Touch
    targets keep their 44px minimum; only spacing and type shrink. */
+/* Phones: the hero readout and the timeline own the card; location, sandbox
+   and notes wait behind the card toggle so the room stays visible. */
+@media (max-width: 520px) {
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-location,
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-sandbox,
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-note {
+    display: none !important;
+  }
+  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded .browser-panel-location,
+  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded .browser-panel-note {
+    display: block !important;
+  }
+  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded .browser-panel-sandbox {
+    display: grid !important;
+  }
+  /* Phone density: the revision hash and the source line are diagnostics, not
+     content — they wait behind the toggle with everything else secondary. */
+  #${BROWSER_PANEL_ROOT_ID} .version-label,
+  #${BROWSER_PANEL_ROOT_ID} [data-testid="status-line"] {
+    display: none !important;
+  }
+  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded .version-label,
+  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded [data-testid="status-line"] {
+    display: block !important;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-meta {
+    margin-bottom: 4px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-info p {
+    margin: 1px 0;
+  }
+}
 @media (max-height: 560px) {
   #${BROWSER_PANEL_ROOT_ID} {
     width: min(340px, calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
@@ -493,6 +526,9 @@ export class BrowserPanelSystem extends createSystem({}) {
   private xrEntryError: string | null = null;
   private rejectedTouchSession: XRSession | null = null;
   private langButton: HTMLButtonElement | null = null;
+  private moreButton: HTMLButtonElement | null = null;
+  /** Explicit user choice for the secondary block; null = follow the viewport. */
+  private userExpanded: boolean | null = null;
   private locationWrap: HTMLElement | null = null;
   private locationSelect: HTMLSelectElement | null = null;
   private locationInput: HTMLInputElement | null = null;
@@ -525,6 +561,7 @@ export class BrowserPanelSystem extends createSystem({}) {
     if (typeof document === 'undefined') return;
     this.disposed = false;
     this.buildPanel();
+    this.applyCollapsed();
     this.render();
 
     const onStore = (): void => {
@@ -822,7 +859,19 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.langButton = document.createElement('button');
     this.langButton.type = 'button';
     this.langButton.dataset.testid = 'lang-toggle';
-    meta.append(this.badge, version, this.langButton);
+    // Compact-first on phones: the card must not swallow the whole screen, so
+    // the secondary block (location, sandbox, notes) sits behind this toggle
+    // while the hero readout and the timeline stay visible.
+    this.moreButton = document.createElement('button');
+    this.moreButton.type = 'button';
+    this.moreButton.dataset.testid = 'card-more';
+    this.moreButton.setAttribute('aria-expanded', 'false');
+    this.moreButton.addEventListener('click', () => {
+      this.userExpanded = !this.effectiveExpanded();
+      this.applyCollapsed();
+      this.render();
+    });
+    meta.append(this.badge, version, this.moreButton, this.langButton);
     root.appendChild(meta);
 
     const info = document.createElement('div');
@@ -984,6 +1033,26 @@ export class BrowserPanelSystem extends createSystem({}) {
 
     document.body.appendChild(root);
     this.root = root;
+  }
+
+  /** Effective state: the user's explicit choice, else the viewport width. */
+  private effectiveExpanded(): boolean {
+    return this.userExpanded ?? (typeof window === 'undefined' ? true : window.innerWidth > 520);
+  }
+
+  private applyCollapsed(): void {
+    if (this.root == null) return;
+    const expanded = this.effectiveExpanded();
+    // The CSS default is compact on phones; this class is the explicit
+    // "show the secondary block" override the toggle writes.
+    this.root.classList.toggle('browser-panel-expanded', expanded);
+    if (this.moreButton != null) {
+      // ASCII-safe glyphs (the card's web fonts cover Latin-1): the chevron
+      // direction carries the state, the aria label spells it out.
+      this.moreButton.textContent = expanded ? '«' : '»';
+      this.moreButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      this.moreButton.setAttribute('aria-label', t(expanded ? 'cardLess' : 'cardMore'));
+    }
   }
 
   private applySessionVisibility(): void {
@@ -1240,6 +1309,7 @@ export class BrowserPanelSystem extends createSystem({}) {
     }
     this.root?.querySelector('.browser-panel-sandbox')?.setAttribute('aria-label', t('ariaSandbox'));
     this.syncSandboxNote();
+    this.applyCollapsed();
   }
 
   /** Keep the preset select in sync with the persisted manual location. */

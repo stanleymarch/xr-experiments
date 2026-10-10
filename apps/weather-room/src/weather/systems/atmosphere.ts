@@ -12,6 +12,7 @@
  */
 
 import {
+  BackSide,
   NormalBlending,
   AmbientLightComponent,
   InstancedBufferAttribute,
@@ -26,6 +27,7 @@ import {
   Object3D,
   PlaneGeometry,
   ShaderMaterial,
+  SphereGeometry,
 } from '@iwsdk/core';
 import { Vector3 } from '@iwsdk/core';
 import type { Entity } from '@iwsdk/core';
@@ -40,6 +42,31 @@ import { Haptics, pulseHaptics } from '../feedback.js';
 import { windVectorFromFrame } from '../wind-shared.js';
 import { createCloudNoise } from '../cloud-noise.js';
  
+const SKY_VERTEX = /* glsl */ `
+varying vec3 vSkyDir;
+void main() {
+  vSkyDir = position;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+const SKY_FRAGMENT = /* glsl */ `
+varying vec3 vSkyDir;
+uniform vec3 uSky;
+uniform vec3 uHorizon;
+void main() {
+  // Vertical gradient: zenith color overhead, horizon color at the rim.
+  float t = clamp(normalize(vSkyDir).y * 1.15 + 0.25, 0.0, 1.0);
+  gl_FragColor = vec4(mix(uHorizon, uSky, t), 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`;
+/** Flat-view (preview) sky palette: deliberately brighter than the immersive
+ * night sky so a phone screen never reads as a black void. */
+const PREVIEW_SKY_CLEAR = new Color(0x3f5f8a);
+const PREVIEW_SKY_CLOUDY = new Color(0x7d8ea6);
+const PREVIEW_HORIZON_CLEAR = new Color(0xc2a077);
+const PREVIEW_HORIZON_CLOUDY = new Color(0x8e98a6);
 const FOG_CLEAR = 0.006;
 const CLOUD_VERTEX = /* glsl */ `
 varying vec2 vUv;
@@ -166,6 +193,11 @@ interface DustParticle {
 
 export class AtmosphereSystem extends createSystem({}) {
   private fog!: FogExp2;
+  private skyDome: Mesh | null = null;
+  private readonly previewSky = new Color();
+  private readonly previewHorizon = new Color();
+  private skyMat: ShaderMaterial | null = null;
+  private skyEntity: Entity | null = null;
   private plates: Mesh[] = [];
   private plateEntities: Entity[] = [];
   private plateMats: ShaderMaterial[] = [];
@@ -207,6 +239,38 @@ export class AtmosphereSystem extends createSystem({}) {
   init(): void {
     this.fog = new FogExp2(0x9fb4cc, FOG_CLEAR);
     this.world.scene.fog = this.fog;
+
+    // Flat-view sky: the browser/phone view renders on the framework's opaque
+    // canvas, whose clear state the app does not own, so the backdrop is real
+    // geometry instead: one big back-faced dome behind everything. It is
+    // hidden inside a session, where passthrough is the background.
+    const domeGeo = new SphereGeometry(60, 24, 16);
+    this.skyMat = new ShaderMaterial({
+      vertexShader: SKY_VERTEX,
+      fragmentShader: SKY_FRAGMENT,
+      uniforms: {
+        uSky: { value: new Color(0x1e2f45) },
+        uHorizon: { value: new Color(0x8a7a70) },
+      },
+      side: BackSide,
+      depthWrite: false,
+      fog: false,
+    });
+    this.skyDome = new Mesh(domeGeo, this.skyMat);
+    this.skyDome.name = 'Weather Sky Dome';
+    this.skyDome.frustumCulled = false;
+    this.skyDome.renderOrder = -1000;
+    this.skyEntity = this.world.createTransformEntity(this.skyDome);
+    const skyEntity = this.skyEntity;
+    const skyMat = this.skyMat;
+    this.cleanupFuncs.push(() => {
+      skyEntity.dispose();
+      domeGeo.dispose();
+      skyMat.dispose();
+      if (this.skyMat === skyMat) this.skyMat = null;
+      this.skyDome = null;
+      this.skyEntity = null;
+    });
 
     const plateGeo = new PlaneGeometry(1, 1);
     const cloudNoise = createCloudNoise();
@@ -336,6 +400,11 @@ export class AtmosphereSystem extends createSystem({}) {
     if (current != null) windVectorFromFrame(current.frame, 1, this.wind);
     else this.wind.set(0, 0, 0);
 
+    // The framework's own loop may reset the clear state; keep the canvas
+    // transparent so the flat view shows the painted sky (and AR keeps
+    // passthrough). Idempotent, one comparison per frame.
+    if (this.world.renderer.getClearAlpha() !== 0) this.world.renderer.setClearAlpha(0);
+
     // Day/night palette eases so timeline scrubbing never pops.
     const ease = Math.min(1, Math.min(delta, 0.05) * 2);
     this.daylightEase += (daylight - this.daylightEase) * ease;
@@ -343,7 +412,11 @@ export class AtmosphereSystem extends createSystem({}) {
     const level = this.world.activeLevel.value;
     if (level?.hasComponent(DomeGradient) &&
         (Math.abs(cloud - this.lastSkyCloud) > 0.04 || Math.abs(this.daylightEase - this.lastSkyDay) > 0.04)) {
-      const brightness = 0.2 + this.daylightEase * 0.8;
+      // In immersive AR the sky is a hint behind passthrough; in the flat
+      // browser view it IS the background, so it keeps a much brighter floor
+      // (a night sky would otherwise read as a black void around the card).
+      const previewFloor = this.xrManager.isPresenting ? 0.2 : 0.75;
+      const brightness = previewFloor + this.daylightEase * 0.6;
       this.skyColor.copy(SKY_CLEAR).lerp(SKY_CLOUDY, cloud).multiplyScalar(brightness);
       this.horizonColor.copy(HORIZON_CLEAR).lerp(HORIZON_CLOUDY, cloud).multiplyScalar(brightness);
       level.setValue(DomeGradient, 'sky', this.skyColor);
@@ -352,6 +425,24 @@ export class AtmosphereSystem extends createSystem({}) {
       this.fogBase.copy(this.horizonColor);
       this.lastSkyCloud = cloud;
       this.lastSkyDay = this.daylightEase;
+    }
+
+    // Flat-view backdrop, evaluated every frame: entering or leaving a session
+    // must show or hide the dome immediately (an opaque dome left visible in
+    // AR would block passthrough), and the palette must not wait for a sky
+    // change. The dome is real geometry because the framework owns the
+    // renderer's clear state; the flat view is a preview, so it keeps a
+    // deliberately brighter palette than the immersive night sky.
+    if (this.skyMat != null) {
+      this.previewSky.copy(PREVIEW_SKY_CLEAR).lerp(PREVIEW_SKY_CLOUDY, cloud);
+      this.previewHorizon.copy(PREVIEW_HORIZON_CLEAR).lerp(PREVIEW_HORIZON_CLOUDY, cloud);
+      const previewDim = 0.9 + this.daylightEase * 0.1;
+      (this.skyMat.uniforms.uSky.value as Color).copy(this.previewSky).multiplyScalar(previewDim);
+      (this.skyMat.uniforms.uHorizon.value as Color).copy(this.previewHorizon).multiplyScalar(previewDim);
+    }
+    if (this.skyDome != null) {
+      const showDome = !this.xrManager.isPresenting;
+      if (this.skyDome.visible !== showDome) this.skyDome.visible = showDome;
     }
 
     // Room-wide hour pulse: a brief (~0.6 s) coordinated lift of the room

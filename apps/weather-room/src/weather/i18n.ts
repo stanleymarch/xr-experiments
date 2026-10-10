@@ -92,6 +92,8 @@ const en = {
   ariaStepForward: 'Forward 6 hours',
   ariaReload: 'Reload weather data',
   ariaSwitchLanguage: 'Switch language',
+  cardMore: 'More',
+  cardLess: 'Less',
   locatingShort: 'Locating...',
   // Honest location origin states (device / manual / IP / fixed) + errors.
   locationOriginDevice: 'My location',
@@ -189,6 +191,8 @@ const ru: Record<StringKey, string> = {
   ariaStepForward: 'Вперёд на 6 часов',
   ariaReload: 'Обновить данные погоды',
   ariaSwitchLanguage: 'Переключить язык',
+  cardMore: 'Ещё',
+  cardLess: 'Свернуть',
   locatingShort: 'Поиск...',
   locationOriginDevice: 'Моё местоположение',
   locationOriginManual: 'Указано вручную',

@@ -1209,3 +1209,26 @@ and Android hardware behavior remain unverified by this repair.
 - Still unverified: the same gestures, room scanning, passthrough contrast and
   depth grants on a physical Quest 3 or Android device (device lists are empty
   in this environment).
+
+### Local measured-room fixtures (2026-10-13)
+
+`src/weather/room.ts` was driven directly: bundled with the app's own esbuild
+(`--alias:@iwsdk/core=three`) and exercised from Node with synthetic origin-
+centered slabs (throwaway script, removed afterwards). 19/19 checks passed:
+
+- a measured floor at y=0 is servable — `floorHeightAt` answers the recorded
+  face (0.0005 m for a 1 mm slab whose thin axis snaps to the plane) and
+  `surfaceHeightAt` above it returns the same level instead of null;
+- an off-center plane (the `offsetX`/`offsetZ` polygon frame) answers at the
+  corrected pose, returns `null` a metre past its own extent, keeps the volume
+  max on the shifted box and grows the min toward the head;
+- a remap that maps nothing restores the finished snapshot (identical height
+  before and after) and keeps mesh ownership;
+- no sensing reads as `none` with a head-centered 3 x 2.5 x 3 m fallback;
+- a sparse probe patch reports `probe` (never mesh ownership), answers its own
+  column, and ground measured 6 cm below the origin stays reachable
+  (`min.y` drops to -0.06, `floorHeightAt` returns -0.06);
+- an unhelpful mesh remap after probing keeps the probe ring and the drifted
+  ground answer;
+- occupied-cell sampling returns 64 mapped cells spread across the floor
+  (3.88 m span) instead of clustering on one edge, all at the measured level.

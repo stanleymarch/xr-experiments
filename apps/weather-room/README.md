@@ -567,7 +567,7 @@ too and why this module owns its own decode.
   select/manual/locate rows, taps on step/NOW/sandbox/language all land
   (hero and scrub track the store), and there is no overlap or clipping
   in portrait or 1280x600 landscape (captures
-  `.tmp/phone-card-final3.png`, `.tmp/desktop-landscape-card.png`).
+  `artifacts/phone-card-final3.png`, `artifacts/desktop-landscape-card.png`).
 - 2026-10-10 rain-floor pass (IWER + pixel measurement): the simulation
   was already reaching the floor — live buffers showed the lowest streak
   tip at y=0.0145 with `floorY+0.02 = 0.0127` and all 48 contact rings
@@ -1176,3 +1176,36 @@ exposes the grip pose.
 
 Physical Quest room scanning, passthrough-water contrast, furniture silhouettes
 and Android hardware behavior remain unverified by this repair.
+
+### Gesture, lightning and measured-room lifecycle round (2026-10-13)
+
+- `npm run typecheck` clean and `npm run build` passed after the round
+  (Vite keeps the dependency-annotation and large-chunk warnings).
+- Managed runtime: 34 systems live, no console errors. The only entries are the
+  known ANGLE `X4000 f_wrDepthUv` warning and the adaptive cloud ray-march info
+  line (2 samples at 17.0 ms on this desktop GPU).
+- IWER session exercised: `immersive-ar` with `local-floor`, `hand-tracking`,
+  `anchors`, `hit-test`, `plane-detection`, `mesh-detection` and `depth-sensing`
+  granted. Enabling the sandbox in the flat view reached the spatial panel
+  (`#sandbox-label` read back `Sandbox: ON`); the DOM card hides itself in XR by
+  design, so the spatial panel is the reachable UI there.
+- Controller gesture paths measured with temporary per-channel counters (added
+  for the measurement, removed afterwards): the palm anchor followed
+  `xr set-transform` (1.25 -> 1.30 -> 1.35 m), a purely lateral 1.05 m move was
+  accepted as **2 gusts**, and downward 0.7 m moves were accepted as
+  **2 thunders** and never as a gust — the strike-before-sweep ordering keeps
+  one motion from meaning both.
+- Phone HUD at 390 x 844 with a coarse pointer (production build served over
+  HTTP, iPhone-class emulation): the card starts **collapsed** (root 140 px,
+  body 60 px clipped, sandbox button 0 px tall), expanding gives a 611 px card
+  with a 526 px scrollable body, a 48 px sandbox button fully inside the card,
+  and a footer that stays below the scroller; collapsing again reproduces the
+  140 px strip. Horizontal overflow 0 px, smallest visible touch target 48 px.
+  Evidence: `artifacts/phone-390x844-round.png`.
+- The transient 2.5 s panel note ("Gust!" / "Thunder!") could not be captured:
+  the MCP round trip is slower than its life. The events themselves are proven
+  by the counters above, the note element exists and is wired to the same
+  `WeatherEvent.Gust` / `WeatherEvent.Thunder` subscriptions.
+- Still unverified: the same gestures, room scanning, passthrough contrast and
+  depth grants on a physical Quest 3 or Android device (device lists are empty
+  in this environment).

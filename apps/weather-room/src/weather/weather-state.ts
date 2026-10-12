@@ -409,6 +409,9 @@ class WeatherEvents {
  * coordination point — emit and subscribe through these names, never a
  * second bus:
  * - Thunder: atmosphere lightning moment (audio rumble + deep haptic).
+ * - Gust: accepted sandbox sweep (directional gust vector stored by
+ *   `triggerSandboxGust`; audio whoosh + wind-bed swell + controller haptic
+ *   subscribe to this same moment).
  * - TimelineGrab / TimelineRelease / TimelineSnap: knob quilt moments
  *   (audio ticks + grab/snap haptics).
  * - HourCrossed: the single room-wide hour event, emitted from
@@ -422,6 +425,22 @@ class WeatherEvents {
  *   toggle row and answers with an audio + visual impulse (hands have no
  *   haptics).
  */
+/** Payload carried on WeatherEvent.Thunder. */
+export interface ThunderDetail {
+  /** 'clap' | 'strike-<hand>' | 'ui' | 'storm' — who raised the moment. */
+  readonly source: string;
+}
+/** Payload carried on WeatherEvent.Gust. */
+export interface GustDetail {
+  /** Accepted sweep strength, 0..1. */
+  readonly strength: number;
+  /** Normalized horizontal gust direction, world XZ. */
+  readonly dirX: number;
+  /** Normalized horizontal gust direction, world XZ. */
+  readonly dirZ: number;
+  /** 'sweep-<hand>' | 'ui' | 'controller' — who raised the moment. */
+  readonly source: string;
+}
 /** Payload carried on WeatherEvent.HourCrossed. */
 export interface HourCrossedDetail {
   /** Newly entered playhead hour, rounded. */
@@ -436,6 +455,7 @@ export interface SandboxToggleDetail {
 }
 export const WeatherEvent = {
   Thunder: 'thunder',
+  Gust: 'sandbox-gust',
   TimelineGrab: 'timeline-grab',
   TimelineRelease: 'timeline-release',
   TimelineSnap: 'timeline-snap',

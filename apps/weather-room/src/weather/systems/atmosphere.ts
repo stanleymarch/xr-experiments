@@ -34,12 +34,14 @@ import type { Entity } from '@iwsdk/core';
 import { enableDepthOcclusion } from '../depth-occlusion.js';
 import { enableHandField, HAND_FIELD_LAYERS } from '../hand-field.js';
 import { beamGateAt, SUN_DAY_COLOR, SUN_NIGHT_COLOR } from '../light-shared.js';
+import { setLightningFlash } from '../light-shared.js';
 import { roomModel } from '../room.js';
 import { sandboxGustFactor } from '../sandbox-gust.js';
+import { LightningBolt } from '../lightning.js';
 import { WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
-import type { HourCrossedDetail } from '../weather-state.js';
+import type { HourCrossedDetail, ThunderDetail } from '../weather-state.js';
 import { Haptics, pulseHaptics } from '../feedback.js';
-import { windVectorFromFrame } from '../wind-shared.js';
+import { sandboxGustVector, windVectorFromFrame } from '../wind-shared.js';
 import { createCloudNoise } from '../cloud-noise.js';
  
 const SKY_VERTEX = /* glsl */ `
@@ -146,12 +148,18 @@ const HORIZON_CLEAR = new Color(0x76685f);
 const HORIZON_CLOUDY = new Color(0x525b66);
 const FLASH_MIN_INTERVAL_S = 4;
 const FLASH_MAX_INTERVAL_S = 11;
-/** Gaussian sigma and life of one lightning flash: a single ~0.35 s pulse. */
-const FLASH_SIGMA_S = 0.09;
-const FLASH_LIFE_S = 0.55;
-/** Pale electric tint the fog breathes toward during a flash. */
+/** Strike envelope: deliberate onset (~120 ms attack), decay, rolling tail. */
+const FLASH_ATTACK_S = 0.12;
+const FLASH_DECAY_S = 0.5;
+const FLASH_TAIL_S = 1.4;
+const FLASH_TAIL_GAIN = 0.22;
+/** Restrike shimmer riding the tail: two damped sub-peaks, never a strobe. */
+const FLASH_RESTrike_T = 0.34;
+const FLASH_RESTrike_GAIN = 0.3;
+const FLASH_RESTrike_TWO_T = 0.62;
+const FLASH_RESTrike_TWO_GAIN = 0.16;
+/** Pale electric tint shared with the discharge. */
 const FLASH_TINT = new Color(0xcfe0ff);
-/** Cloud ray-march sample counts and the frame time that justifies 4. */
 const CLOUD_STEPS_FULL = 4;
 const CLOUD_STEPS_FALLBACK = 2;
 const CLOUD_STEP_BUDGET_S = 1 / 72;
@@ -191,6 +199,23 @@ interface DustParticle {
   zSeed: number;
 }
 
+/**
+ * Strike envelope at t seconds since onset: fast governed attack, exponential
+ * decay, plus a dim rolling tail with two damped restrike shimmers. Peaks at
+ * 1 by construction (caller scales by flashPeak); never oscillates below
+ * zero, never strobes — one onset per strike, tail below 0.25.
+ */
+function strikeEnvelope(t: number): number {
+  if (t < 0) return 0;
+  if (t < FLASH_ATTACK_S) return t / FLASH_ATTACK_S;
+  const decay = Math.exp(-(t - FLASH_ATTACK_S) / FLASH_DECAY_S);
+  const tail = FLASH_TAIL_GAIN * Math.exp(-(t - FLASH_ATTACK_S) / FLASH_TAIL_S);
+  const restrike =
+    FLASH_RESTrike_GAIN * Math.exp(-Math.abs(t - FLASH_RESTrike_T) * 9) +
+    FLASH_RESTrike_TWO_GAIN * Math.exp(-Math.abs(t - FLASH_RESTrike_TWO_T) * 9);
+  return Math.min(1, decay + tail + restrike * decay);
+}
+
 export class AtmosphereSystem extends createSystem({}) {
   private fog!: FogExp2;
   private skyDome: Mesh | null = null;
@@ -224,10 +249,13 @@ export class AtmosphereSystem extends createSystem({}) {
   /** Fog colour before the lightning lift, so the flash never fights the ramp. */
   private readonly fogBase = new Color(0x9fb4cc);
   private nextFlashAt = 0;
-  private flashT = -1; // -1 = idle; otherwise seconds since flash start
+  private flashT = -1; // -1 = idle; otherwise seconds since strike onset
   private flashPeak = 0;
   /** Set by the Thunder bus event; consumed once by the next update. */
   private flashPending = false;
+  /** Strike source for bolt placement variety ('storm' = room center). */
+  private flashSource = 'storm';
+  private bolt: LightningBolt | null = null;
   /** Measured frame time EMA: what decides the cloud sample count. */
   private frameEma = 1 / 72;
   private framesSeen = 0;
@@ -376,13 +404,21 @@ export class AtmosphereSystem extends createSystem({}) {
         this.hourPulseT = 0;
         this.hourPulsePeak = crossed?.isLive === true ? 1.6 : 1.0;
       }),
-      // The flash wire exists for whoever emits Thunder next (the hand-clap
-      // sandbox slice). This module only listens; the storm hours below give
-      // the branch its own schedule in the meantime.
-      weatherEvents.on(WeatherEvent.Thunder, () => {
+      // Thunder is the single shared lightning moment: storm hours schedule
+      // it, the clap/strike sandbox and the explicit UI path emit it, and
+      // this module answers with the discharge + coherent light lift.
+      weatherEvents.on(WeatherEvent.Thunder, (detail: unknown) => {
         this.flashPending = true;
+        const thunder = detail as ThunderDetail | undefined;
+        this.flashSource = typeof thunder?.source === 'string' ? thunder.source : 'storm';
       }),
     );
+    this.bolt = new LightningBolt(this.world);
+    const bolt = this.bolt;
+    this.cleanupFuncs.push(() => {
+      bolt.dispose();
+      if (this.bolt === bolt) this.bolt = null;
+    });
   }
 
   update(delta: number): void {
@@ -398,7 +434,7 @@ export class AtmosphereSystem extends createSystem({}) {
     // Shared horizontal flow drives the cloud deck and the dust drift; no
     // data means no invented wind.
     if (current != null) windVectorFromFrame(current.frame, 1, this.wind);
-    else this.wind.set(0, 0, 0);
+    else sandboxGustVector(this.wind);
 
     // The framework's own loop may reset the clear state; keep the canvas
     // transparent so the flat view shows the painted sky (and AR keeps
@@ -465,30 +501,38 @@ export class AtmosphereSystem extends createSystem({}) {
       (SUN_BRIGHT - (SUN_BRIGHT - SUN_DIM) * cloud) * (0.22 + 0.78 * this.daylightEase);
     const baseFill = 0.1 + 0.18 * this.daylightEase;
 
-    // Lightning: one soft Gaussian flash (~0.35 s visible), never a strobe.
-    // Storm hours schedule it 4-11 s apart; a Thunder bus event (the hand-clap
-    // sandbox slice) fires one immediately through the same envelope. It lifts
-    // the sun and fill, lifts the fog density and breathes the fog tint pale.
+    // Lightning: a deliberate strike envelope — ~120 ms attack, ~0.5 s decay,
+    // ~1.4 s rolling tail with two damped restrike shimmers. Storm hours
+    // schedule it 4-11 s apart; a Thunder bus event (clap / strike / explicit
+    // UI) fires one immediately through the same envelope and regenerates the
+    // room-scale discharge. Never a strobe: single onset per strike, and the
+    // tail stays dim. It lifts the sun and fill, lifts the fog density and
+    // breathes the fog tint pale; the shared uniform carries the same level
+    // to rain/wind/wet layers so every virtual material answers as one light.
     if (this.flashPending) {
       this.flashPending = false;
       this.startFlash(time);
+      this.placeBolt();
     }
     if (thunder) {
-      if (this.nextFlashAt <= 0 || (this.flashT < 0 && time >= this.nextFlashAt)) this.startFlash(time);
+      if (this.nextFlashAt <= 0 || (this.flashT < 0 && time >= this.nextFlashAt)) {
+        this.flashSource = 'storm';
+        this.startFlash(time);
+        this.placeBolt();
+      }
     } else {
       this.nextFlashAt = 0;
     }
     let flash = 0;
     if (this.flashT >= 0) {
       this.flashT += dt;
-      flash =
-        this.flashPeak *
-        Math.exp(-((this.flashT - 0.12) ** 2) / (2 * FLASH_SIGMA_S * FLASH_SIGMA_S));
-      if (this.flashT > FLASH_LIFE_S) {
+      flash = this.flashPeak * strikeEnvelope(this.flashT);
+      if (this.flashT > FLASH_TAIL_S) {
         this.flashT = -1;
         flash = 0;
       }
     }
+    setLightningFlash(flash);
     this.fog.density =
       (FOG_CLEAR + (FOG_OVERCAST - FOG_CLEAR) * cloud + FOG_HUMID * humidity + (fogCode ? 0.025 : 0)) *
       (1 + hourPulse * 0.1) *
@@ -498,9 +542,9 @@ export class AtmosphereSystem extends createSystem({}) {
     // lerp on top of it.
     this.fog.color.copy(this.fogBase).lerp(FLASH_TINT, Math.min(0.6, flash * 0.5));
 
-    let sunIntensity = baseSun * (1 + hourPulse * 0.18) * (1 + flash * 0.9);
-    let fillIntensity = baseFill * (1 + hourPulse * 0.12) * (1 + flash * 0.7);
-    let plateFlash = hourPulse * 0.25 + flash;
+    const sunIntensity = baseSun * (1 + hourPulse * 0.18) * (1 + flash * 0.9);
+    const fillIntensity = baseFill * (1 + hourPulse * 0.12) * (1 + flash * 0.7);
+    const plateFlash = hourPulse * 0.25 + flash;
     // The computed ramp must reach the real lights: day/night, cloud dimming,
     // the hour pulse and lightning all flow through these two entities.
     this.sunEntity.setValue(DirectionalLightComponent, 'intensity', sunIntensity);
@@ -619,6 +663,9 @@ export class AtmosphereSystem extends createSystem({}) {
     }
     this.dust.instanceMatrix.needsUpdate = true;
     (this.dust.geometry.getAttribute('aAlpha') as InstancedBufferAttribute).needsUpdate = true;
+    // The discharge yaw-billboards as one rigid ribbon and parks invisible
+    // below the envelope floor; the crown stays where the strike placed it.
+    this.bolt?.update(camPos.x, camPos.z);
   }
 
   /**
@@ -633,14 +680,44 @@ export class AtmosphereSystem extends createSystem({}) {
   }
 
   /**
-   * Arm one lightning flash: a single Gaussian pulse with a randomized peak
-   * and the next storm-hour slot 4-11 s out. Deterministic time-hashed jitter
-   * keeps the schedule free of `Math.random` like the rest of the app.
+   * Arm one lightning strike: a governed envelope (attack + decay + rolling
+   * tail) with a randomized peak and the next storm-hour slot 4-11 s out.
+   * Deterministic time-hashed jitter keeps the schedule free of `Math.random`
+   * like the rest of the app. Forced sandbox strikes peak harder than ambient
+   * storm flicker, so the accepted clap reads as a deliberate moment.
    */
   private startFlash(time: number): void {
     this.flashT = 0;
-    this.flashPeak = 0.5 + 0.4 * ((time * 0.11) % 1);
+    const forced = this.flashSource !== 'storm';
+    this.flashPeak = forced ? 1.05 : 0.55 + 0.35 * ((time * 0.11) % 1);
     this.nextFlashAt =
       time + FLASH_MIN_INTERVAL_S + (FLASH_MAX_INTERVAL_S - FLASH_MIN_INTERVAL_S) * ((time * 0.53) % 1);
   }
+
+  /**
+   * Regenerate the room-scale discharge inside the room volume: the crown
+   * hangs below the ceiling (never above it, never occluded by the real
+   * room), the channel walks toward the floor. Sandbox strikes bias toward
+   * the room center so they read from the default viewpoint; storm strikes
+   * wander the footprint. Virtual geometry only — passthrough untouched.
+   */
+  private placeBolt(): void {
+    const bolt = this.bolt;
+    if (bolt == null) return;
+    const { min, max } = roomModel;
+    const spanX = Math.max(0.5, max.x - min.x);
+    const spanZ = Math.max(0.5, max.z - min.z);
+    const topY = Math.max(min.y + 0.9, max.y - 0.12);
+    const seed = performance.now() / 1000;
+    const wander = this.flashSource === 'storm' ? 0.3 : 0.12;
+    const cx = (min.x + max.x) / 2 + (this.hash01(seed) - 0.5) * spanX * wander * 2;
+    const cz = (min.z + max.z) / 2 + (this.hash01(seed + 5) - 0.5) * spanZ * wander * 2;
+    bolt.strike(cx, topY, cz, min.y, min.x, max.x, min.z, max.z);
+  }
+
+  private hash01(seed: number): number {
+    const value = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+    return value - Math.floor(value);
+  }
+
 }

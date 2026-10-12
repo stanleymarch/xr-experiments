@@ -1,19 +1,23 @@
 /**
- * WEATHER//ROOM probe sampler: head-anchored hit-test lattice for the "room
+ * WEATHER//ROOM probe sampler: head-anchored hit-test sweep for the "room
  * is not mesh-mapped" case. Engages only when no XRPlane/XRMesh owns the
  * room model; each probe is a persistent EnvironmentRaycastTarget entity
  * (viewer space + fixed offset quaternion) whose xrHitTestResult pose is
- * recorded into the same viewer-anchored, 8x4x8-capped height grid the mesh
- * path fills. Missing hit-test capability (feature not granted, no
- * session, raycast system absent): entities are never created and behaviour
- * is exactly today's fallback box with spawning particles.
+ * recorded into the same viewer-anchored height grid the mesh path fills.
+ * Missing hit-test capability (feature not granted, no session, raycast
+ * system absent): entities are never created and behaviour is exactly
+ * today's fallback box with spawning particles.
  *
- * Fixed sampling contract: 5 rays (centre + four neighbours), one lattice
- * tick per 0.5 s. The centre ray tilts 60 degrees down from gaze and lands
- * near 0.9 m ahead of a 1.6 m head, inside the compact weather volume.
- * Neighbours cover nearby floor/table cells. Per-tick cost is O(5) pose reads:
- * grid records; between ticks the per-frame cost is a single cheap
- * predicate (no surfaces, capability present, 0.5 s elapsed).
+ * Fixed sampling contract: 8 rays (centre + seven gaze-relative sweeps),
+ * one rotating subset per 0.5 s tick: the subset advances by 3 slots each
+ * tick, so a few ticks sweep ~1.2 m of floor around the viewer instead of
+ * re-poking the same 0.25 m patch. The centre ray tilts 60 degrees down
+ * from gaze and lands near 0.9 m ahead of a 1.6 m head, inside the compact
+ * weather volume. Per-tick cost is O(8) pose reads + grid records; between
+ * ticks the per-frame cost is a single cheap predicate (no surfaces,
+ * capability present, 0.5 s elapsed). Yaw offsets are gaze-relative sweeps:
+ * only wall-facing (low-+Y-normal) hits are discarded, never assumed to be
+ * floor.
  */
 
 import {
@@ -34,11 +38,14 @@ import { roomModel } from '../room.js';
  * rather than re-requesting sources per tick (request churn would break the
  * bounded-cost contract).
  */
-export const PROBE_RAY_COUNT = 5;
+export const PROBE_RAY_COUNT = 8;
 /** Downward tilt of the centre probe ray from gaze, in radians. */
 const PROBE_TILT_RAD = Math.PI / 3;
-/** Neighbour rays cover the nearby floor/table patch inside the volume. */
-const PROBE_NEIGHBOUR_RAD = Math.atan2(0.25, 1);
+/** Sweep rays cover the nearby floor/table patch inside the volume. */
+const PROBE_SWEEP_YAW = Math.atan2(0.6, 1);
+const PROBE_SWEEP_PITCH = Math.atan2(0.35, 1);
+/** Rays read per tick: a rotating subset keeps per-tick cost bounded. */
+const PROBE_SUBSET = 5;
 /** Seconds between resample ticks (matches the mesh-path debounce). */
 const SAMPLE_INTERVAL_S = 0.5;
 /** Hit-test hits farther than this from the head do not count as surfaces. */
@@ -53,6 +60,7 @@ export class DepthSamplingSystem extends createSystem({
   private probes: Entity[] = [];
   private engaged = false;
   private lastSampleAt = -SAMPLE_INTERVAL_S;
+  private sweepCursor = 0;
   private readonly probeOrigin = new Vector3();
   private readonly probeTilt = new Quaternion();
   private readonly probeEuler = new Euler();
@@ -81,9 +89,13 @@ export class DepthSamplingSystem extends createSystem({
       this.standDown();
       return;
     }
-    // One lattice per tick: five pose reads + five grid records, then quiet
-    // for another 0.5 s. Never a per-cell raycast storm across frames.
-    for (const probe of this.probes) this.recordProbe(probe);
+    // One rotating subset per tick: five of eight pose reads + grid records,
+    // then quiet for another 0.5 s. Never a per-cell raycast storm.
+    for (let i = 0; i < PROBE_SUBSET; i += 1) {
+      const probe = this.probes[(this.sweepCursor + i) % this.probes.length];
+      if (probe != null) this.recordProbe(probe);
+    }
+    this.sweepCursor = (this.sweepCursor + 3) % Math.max(1, this.probes.length);
   }
 
   /**
@@ -99,8 +111,8 @@ export class DepthSamplingSystem extends createSystem({
   }
 
   /**
-   * Create the five persistent probe entities (viewer space, fixed offset
-   * quaternions: centre down-tilt plus yawed/pitched neighbours). Returns
+   * Create the persistent probe entities (viewer space, fixed offset
+   * quaternions: centre down-tilt plus wider gaze-relative sweeps). Returns
    * false when the built-in raycast system is unavailable, so no probe
    * entity is ever created without something to serve it.
    */
@@ -119,14 +131,17 @@ export class DepthSamplingSystem extends createSystem({
     return this.engaged;
   }
 
-  /** Fixed lattice offsets: centre plus N/S/E/W neighbours. */
+  /** Fixed offsets: centre plus seven gaze-relative sweeps (~1.2 m patch). */
   static probeOffsets(): { yaw: number; pitch: number }[] {
     return [
       { yaw: 0, pitch: 0 },
-      { yaw: PROBE_NEIGHBOUR_RAD, pitch: 0 },
-      { yaw: -PROBE_NEIGHBOUR_RAD, pitch: 0 },
-      { yaw: 0, pitch: PROBE_NEIGHBOUR_RAD },
-      { yaw: 0, pitch: -PROBE_NEIGHBOUR_RAD },
+      { yaw: PROBE_SWEEP_YAW, pitch: 0 },
+      { yaw: -PROBE_SWEEP_YAW, pitch: 0 },
+      { yaw: 0, pitch: PROBE_SWEEP_PITCH },
+      { yaw: 0, pitch: -PROBE_SWEEP_PITCH },
+      { yaw: PROBE_SWEEP_YAW * 0.6, pitch: PROBE_SWEEP_PITCH * 0.6 },
+      { yaw: -PROBE_SWEEP_YAW * 0.6, pitch: PROBE_SWEEP_PITCH * 0.6 },
+      { yaw: 0, pitch: -PROBE_SWEEP_PITCH * 0.5 },
     ];
   }
 
@@ -149,11 +164,10 @@ export class DepthSamplingSystem extends createSystem({
 
   /** Read one probe's measured world-space hit into the height grid. */
   private recordProbe(probe: Entity): void {
-    const result = probe.getValue(
-      EnvironmentRaycastTarget,
-      'xrHitTestResult',
-    ) as XRHitTestResult | null | undefined;
-    if (result == null) return;
+    const raw: unknown = probe.getValue(EnvironmentRaycastTarget, 'xrHitTestResult');
+    if (raw == null || typeof raw !== 'object') return;
+    const result = raw as XRHitTestResult;
+    if (typeof result.getPose !== 'function') return;
     const referenceSpace = this.xrManager.getReferenceSpace();
     if (referenceSpace == null) return;
     let pose: XRPose | null | undefined = null;
@@ -166,8 +180,9 @@ export class DepthSamplingSystem extends createSystem({
     // XRRigidTransform.matrix is column-major: translation is elements 12-14
     // (the same layout EnvironmentRaycastSystem decomposes in applyHitResult).
     const matrix = pose.transform.matrix;
-    // Hit-test +Y is the measured surface normal; walls are not horizontal
-    // splash planes at eye height.
+    // Hit-test +Y is the measured surface normal; walls do not supply a
+    // horizontal contact patch. A genuine floor may be at y=0 (local-floor)
+    // or below it after reference-space drift; height is not a validity gate.
     if (matrix[5] < 0.5) return;
     hitPosition.set(matrix[12], matrix[13], matrix[14]);
     if (hitPosition.distanceTo(headPosition) > MAX_PROBE_DISTANCE) return;
@@ -177,6 +192,7 @@ export class DepthSamplingSystem extends createSystem({
   private standDown(): void {
     this.teardownProbes();
     this.engaged = false;
+    this.sweepCursor = 0;
     roomModel.endProbing();
   }
 

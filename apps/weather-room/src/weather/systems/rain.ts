@@ -4,7 +4,9 @@
  * Density <- drivers.rain, fall speed 4+8*rain m/s, tilt <- shared wind.
  * Instanced quads replace point sprites: point sprites render as solid
  * squares on some mobile/Quest GPUs. All buffers preallocated; per-frame
- * work touches only live particles.
+ * work touches only live particles. Contacts are measured only: mapped
+ * layers splash at their height, unmapped columns fall past the volume and
+ * recycle with no splash (the no-capability fallback is not ground).
  */
 
 import {
@@ -25,7 +27,7 @@ import { capabilityProfile } from '../capabilities.js';
 import type { CapabilityProfile } from '../capabilities.js';
 import { enableDepthOcclusion } from '../depth-occlusion.js';
 import { enableHandField, HAND_FIELD_LAYERS } from '../hand-field.js';
-import { enableBeamLighting } from '../light-shared.js';
+import { enableBeamLighting, enableLightning } from '../light-shared.js';
 import { roomModel } from '../room.js';
 import { sandboxGustFactor } from '../sandbox-gust.js';
 import { weatherStore } from '../weather-state.js';
@@ -36,12 +38,9 @@ const MAX_REDUCED = 1200;
 const SPLASH_COUNT = 48;
 const SPLASH_FADE_S = 0.6;
 const FALL_BASE_SPEED = 4;
-/** World width of one streak. Wide enough to be macroscopic: at this size the
- * projectile reads as a real object whose apparent thickness grows with
- * proximity, instead of a sub-pixel hairline that aliases to the same 1 px at
- * every depth. */
-const STREAK_WIDTH = 0.012;
-const STREAK_BASE_LEN = 0.3;
+/** World width of one streak: thin enough to read as rain, not rods. */
+const STREAK_WIDTH = 0.007;
+const STREAK_BASE_LEN = 0.22;
 
 const RAIN_VERTEX = /* glsl */ `
 attribute float aAlpha;
@@ -57,40 +56,34 @@ const RAIN_FRAGMENT = /* glsl */ `
 varying float vAlpha;
 varying vec2 vUv;
 void main() {
-  // Thread-like filament: three core samples offset across the width, weighted
-  // R/G/B, give the drop a chromatic fringe (dispersion) instead of a flat
-  // white bar. Halo and head/tail shape stay as before.
+  // Thin neutral filament: one soft core, no chromatic fringe — the old
+  // R/G/B fringe read as cyan rods on passthrough. A narrow core plus a
+  // faint halo keeps drops legible without going neon.
   float x = (vUv.x - 0.5) * 2.0;
-  float w = 0.16;
-  float cr = exp(-(x - w) * (x - w) * 9.0);
-  float cg = exp(-x * x * 9.0);
-  float cb = exp(-(x + w) * (x + w) * 9.0);
-  float core = (cr + cg + cb) * 0.3333;
-  float halo = exp(-x * x * 3.0) * 0.32;
-  float head = 0.45 + 0.85 * exp(-pow((vUv.y - 0.1) * 3.0, 2.0));
-  // Contact must read: the tip stays lit to the surface (a hairline fade
-  // here is what made drops look like they stop above the floor).
-  float tail = smoothstep(0.0, 0.02, vUv.y) * (1.0 - smoothstep(0.4, 1.0, vUv.y) * 0.7);
+  float core = exp(-x * x * 14.0);
+  float halo = exp(-x * x * 4.0) * 0.22;
+  float head = 0.5 + 0.8 * exp(-pow((vUv.y - 0.1) * 3.0, 2.0));
+  // Soft contact fade: the visible tip dissolves into the splash instead
+  // of punching a hard edge through it, and the tail dissolves upward.
+  float tail = smoothstep(0.0, 0.08, vUv.y) * (1.0 - smoothstep(0.45, 1.0, vUv.y) * 0.85);
   // Crossing the light shaft brightens the drop; outside it the rain dims.
   float beam = rBeamFactor(vBeamWorld);
+  // A strike lifts every drop toward the shared electric tint: the rain
+  // answers the same light the clouds and the discharge read (coherent
+  // illumination, not an isolated spark). The lift is deliberately partial
+  // — neutral slate water, not white rods.
+  float strike = clamp(uWrFlash, 0.0, 1.2);
+  vec3 slate = vec3(0.32, 0.44, 0.55);
+  vec3 strikeCol = mix(slate, uWrFlashTint, 0.55);
   float a = (core + halo) * head * tail * vAlpha;
-  if (a < 0.01) discard;
-  // Steel-blue/teal water, not white: saturated core survives ACES tone
-  // mapping instead of washing to pale gray. The halo keeps the drop's
-  // edge dark enough to read against a lit room (a light halo vanished on
-  // pale walls).
-  vec3 fringe = vec3(cr, cg, cb) / max(cr + cg + cb, 0.0001);
-  vec3 col = mix(vec3(0.16, 0.42, 0.6), fringe, core * 0.6);
-  col = mix(col, vec3(0.3, 0.55, 0.72), halo * 0.6);
-  // Straight (non-premultiplied) alpha under NormalBlending: the old
-  // col * a output double-multiplied (a^2 effective) and crushed saturated
-  // mid-tones toward pale transparency. Beam scales the color only.
-  gl_FragColor = vec4(col * beam, a);
+  if (a < 0.01 && strike < 0.02) discard;
+  vec3 col = slate * beam;
+  col = mix(col, strikeCol, clamp(strike * 0.75, 0.0, 1.0));
+  gl_FragColor = vec4(col, max(a, strike * 0.12 * (core + halo)));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
 `;
-
 const SPLASH_VERTEX = /* glsl */ `
 attribute float aFade;
 varying float vFade;
@@ -148,6 +141,8 @@ export class RainSystem extends createSystem({}) {
   private splashAge = new Float32Array(SPLASH_COUNT);
   private splashFade = new Float32Array(SPLASH_COUNT);
   private splashCursor = 0;
+  private splashContacts = 0;
+  private lastContactLogAt = 0;
   private readonly dummy = new Object3D();
   private readonly wind = new Vector3();
   private readonly cameraPos = new Vector3();
@@ -178,6 +173,9 @@ export class RainSystem extends createSystem({}) {
     // Streaks fall through the whole room volume, so they are the effect that
     // must disappear behind real furniture.
     enableDepthOcclusion(material);
+    // The strike envelope lifts the rain with the same level the clouds and
+    // the discharge read: one coherent light across virtual materials.
+    enableLightning(material);
     // Staged rollout flag: streaks part around a tracked hand (push + dim in
     // the vertex stage; see hand-field.ts). Splashes are surface decals and
     // stay pinned — a hand does not shove the floor.
@@ -256,19 +254,21 @@ export class RainSystem extends createSystem({}) {
     this.streaks.count = live;
     windVectorFromFrame(frame, 0.35, this.wind);
     this.wind.multiplyScalar(1 + Math.max(0, drivers.gust - drivers.wind) * 0.8);
-    // A sandbox gust bends the streaks harder than any forecast wind.
+    // The sandbox gust folds in additively inside windVectorFromFrame (still
+    // applies when the forecast is calm: calm air + sweep = bent streaks);
+    // the extra swell below keeps downpour streaks visibly harder-hit.
     this.wind.multiplyScalar(1 + sandboxGustFactor() * 1.1);
     const { min, max } = roomModel;
     const spanX = Math.max(0.5, max.x - min.x);
     const spanZ = Math.max(0.5, max.z - min.z);
     const height = Math.max(0.5, max.y - min.y);
-    const floorY = min.y;
+    const hasMeasured = roomModel.hasSurfaces;
     const fallBase = FALL_BASE_SPEED + 8 * drivers.rain;
     (this.xrManager.isPresenting ? this.world.player.head : this.world.camera).getWorldPosition(this.cameraPos);
     // The room's own FogExp2 is what the far rain must dissolve into, so the
     // attenuation reads as air rather than as a per-drop brightness rule.
-    const fog = this.world.scene.fog as unknown as { density?: number } | null;
-    const fogDensity = typeof fog?.density === 'number' ? fog.density : 0.006;
+    const fog: unknown = this.world.scene.fog;
+    const fogDensity = fog != null && typeof fog === 'object' && 'density' in fog && typeof fog.density === 'number' ? fog.density : 0.006;
 
     // Seed newly-visible particles at the top (deterministic hash from the
     // cursor keeps the hot loop allocation-free and Math.random-free).
@@ -299,19 +299,19 @@ export class RainSystem extends createSystem({}) {
       this.positions[ix + 2] = min.z + ((this.positions[ix + 2] - min.z) % spanZ + spanZ) % spanZ;
       // surfaceHeightAt(x, z, previousY): highest mapped surface at/below the
       // pre-step tip. Mapped cell -> splash at that height; null (unmapped)
-      // -> fall through to floorY + 0.02. Null is never faked into geometry.
-      const surfaceY = roomModel.surfaceHeightAt(this.positions[ix], this.positions[ix + 2], previousY);
+      // -> fall past the volume with NO splash and recycle below: null is
+      // never faked into geometry, and the fallback box is not ground.
+      const surfaceY = hasMeasured ? roomModel.surfaceHeightAt(this.positions[ix], this.positions[ix + 2], previousY) : null;
       if (surfaceY != null && this.positions[ix + 1] <= surfaceY) {
         this.spawnSplash(this.positions[ix], this.positions[ix + 2], surfaceY);
+        this.splashContacts += 1;
         this.recycle(i, min, height);
-      } else if (this.positions[ix + 1] <= floorY + 0.02) {
-        this.spawnSplash(this.positions[ix], this.positions[ix + 2], floorY);
+      } else if (this.positions[ix + 1] <= min.y - 0.1) {
         this.recycle(i, min, height);
       }
-      // Contact anticipation input: distance left to this drop's stop
-      // surface (mapped surface, or the floor when the cell is unmapped).
-      const stopY = surfaceY ?? floorY + 0.02;
-      const stopGap = stopY - this.positions[ix + 1];
+      // Contact anticipation input: distance left to this drop's measured
+      // stop surface; unknown columns hold base brightness (no fake floor).
+      const stopGap = surfaceY != null ? surfaceY - this.positions[ix + 1] : Number.POSITIVE_INFINITY;
       const toCamYaw = Math.atan2(
         this.cameraPos.x - this.positions[ix],
         this.cameraPos.z - this.positions[ix + 2],
@@ -344,8 +344,14 @@ export class RainSystem extends createSystem({}) {
       this.streaks.setMatrixAt(i, this.dummy.matrix);
     }
     this.streaks.instanceMatrix.needsUpdate = true;
-    (this.streaks.geometry.getAttribute('aAlpha') as InstancedBufferAttribute).needsUpdate = true;
+    (this.streaks.geometry.getAttribute('aAlpha') as unknown as { needsUpdate: boolean }).needsUpdate = true;
 
+    const now = performance.now() / 1000;
+    if (now - this.lastContactLogAt > 5) {
+      this.lastContactLogAt = now;
+      console.info(`[weather-room] rain: status=${roomModel.roomSurfaceStatus()} measured=${hasMeasured ? 'yes' : 'no'} contacts=${this.splashContacts}/5s`);
+      this.splashContacts = 0;
+    }
     this.updateSplashes(dt);
   }
 
@@ -392,7 +398,7 @@ export class RainSystem extends createSystem({}) {
     }
     if (splashDirty) {
       this.splashMesh.instanceMatrix.needsUpdate = true;
-      (this.splashMesh.geometry.getAttribute('aFade') as InstancedBufferAttribute).needsUpdate = true;
+      (this.splashMesh.geometry.getAttribute('aFade') as unknown as { needsUpdate: boolean }).needsUpdate = true;
     }
   }
 
@@ -418,5 +424,7 @@ export class RainSystem extends createSystem({}) {
     this.splashFade.fill(0);
     this.cursor = 0;
     this.splashCursor = 0;
+    this.splashContacts = 0;
+    this.lastContactLogAt = 0;
   }
 }

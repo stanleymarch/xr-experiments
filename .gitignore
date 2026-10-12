@@ -9,3 +9,8 @@ apps/*/artifacts/
 .tmp
 
 apps/*/dev/
+
+# Local coding-assistant settings, prompts, sessions and generated skill copies.
+# Unanchored directory patterns also cover per-app copies.
+.omp/
+.agents/

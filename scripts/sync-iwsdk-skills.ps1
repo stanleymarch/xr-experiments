@@ -16,7 +16,27 @@ $app = (Resolve-Path $AppPath).Path
 $source = Join-Path $app ".agents\skills"
 
 if (-not (Test-Path $source)) {
-  throw "No Meta-generated Agent Skills found at '$source'. Scaffold the app with the current @iwsdk/create output first (see root AGENTS.md)."
+  # Skills are local tooling, not application source. A clean clone restores
+  # the matching official files without scaffolding over the real app.
+  $package = Get-Content (Join-Path $app "package.json") -Raw | ConvertFrom-Json
+  $sdkVersion = $package.dependencies.'@iwsdk/core'
+  $temporaryApp = Join-Path $repo (".tmp\iwsdk-skills-" + [Guid]::NewGuid().ToString("N"))
+  try {
+    New-Item -ItemType Directory -Force $temporaryApp | Out-Null
+    Push-Location $temporaryApp
+    try {
+      & npx --yes "@iwsdk/create@$sdkVersion" . --yes --target ar --no-install --no-git --skip-reference-warmup
+    } finally {
+      Pop-Location
+    }
+    if ($LASTEXITCODE -ne 0) { throw "Official IWSDK skill generation failed." }
+    $generated = Join-Path $temporaryApp ".agents\skills"
+    if (-not (Test-Path $generated)) { throw "Official creator produced no Agent Skills." }
+    New-Item -ItemType Directory -Force (Split-Path $source -Parent) | Out-Null
+    Copy-Item -Recurse -Force $generated $source
+  } finally {
+    if (Test-Path $temporaryApp) { Remove-Item -Recurse -Force $temporaryApp }
+  }
 }
 
 $skills = @(Get-ChildItem $source -Directory | Where-Object { $_.Name -like "iwsdk-*" })

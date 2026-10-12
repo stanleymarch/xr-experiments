@@ -11,9 +11,19 @@
 - **[`8thwall/`](8thwall/)** — самостоятельные 8th Wall / A-Frame camera-AR опыты со своей webpack-сборкой.
 - Следующий движок можно добавить соседней папкой, не смешивая его зависимости и жизненный цикл с остальными.
 
-GitHub Actions собирает полку 8th Wall в единый `_site/` и публикует каталог на GitHub Pages.
+GitHub Actions собирает активные 8th Wall и IWSDK-приложения в единый `_site/` и публикует каталог на GitHub Pages. Исходники и служебные настройки в `_site/` не копируются.
 
 Концепции опытов ниже (REALITY//FIELD, CITY//ORBIT, SOUND//SPACE, ECHO//ROOM) сохранены как замыслы для greenfield-пересборки на IWSDK — см. MIGRATION.md. WEATHER//ROOM уже существует как нативное IWSDK-приложение в `apps/weather-room`, но нативное приёмка-тестирование на Quest 3 ещё идёт.
+
+Художественные принципы, устройство эффектов и границы sensing разобраны в
+[«Комната как материал»](docs/room-as-medium.md). Точные погодные mappings и
+результаты runtime-приёмки — в [README WEATHER//ROOM](apps/weather-room/README.md).
+
+Локальные `.omp/` и `.agents/` (включая копии внутри приложений) исключены из
+Git: настройки моделей, сессии, промпты и генерируемые skills не являются
+исходниками опыта. Они сохраняются на рабочей машине; `npm run skills:sync`
+восстанавливает официальные skills для чистого клона. Удаление из текущего
+дерева Git не переписывает уже опубликованную историю.
 
 ## Permanent Meta skills, MCP and Quest debugging setup
 
@@ -28,10 +38,11 @@ full `scripts/bootstrap-iwsdk-omp.ps1`, which keeps its old behavior of also
 refreshing the OMP model catalog and rewriting `.omp/config.yml` model roles
 for people who invoke bootstrap explicitly). Side effects of `npm run setup`,
 and nothing else:
-1. full official `iwsdk-*` skill sync from `apps/weather-room/.agents/skills`
-   (installed `@iwsdk/cli` 1.0.1 + `@iwsdk/create` output) into both
-   `.agents/skills/` and `.omp/skills/` — no OMP model/routing changes,
-   no model catalog refresh, no app/source rewrites;
+1. full official `iwsdk-*` skill sync from the ignored local
+   `apps/weather-room/.agents/skills` into `.agents/skills/` and `.omp/skills/`.
+   On a clean clone, the helper first generates the matching official
+   `@iwsdk/create` skills in a temporary app, without installing dependencies
+   or overwriting application source; no OMP model/routing changes;
 2. official CLI adapter-state inspection:
    `node node_modules/@iwsdk/cli/dist/cli.js adapter status` with cwd
    `apps/weather-room` (read-only probe, fails the script on nonzero exit);
@@ -184,8 +195,9 @@ npx http-server _site -c-1 -p 8090
 ```text
 apps/                     новые опыты на Meta IWSDK (Quest 3 / Android WebXR)
 8thwall/                  8th Wall / A-Frame приложения
-scripts/build-all.js      сборка 8th Wall в _site/
+scripts/build-all.js      сборка активных 8th Wall и IWSDK в _site/
 index.html                двуязычный каталог
+docs/room-as-medium.md    творческая и техническая механика опытов
 _site/                    генерируемый Pages artifact
 ```
 

@@ -20,9 +20,8 @@ import { capabilityProfile } from '../capabilities.js';
 import type { CapabilityProfile } from '../capabilities.js';
 import { enableDepthOcclusion } from '../depth-occlusion.js';
 import { enableHandField, HAND_FIELD_LAYERS } from '../hand-field.js';
-import { enableBeamLighting } from '../light-shared.js';
+import { enableBeamLighting, enableLightning } from '../light-shared.js';
 import { roomModel } from '../room.js';
-import { sandboxGustFactor } from '../sandbox-gust.js';
 import { weatherStore } from '../weather-state.js';
 import { windVectorFromFrame } from '../wind-shared.js';
 
@@ -73,6 +72,7 @@ void main() {
   // blue-gray rim (reads against pale walls) while the core stays snow-white
   // (reads against dark backgrounds). Straight alpha so the shade survives.
   vec3 flake = mix(vec3(0.66, 0.74, 0.88), vec3(0.98, 0.99, 1.0), clamp(core * 1.2, 0.0, 1.0));
+  flake = mix(flake, uWrFlashTint, min(0.75, uWrFlash * 0.6));
   gl_FragColor = vec4(flake * shine, min(1.0, alpha * (1.0 + glint * 1.4)));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -113,6 +113,7 @@ export class SnowSystem extends createSystem({}) {
     // rain, so they must not paint over real furniture either.
     enableBeamLighting(flakeMaterial);
     enableDepthOcclusion(flakeMaterial);
+    enableLightning(flakeMaterial);
     // Staged rollout: implemented, off until the rain/dust wave is verified
     // on hardware (flag in hand-field.ts).
     if (HAND_FIELD_LAYERS.snow) enableHandField(flakeMaterial);
@@ -144,9 +145,8 @@ export class SnowSystem extends createSystem({}) {
     const spanZ = Math.max(0.5, max.z - min.z);
     const height = Math.max(0.5, max.y - min.y);
     windVectorFromFrame(current.frame, 0.12, this.wind);
-    // A sandbox gust hurries the flakes with the same envelope rain and wind
-    // read, so one wave moves every precipitation layer together.
-    this.wind.multiplyScalar(1 + sandboxGustFactor() * 1.5);
+    // The sandbox gust already folds in additively inside windVectorFromFrame
+    // (same vector rain and wind read), so one wave moves every layer together.
     const time = performance.now() / 1000;
     (this.flakes.material as ShaderMaterial).uniforms.uTime.value = time;
     (this.xrManager.isPresenting ? this.world.player.head : this.world.camera).getWorldPosition(this.cameraPos);

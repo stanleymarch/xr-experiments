@@ -228,7 +228,7 @@ body:xr-overlay #scene-container {
 #${BROWSER_PANEL_ROOT_ID} [data-testid="time-scrub"] {
   display: block;
   width: 100%;
-  min-height: 44px;
+  min-height: 48px;
   margin: 0;
   accent-color: #79d7f2;
   touch-action: none;
@@ -254,8 +254,8 @@ body:xr-overlay #scene-container {
   text-overflow: ellipsis;
 }
 #${BROWSER_PANEL_ROOT_ID} button {
-  min-height: 44px;
-  min-width: 44px;
+  min-height: 48px;
+  min-width: 48px;
   padding: 10px 16px;
   border-radius: 999px;
   border: 1px solid rgba(169, 216, 255, 0.19);
@@ -288,7 +288,7 @@ body:xr-overlay #scene-container {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 44px;
+  min-height: 48px;
   padding: 0 12px;
   border: 1px solid rgba(169, 216, 255, 0.19);
   border-radius: 12px;
@@ -333,8 +333,8 @@ body:xr-overlay #scene-container {
 }
 #${BROWSER_PANEL_ROOT_ID} select,
 #${BROWSER_PANEL_ROOT_ID} input[type="text"] {
-  min-height: 44px;
-  min-width: 44px;
+  min-height: 48px;
+  min-width: 48px;
   max-width: 100%;
   box-sizing: border-box;
   padding: 10px 12px;
@@ -396,6 +396,57 @@ body:xr-overlay #scene-container {
   flex: 1 1 0;
   min-width: 0;
 }
+/* Phone HUD: the compact summary and the expand toggle exist only on
+   phones. Wider viewports keep the full card; visibility below is
+   class-driven so no JS resize math is required. */
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-compact {
+  display: none;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-compact [data-testid="weather-compact"] {
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: #eef5ff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+#${BROWSER_PANEL_ROOT_ID} button[data-testid="card-more"] {
+  display: none;
+}
+#${BROWSER_PANEL_ROOT_ID} button[data-testid="hud-hide"] {
+  display: none;
+}
+#${BROWSER_PANEL_ROOT_ID} button[data-testid="hud-show"] {
+  display: none;
+}
+/* Intentional hide (phone XR): the whole card collapses to one 48px
+   Weather button. Exit stays reachable through restore. */
+#${BROWSER_PANEL_ROOT_ID}.browser-panel-concealed {
+  width: auto;
+  max-width: none;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(13, 25, 48, 0.92);
+}
+#${BROWSER_PANEL_ROOT_ID}.browser-panel-concealed > :not([data-testid="hud-show"]) {
+  display: none !important;
+}
+#${BROWSER_PANEL_ROOT_ID}.browser-panel-concealed button[data-testid="hud-show"] {
+  display: inline-flex !important;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  margin: 0;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
 @media (max-height: 700px) {
   #${BROWSER_PANEL_ROOT_ID} {
     padding: 10px 12px 10px;
@@ -422,31 +473,77 @@ body:xr-overlay #scene-container {
 }
 /* Short desktop/landscape windows: tighten rhythm so the card scrolls as one
    clean column instead of stacking content under a floating bar. Touch
-   targets keep their 44px minimum; only spacing and type shrink. */
-/* Phones: the hero readout and the timeline own the card; location, sandbox
-   and notes wait behind the card toggle so the room stays visible. */
-@media (max-width: 520px) {
-  #${BROWSER_PANEL_ROOT_ID} .browser-panel-location,
-  #${BROWSER_PANEL_ROOT_ID} .browser-panel-sandbox,
-  #${BROWSER_PANEL_ROOT_ID} .browser-panel-note {
+   targets keep their 48px minimum; only spacing and type shrink. */
+/* Phones (<=520px): a true compact HUD. Collapsed the panel is a single
+   ~110px row (concise weather + Expand + Enter/Exit): branding, meta,
+   timeline steps, scrub, location, sandbox and notes wait behind Expand.
+   Expanded the body scrolls over an accessible footer. Targets stay 48px. */
+@media (max-width: 520px), (pointer: coarse) {
+  #${BROWSER_PANEL_ROOT_ID}:not(.browser-panel-concealed) {
+    /* min() keeps the card inside the viewport with gutters + safe areas. */
+    width: min(340px, calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+    max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    max-width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    box-sizing: border-box;
+    overflow: hidden;
+    overflow-x: clip;
+    padding: 10px 12px 12px;
+  }
+  #${BROWSER_PANEL_ROOT_ID}:not(.browser-panel-expanded):not(.browser-panel-concealed) {
+    /* Collapsed budget: ~110px total on 390x844. Only the compact strip and
+       the footer survive; max-height caps any font-scale overflow. */
+    max-height: 140px;
+  }
+  #${BROWSER_PANEL_ROOT_ID}:not(.browser-panel-expanded):not(.browser-panel-concealed) .browser-panel-body {
+    overflow: hidden;
+    flex: 0 0 auto;
+  }
+  #${BROWSER_PANEL_ROOT_ID}:not(.browser-panel-expanded):not(.browser-panel-concealed) .browser-panel-body > :not(.browser-panel-compact) {
     display: none !important;
   }
-  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded .browser-panel-location,
-  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded .browser-panel-note {
-    display: block !important;
+  /* The utility footer is a direct root child (outside the scroll body), so
+     it stays reachable in both collapsed and expanded phone states. */
+  #${BROWSER_PANEL_ROOT_ID}:not(.browser-panel-concealed) .browser-panel-compact {
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 8px;
   }
-  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded .browser-panel-sandbox {
-    display: grid !important;
-  }
-  /* Phone density: the revision hash and the source line are diagnostics, not
-     content — they wait behind the toggle with everything else secondary. */
-  #${BROWSER_PANEL_ROOT_ID} .version-label,
-  #${BROWSER_PANEL_ROOT_ID} [data-testid="status-line"] {
+  /* Expanded phones keep a way back: the compact strip hides its summary
+     line but keeps the 48px collapse control above the scroll body. */
+  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded:not(.browser-panel-concealed) .browser-panel-compact [data-testid="weather-compact"],
+  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded:not(.browser-panel-concealed) .browser-panel-compact [data-testid="hud-hide"] {
     display: none !important;
   }
-  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded .version-label,
-  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded [data-testid="status-line"] {
-    display: block !important;
+  #${BROWSER_PANEL_ROOT_ID}.browser-panel-expanded:not(.browser-panel-concealed) .browser-panel-body {
+    overflow-y: auto;
+    min-height: 0;
+  }
+  #${BROWSER_PANEL_ROOT_ID}:not(.browser-panel-concealed) button[data-testid="card-more"] {
+    display: inline-flex !important;
+    flex: 0 0 auto;
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    min-height: 48px;
+    margin: 0;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+  }
+  /* Phone XR only: the collapsed strip gains an intentional 48px Hide
+     control next to Expand. Browser sessions never see it. */
+  #${BROWSER_PANEL_ROOT_ID}[data-session="phone-xr"]:not(.browser-panel-expanded):not(.browser-panel-concealed) button[data-testid="hud-hide"] {
+    display: inline-flex !important;
+    flex: 0 0 auto;
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    min-height: 48px;
+    margin: 0;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
   }
   #${BROWSER_PANEL_ROOT_ID} .browser-panel-meta {
     margin-bottom: 4px;
@@ -454,10 +551,25 @@ body:xr-overlay #scene-container {
   #${BROWSER_PANEL_ROOT_ID} .browser-panel-info p {
     margin: 1px 0;
   }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-row {
+    margin-left: 0;
+    margin-right: 0;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-utility {
+    flex-wrap: nowrap;
+  }
+  #${BROWSER_PANEL_ROOT_ID} .browser-panel-utility > button {
+    padding-left: 6px;
+    padding-right: 6px;
+    font-size: 12px;
+  }
+  #${BROWSER_PANEL_ROOT_ID} select,
+  #${BROWSER_PANEL_ROOT_ID} input[type="text"] {
+    max-width: 100%;
+  }
 }
 @media (max-height: 560px) {
   #${BROWSER_PANEL_ROOT_ID} {
-    width: min(340px, calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
     padding: 10px 12px 12px;
     font-size: 12.5px;
   }
@@ -519,15 +631,23 @@ export class BrowserPanelSystem extends createSystem({}) {
   private exitButton: HTMLButtonElement | null = null;
   private reloadButton: HTMLButtonElement | null = null;
   private sandboxButton: HTMLButtonElement | null = null;
-  private sandboxNote: HTMLElement | null = null;
   private xrNote: HTMLElement | null = null;
   private xrSupported: boolean | null = null;
   private launchingXr = false;
   private xrEntryError: string | null = null;
   private rejectedTouchSession: XRSession | null = null;
   private langButton: HTMLButtonElement | null = null;
-  private moreButton: HTMLButtonElement | null = null;
-  /** Explicit user choice for the secondary block; null = follow the viewport. */
+  private compactLine: HTMLElement | null = null;
+  private compactStrip: HTMLElement | null = null;
+  private compactExpand: HTMLButtonElement | null = null;
+  private hideButton: HTMLButtonElement | null = null;
+  private showButton: HTMLButtonElement | null = null;
+  private sandboxNote: HTMLElement | null = null;
+  private actionTimer: number | null = null;
+  /** Intentional hide-to-a-single-button (phone XR only); Exit via restore. */
+  private hudConcealed = false;
+  /** Last phone-XR edge: entry forces collapsed regardless of pre-AR choice. */
+  private wasPhoneXr = false;
   private userExpanded: boolean | null = null;
   private locationWrap: HTMLElement | null = null;
   private locationSelect: HTMLSelectElement | null = null;
@@ -535,7 +655,6 @@ export class BrowserPanelSystem extends createSystem({}) {
   private locationApply: HTMLButtonElement | null = null;
   private locationClear: HTMLButtonElement | null = null;
   private locationError: HTMLElement | null = null;
-  private locationHintEl: HTMLElement | null = null;
   private unsubscribeLanguage: (() => void) | null = null;
   private dirty = true;
   private lastRenderAt = -Number.MAX_SAFE_INTEGER;
@@ -651,6 +770,25 @@ export class BrowserPanelSystem extends createSystem({}) {
       tick();
       weatherStore.setSandbox(!weatherStore.state.peek().sandbox);
     };
+    const expandHud = (): void => {
+      tick();
+      this.userExpanded = !this.effectiveExpanded();
+      this.applyCollapsed();
+      this.render();
+    };
+    const concealHud = (): void => {
+      tick();
+      // Phone XR only (the button is hidden elsewhere): collapse every
+      // surface to one 48px restore target. Exit rides along via restore.
+      this.hudConcealed = true;
+      this.applyCollapsed();
+    };
+    const revealHud = (): void => {
+      tick();
+      this.hudConcealed = false;
+      this.applyCollapsed();
+      this.render();
+    };
     const blockWorldSelect = (event: Event): void => event.preventDefault();
     this.root?.addEventListener('beforexrselect', blockWorldSelect);
 
@@ -662,6 +800,9 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.exitButton?.addEventListener('click', exitXR);
     this.langButton?.addEventListener('click', switchLanguage);
     this.sandboxButton?.addEventListener('click', toggleSandbox);
+    this.compactExpand?.addEventListener('click', expandHud);
+    this.hideButton?.addEventListener('click', concealHud);
+    this.showButton?.addEventListener('click', revealHud);
     this.timeScrub?.addEventListener('input', scrubTime);
     this.locationSelect?.addEventListener('change', applyPreset);
     this.locationApply?.addEventListener('click', applyManualInput);
@@ -670,7 +811,6 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.cleanupFuncs.push(
       () => {
         this.root?.querySelector('[data-testid="step-back"]')?.removeEventListener('click', stepBack);
-        this.root?.querySelector('[data-testid="go-live"]')?.removeEventListener('click', goLive);
         this.root
           ?.querySelector('[data-testid="step-forward"]')
           ?.removeEventListener('click', stepForward);
@@ -678,6 +818,9 @@ export class BrowserPanelSystem extends createSystem({}) {
       () => this.reloadButton?.removeEventListener('click', reload),
       () => this.enterButton?.removeEventListener('click', launchXR),
       () => this.sandboxButton?.removeEventListener('click', toggleSandbox),
+      () => this.compactExpand?.removeEventListener('click', expandHud),
+      () => this.hideButton?.removeEventListener('click', concealHud),
+      () => this.showButton?.removeEventListener('click', revealHud),
       () => this.timeScrub?.removeEventListener('input', scrubTime),
       () => this.root?.removeEventListener('beforexrselect', blockWorldSelect),
       () => this.exitButton?.removeEventListener('click', exitXR),
@@ -699,6 +842,10 @@ export class BrowserPanelSystem extends createSystem({}) {
       () => {
         this.unsubscribePermission?.();
         this.unsubscribePermission = null;
+      },
+      () => {
+        if (this.actionTimer != null) window.clearTimeout(this.actionTimer);
+        this.actionTimer = null;
       },
       () => {
         if (this.messageTimer != null) window.clearTimeout(this.messageTimer);
@@ -730,6 +877,15 @@ export class BrowserPanelSystem extends createSystem({}) {
         if (this.disposed) return;
         if (this.root?.hidden) this.dirty = true;
         else this.render();
+      }),
+      // Accepted sandbox actions (gesture or controller-helper path): one
+      // transient line, no tutorial wall. The Gust name is VFX-owned; the
+      // literal matches their contract until both slices integrate.
+      weatherEvents.on(WeatherEvent.Thunder, () => {
+        if (!this.disposed) this.showActionFeedback(t('sandboxThunderDone'));
+      }),
+      weatherEvents.on(WeatherEvent.Gust, () => {
+        if (!this.disposed) this.showActionFeedback(t('sandboxGustDone'));
       }),
     );
     this.unsubscribeLanguage = onLanguageChange(() => {
@@ -819,7 +975,10 @@ export class BrowserPanelSystem extends createSystem({}) {
       if (session != null) await session.end().catch((endError: unknown) => {
         console.warn('[weather-room] XR entry cleanup failed', endError);
       });
-      if (!this.disposed && this.xrNote != null) this.xrNote.textContent = `${t('xrEntryFailed')} ${this.xrEntryError}`;
+      if (!this.disposed && this.xrNote != null) {
+        this.xrNote.textContent = `${t('xrEntryFailed')} ${this.xrEntryError}`;
+        this.xrNote.hidden = false;
+      }
       console.error('[weather-room] XR entry failed', error);
     } finally {
       this.launchingXr = false;
@@ -859,20 +1018,35 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.langButton = document.createElement('button');
     this.langButton.type = 'button';
     this.langButton.dataset.testid = 'lang-toggle';
-    // Compact-first on phones: the card must not swallow the whole screen, so
-    // the secondary block (location, sandbox, notes) sits behind this toggle
-    // while the hero readout and the timeline stay visible.
-    this.moreButton = document.createElement('button');
-    this.moreButton.type = 'button';
-    this.moreButton.dataset.testid = 'card-more';
-    this.moreButton.setAttribute('aria-expanded', 'false');
-    this.moreButton.addEventListener('click', () => {
-      this.userExpanded = !this.effectiveExpanded();
-      this.applyCollapsed();
-      this.render();
-    });
-    meta.append(this.badge, version, this.moreButton, this.langButton);
+    // The explicit Expand control lives in the compact strip below (one
+    // stable card-more testid); the header keeps badge/version/language so
+    // phones stay compact.
+    meta.append(this.badge, version, this.langButton);
     root.appendChild(meta);
+
+    // Compact collapsed strip: concise weather + Expand + (phone XR) Hide.
+    // The body/body-split below reparents root children, so the compact
+    // strip is prepended into the body there; keep a handle for wiring.
+    const compact = document.createElement('div');
+    compact.className = 'browser-panel-compact';
+    compact.dataset.testid = 'hud-compact';
+    this.compactLine = el('p', 'weather-compact', '--');
+    this.compactExpand = document.createElement('button');
+    this.compactExpand.type = 'button';
+    this.compactExpand.dataset.testid = 'card-more';
+    this.compactExpand.setAttribute('aria-expanded', 'false');
+    compact.append(this.compactLine, this.compactExpand);
+    this.hideButton = document.createElement('button');
+    this.hideButton.type = 'button';
+    this.hideButton.dataset.testid = 'hud-hide';
+    compact.appendChild(this.hideButton);
+    this.compactStrip = compact;
+
+    // Concealed restore: the only visible node while intentionally hidden.
+    this.showButton = document.createElement('button');
+    this.showButton.type = 'button';
+    this.showButton.dataset.testid = 'hud-show';
+    root.appendChild(this.showButton);
 
     const info = document.createElement('div');
     info.className = 'browser-panel-info';
@@ -975,16 +1149,9 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.locationError.className = 'browser-panel-note';
     this.locationError.hidden = true;
     locationDisclosure.appendChild(this.locationError);
-
-    // One short hint line: how to show weather for your own place.
-    this.locationHintEl = el('p', 'location-hint', t('locationHint'));
-    this.locationHintEl.className = 'browser-panel-note';
-    locationDisclosure.appendChild(this.locationHintEl);
     root.appendChild(locationDisclosure);
-
     // Labelled gesture-sandbox toggle: same store flip as the spatial
-    // Button, with visible OFF/ON state. Phone browsers (and phone XR)
-    // have no hand tracking, so the note says so instead of faking it.
+    // Button, with visible OFF/ON state.
     const sandboxRow = document.createElement('div');
     sandboxRow.className = 'browser-panel-row browser-panel-sandbox';
     sandboxRow.setAttribute('role', 'group');
@@ -996,10 +1163,13 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.sandboxButton.textContent = t('sandboxOff');
     this.sandboxButton.setAttribute('aria-label', t('ariaSandbox'));
     sandboxRow.append(this.sandboxButton);
-    root.appendChild(sandboxRow);
-    this.sandboxNote = el('p', 'sandbox-note', t('sandboxHint'));
+    // Transient accepted-action feedback: a one-line honest answer to the
+    // last Thunder/Gust moment. No permanent tutorial paragraphs.
+    this.sandboxNote = el('p', 'sandbox-note', '');
     this.sandboxNote.className = 'browser-panel-note';
-    root.appendChild(this.sandboxNote);
+    this.sandboxNote.hidden = true;
+    sandboxRow.append(this.sandboxNote);
+    root.appendChild(sandboxRow);
     // One small utility row (Reload + Enter/Exit): chrome reduction so the
     // hero readout, not buttons, dominates the panel. Testids preserved.
     const xrRow = document.createElement('div');
@@ -1026,32 +1196,52 @@ export class BrowserPanelSystem extends createSystem({}) {
     // Split the card into an independently scrolling body and a fixed action
     // footer: the actions can never be painted over by scrolled content, and
     // they stay reachable on short viewports without scrolling the card.
+    // The compact HUD strip leads the body so phones see weather first; the
+    // concealed restore button stays a direct root child so the
+    // `browser-panel-concealed` rule can isolate it.
+    const show = this.showButton;
+    if (show != null) root.appendChild(show);
+    const foot = xrRow;
     const body = document.createElement('div');
     body.className = 'browser-panel-body';
-    while (root.firstChild != null) body.appendChild(root.firstChild);
-    root.append(body, xrRow);
-
+    for (let child = root.firstChild; child != null;) {
+      const next = child.nextSibling;
+      if (child !== show && child !== foot) body.appendChild(child);
+      child = next;
+    }
+    if (this.compactStrip != null) body.prepend(this.compactStrip);
+    root.append(body, foot);
     document.body.appendChild(root);
     this.root = root;
   }
 
   /** Effective state: the user's explicit choice, else the viewport width. */
   private effectiveExpanded(): boolean {
-    return this.userExpanded ?? (typeof window === 'undefined' ? true : window.innerWidth > 520);
+    return this.userExpanded ?? (typeof window === 'undefined' ||
+      (window.innerWidth > 520 && !window.matchMedia('(pointer: coarse)').matches));
   }
 
   private applyCollapsed(): void {
     if (this.root == null) return;
     const expanded = this.effectiveExpanded();
-    // The CSS default is compact on phones; this class is the explicit
-    // "show the secondary block" override the toggle writes.
+    // Phone HUD: `browser-panel-expanded` shows the full card behind the
+    // explicit Expand control; `browser-panel-concealed` (phone XR Hide)
+    // collapses everything to the single 48px Weather restore button.
+    // Chevron glyphs are ASCII-safe; the aria label spells out the state.
     this.root.classList.toggle('browser-panel-expanded', expanded);
-    if (this.moreButton != null) {
-      // ASCII-safe glyphs (the card's web fonts cover Latin-1): the chevron
-      // direction carries the state, the aria label spells it out.
-      this.moreButton.textContent = expanded ? '«' : '»';
-      this.moreButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      this.moreButton.setAttribute('aria-label', t(expanded ? 'cardLess' : 'cardMore'));
+    this.root.classList.toggle('browser-panel-concealed', this.hudConcealed);
+    if (this.compactExpand != null) {
+      this.compactExpand.textContent = expanded ? '«' : '»';
+      this.compactExpand.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      this.compactExpand.setAttribute('aria-label', t(expanded ? 'cardLess' : 'cardMore'));
+    }
+    if (this.hideButton != null) {
+      this.hideButton.textContent = t('hudHide');
+      this.hideButton.setAttribute('aria-label', t('ariaHudHide'));
+    }
+    if (this.showButton != null) {
+      this.showButton.textContent = t('hudShow');
+      this.showButton.setAttribute('aria-label', t('ariaHudShow'));
     }
   }
 
@@ -1079,19 +1269,20 @@ export class BrowserPanelSystem extends createSystem({}) {
     const wasHidden = this.root.hidden;
     this.root.hidden = spatial;
     this.root.dataset.session = spatial ? 'immersive' : presenting ? 'phone-xr' : 'browser';
+    // Phone XR always begins collapsed (concise strip + footer), regardless
+    // of the pre-AR expansion: an explicit collapsed choice, not null.
+    if (phoneXr && !this.wasPhoneXr) {
+      this.userExpanded = false;
+      this.hudConcealed = false;
+      this.applyCollapsed();
+      this.dirty = true;
+    }
+    this.wasPhoneXr = phoneXr;
     if (this.enterButton != null) this.enterButton.hidden = presenting || !this.world.xrEnabled;
     if (this.exitButton != null) this.exitButton.hidden = !presenting;
-    if (this.xrNote != null && !this.world.xrEnabled) {
-      this.xrNote.textContent = t('xrDisabled');
-    } else if (this.xrNote != null && phoneXr) {
-      this.xrNote.textContent = t('xrPhoneNote');
-    } else if (this.xrNote != null && !presenting && this.xrEntryError != null) {
-      this.xrNote.textContent = `${t('xrEntryFailed')} ${this.xrEntryError}`;
-    }
     if (wasHidden !== spatial && !this.root.hidden) this.dirty = true;
     // XR owns the camera while presenting; the 2D orbit owns it otherwise.
     this.syncOrbitListeners();
-    this.syncSandboxNote();
   }
   /** Throttled visible refresh: the cached frame advances even without store events. */
   update(): void {
@@ -1114,6 +1305,7 @@ export class BrowserPanelSystem extends createSystem({}) {
     if (!this.world.xrEnabled) {
       if (!this.disposed && this.xrNote != null) {
         this.xrNote.textContent = t('xrDisabled');
+        this.xrNote.hidden = false;
       }
       return;
     }
@@ -1130,7 +1322,9 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.xrSupported = supported;
     if (this.enterButton != null) this.enterButton.disabled = !supported;
     if (this.xrNote != null && this.world.xrEnabled) {
-      this.xrNote.textContent = supported ? t('xrEnterHint') : t('xrUnavailable');
+      const noteText = supported ? '' : t('xrUnavailable');
+      this.xrNote.textContent = noteText;
+      this.xrNote.hidden = noteText === '';
     }
     this.applySessionVisibility();
   }
@@ -1178,25 +1372,33 @@ export class BrowserPanelSystem extends createSystem({}) {
       if (this.timeLine != null) this.timeLine.textContent = '...';
       if (this.heroLine != null) this.heroLine.textContent = t('missingValue');
       if (this.weatherLine != null) this.weatherLine.textContent = t('missingValue');
+      if (this.compactLine != null) this.compactLine.textContent = t('statusLoading');
       return;
     }
-
     const { frame } = current;
     const staleSuffix = frame.stale ? t('staleSuffixParen') : '';
     const providerDisplay =
       !demoDataset
         ? (PROVIDER_DISPLAY[providerOf(dataset.source) as keyof typeof PROVIDER_DISPLAY] ?? providerOf(dataset.source))
         : '';
-    // One dim secondary line: honest status core (already names the provider
-    // when live); no provider token is appended because that only repeated it.
+    // Ready is silent: badge, hero and place/time already carry the state.
+    // Only loading, locating, demo, stale and out-of-coverage write a notice.
+    const needsNotice =
+      status.kind !== 'ready' || demoDataset || frame.stale || frame.outOfCoverage;
     if (this.statusLine != null) {
-      const statusCore =
-        status.kind === 'demo'
+      const statusCore = !needsNotice
+        ? ''
+        : status.kind === 'demo'
           ? `${t('demoDataPrefix')}${localizeDataPhrase(status.reason, lang)}`
           : demoDataset
             ? `${t('statusDemoRetained')}${staleSuffix}`
-            : `${sourceStatus(providerDisplay, staleSuffix, lang)}`;
+            : status.kind === 'loading'
+              ? `${t('loadingPrefix')}${localizeLoadingLabel(status.label, lang)}`
+              : status.kind === 'locating'
+                ? `${t('statusLocating')}${staleSuffix}`
+                : `${sourceStatus(providerDisplay, staleSuffix, lang)}${frame.outOfCoverage ? t('beyondSuffixPipe') : ''}`;
       this.statusLine.textContent = statusCore;
+      this.statusLine.hidden = statusCore === '';
     }
     const place = dataset.label.split(' · ').slice(1).join(' · ') || dataset.label;
     if (this.locationLine != null) {
@@ -1243,11 +1445,12 @@ export class BrowserPanelSystem extends createSystem({}) {
       this.weatherLine.textContent = `${t('rain')} ${rain} (${prob}) · ${t('wind')} ${wind}`;
     }
     this.syncLocationRow(lang);
-    if (this.sandboxButton != null) {
-      const on = weatherStore.state.peek().sandbox;
-      this.sandboxButton.textContent = on ? t('sandboxOn') : t('sandboxOff');
-      this.sandboxButton.dataset.state = on ? 'on' : 'off';
-      this.sandboxButton.setAttribute('aria-pressed', on ? 'true' : 'false');
+    // Collapsed phone strip: one line — time/temp/condition only. Location,
+    // precip, wind, brand and controls wait behind Expand.
+    if (this.compactLine != null) {
+      const temp = Number.isFinite(frame.temperatureC) ? `${Math.round(frame.temperatureC)}°` : t('missingValue');
+      const code = frame.available.weatherCode ? weatherCodeName(frame.weatherCode, lang) : t('missingValue');
+      this.compactLine.textContent = isLive ? `${temp} ${code}` : `${label} · ${temp} ${code}`;
     }
   }
 
@@ -1279,12 +1482,15 @@ export class BrowserPanelSystem extends createSystem({}) {
     if (this.xrNote != null) {
       const presenting = this.xrManager.isPresenting;
       const spatial = presenting && usesSpatialControls(this.world);
-      this.xrNote.textContent = !this.world.xrEnabled ? t('xrDisabled')
-        : spatial ? t('xrEnterHint')
-        : presenting ? t('xrPhoneNote')
-        : this.xrEntryError != null ? `${t('xrEntryFailed')} ${this.xrEntryError}`
-        : this.xrSupported == null ? t('xrChecking')
-        : this.xrSupported ? t('xrEnterHint') : t('xrUnavailable');
+      // Actionable only: routine capability/disabled notes stay hidden so the
+      // card keeps the hero, timeline and controls above the fold.
+      const noteText = !this.world.xrEnabled ? t('xrDisabled')
+        : this.xrEntryError != null && !presenting ? `${t('xrEntryFailed')} ${this.xrEntryError}`
+        : this.xrSupported === false && !presenting ? t('xrUnavailable')
+        : presenting && !spatial ? t('xrPhoneNote')
+        : '';
+      this.xrNote.textContent = noteText;
+      this.xrNote.hidden = noteText === '';
     }
     this.root?.querySelector('[data-testid="location-label"]')?.replaceChildren(t('locationLabelPrefix'));
     this.locationSelect?.setAttribute('aria-label', t('locationChoose'));
@@ -1308,7 +1514,6 @@ export class BrowserPanelSystem extends createSystem({}) {
       this.sandboxButton.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
     this.root?.querySelector('.browser-panel-sandbox')?.setAttribute('aria-label', t('ariaSandbox'));
-    this.syncSandboxNote();
     this.applyCollapsed();
   }
 
@@ -1329,16 +1534,6 @@ export class BrowserPanelSystem extends createSystem({}) {
       this.locationInput.value = manual != null ? `${manual.latitude}, ${manual.longitude}` : '';
     }
   }
-  /**
-   * Sandbox explainer: gestures require tracked XR input; native touch
-   * controls never claim that a phone/browser can detect a clap.
-   */
-  private syncSandboxNote(): void {
-    if (this.sandboxNote == null) return;
-    const on = weatherStore.state.peek().sandbox;
-    this.sandboxNote.textContent = `${on ? t('sandboxHintOn') : t('sandboxHint')} ${t('sandboxPhoneNote')}`;
-  }
-
   /**
    * Unmistakable NOW snap on the DOM surface: briefly invert the badge to
    * white-on-dark, then restore the live/demo pill. Timer-owned, no layout
@@ -1395,6 +1590,30 @@ export class BrowserPanelSystem extends createSystem({}) {
         node.textContent = '';
         node.hidden = true;
       }, timeoutMs);
+    }
+  }
+
+  /**
+   * Transient accepted-action answer: one line for 2.5s, then hidden again.
+   * Gated on sandbox ON; in-flow, never overlapping a control.
+   */
+  private showActionFeedback(text: string): void {
+    const node = this.sandboxNote;
+    if (node == null || this.disposed) return;
+    if (!weatherStore.state.peek().sandbox) return;
+    if (this.actionTimer != null) {
+      window.clearTimeout(this.actionTimer);
+      this.actionTimer = null;
+    }
+    node.textContent = text;
+    node.hidden = text === '';
+    if (text !== '') {
+      this.actionTimer = window.setTimeout(() => {
+        this.actionTimer = null;
+        if (this.disposed) return;
+        node.textContent = '';
+        node.hidden = true;
+      }, 2500);
     }
   }
 

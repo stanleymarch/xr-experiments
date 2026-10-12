@@ -33,7 +33,7 @@
   .panel-root {
     flex-direction: column;
     width: 340px;
-    height: 410px;
+    padding-bottom: 14px;
     background-color: #0d1930;
     border-color: #a9d8ff;
     border-width: 1px;
@@ -42,9 +42,9 @@
   .panel-content {
     align-items: stretch;
     flex-direction: column;
-    padding-top: 10px;
-    padding-left: 22px;
-    padding-right: 22px;
+    padding-top: 12px;
+    padding-left: 24px;
+    padding-right: 24px;
   }
   .brand-kicker {
     font-family: "Geologica";
@@ -64,7 +64,7 @@
     font-weight: 700;
     line-height: 26px;
     letter-spacing: 1px;
-    margin-top: 4px;
+    margin-top: 6px;
     color: #eef5ff;
   }
   .heading:dark {
@@ -74,7 +74,7 @@
     flex-direction: row;
     justify-content: center;
     align-items: center;
-    margin-top: 8px;
+    margin-top: 10px;
   }
   .mode-pill {
     font-family: "Geologica";
@@ -101,7 +101,7 @@
     font-weight: 600;
     line-height: 24px;
     width: 100%;
-    margin-top: 4px;
+    margin-top: 10px;
     text-align: center;
   }
   .playhead:dark {
@@ -114,7 +114,7 @@
     font-weight: 700;
     line-height: 38px;
     width: 100%;
-    margin-top: 0px;
+    margin-top: 2px;
     text-align: center;
   }
   .hero-temp:dark {
@@ -127,7 +127,7 @@
     font-weight: 500;
     line-height: 16px;
     width: 100%;
-    margin-top: 3px;
+    margin-top: 4px;
     text-align: center;
   }
   .subhead:dark {
@@ -139,8 +139,9 @@
     font-size: 14px;
     font-weight: 600;
     line-height: 20px;
+    min-height: 40px;
     width: 100%;
-    margin-top: 2px;
+    margin-top: 4px;
     text-align: center;
   }
   .values:dark {
@@ -153,33 +154,22 @@
     font-weight: 500;
     line-height: 16px;
     width: 100%;
-    margin-top: 4px;
+    margin-top: 6px;
     text-align: center;
   }
   .status:dark {
     color: #a6bcd9;
   }
-  .timeline-hint {
-    font-family: "Geologica";
-    color: #7e99bd;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 14px;
-    width: 100%;
-    margin-top: 4px;
-    text-align: center;
-    letter-spacing: 0.5px;
-  }
-  .timeline-hint:dark {
-    color: #7e99bd;
-  }
   .controls-row {
     flex-direction: row;
     justify-content: center;
-    margin-top: 8px;
+    margin-top: 12px;
+    padding-left: 24px;
+    padding-right: 24px;
   }
   .control-button {
     width: 88px;
+    height: 48px;
     margin-left: 4px;
     margin-right: 4px;
     align-items: center;
@@ -191,13 +181,9 @@
     width: 100%;
     text-align: center;
   }
-  .sandbox-row {
-    flex-direction: row;
-    justify-content: center;
-    margin-top: 8px;
-  }
   .sandbox-button {
-    width: 200px;
+    width: 280px;
+    height: 48px;
     align-items: center;
     justify-content: center;
     text-align: center;
@@ -207,44 +193,91 @@
     width: 100%;
     text-align: center;
   }
+  .sandbox-row {
+    flex-direction: row;
+    justify-content: center;
+    margin-top: 10px;
+    padding-left: 24px;
+    padding-right: 24px;
+  }
   .sandbox-hint {
     font-family: "Geologica";
     color: #7e99bd;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
-    line-height: 14px;
+    line-height: 16px;
     width: 100%;
-    margin-top: 4px;
-    padding-left: 22px;
-    padding-right: 22px;
+    margin-top: 6px;
+    padding-left: 24px;
+    padding-right: 24px;
     text-align: center;
   }
   .sandbox-hint:dark {
     color: #7e99bd;
   }
-  .xr-row {
+  .sandbox-note {
+    font-family: "Geologica";
+    color: #79d7f2;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 16px;
+    width: 100%;
+    margin-top: 4px;
+    padding-left: 24px;
+    padding-right: 24px;
+    text-align: center;
+  }
+  .sandbox-note:dark {
+    color: #79d7f2;
+  }
+  .sandbox-actions {
+    display: none;
     flex-direction: row;
     justify-content: center;
     margin-top: 8px;
-    margin-bottom: 8px;
+    padding-left: 24px;
+    padding-right: 24px;
   }
-  .utility-button {
-    width: 80px;
-    margin-left: 2px;
-    margin-right: 2px;
+  .sandbox-action-button {
+    width: 136px;
+    height: 48px;
+    margin-left: 4px;
+    margin-right: 4px;
     align-items: center;
     justify-content: center;
     text-align: center;
   }
-  .utility-label {
+  .sandbox-action-label {
+    font-size: 12px;
+    width: 100%;
+    text-align: center;
+  }
+  .footer-row {
+    flex-direction: row;
+    justify-content: center;
+    margin-top: 8px;
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+  .footer-button {
+    width: 136px;
+    height: 48px;
+    margin-left: 4px;
+    margin-right: 4px;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  .footer-label {
     font-size: 12px;
     width: 100%;
     text-align: center;
   }
   .picker-button {
-    width: 140px;
-    margin-left: 2px;
-    margin-right: 2px;
+    width: 136px;
+    height: 48px;
+    margin-left: 4px;
+    margin-right: 4px;
     align-items: center;
     justify-content: center;
     text-align: center;
@@ -254,32 +287,22 @@
     width: 100%;
     text-align: center;
   }
+  .picker-title {
+    font-family: "Geologica";
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 24px;
+    margin-left: 24px;
+    margin-right: 24px;
+    text-align: center;
+    color: #eef5ff;
+  }
   .picker {
     display: none;
     flex-direction: column;
     justify-content: center;
     flex-grow: 1;
     padding-top: 24px;
-    padding-left: 22px;
-    padding-right: 22px;
-  }
-  .picker-title {
-    font-family: "Geologica";
-    font-size: 24px;
-    line-height: 30px;
-    font-weight: 700;
-    text-align: center;
-    color: #eef5ff;
-    margin-bottom: 12px;
-  }
-  .picker-hint {
-    font-family: "Geologica";
-    font-weight: 500;
-    font-size: 13px;
-    line-height: 19px;
-    color: #a6bcd9;
-    text-align: center;
-    margin-top: 16px;
   }
 </style>
 <Panel id="weather-root" class="panel-root">
@@ -295,7 +318,6 @@
       <div id="location-line" class="subhead">Locating...</div>
       <div id="values-line" class="values">--</div>
       <div id="status-line" class="status">Loading...</div>
-      <div id="timeline-hint" class="timeline-hint">-24H &lt; KNOB / BUTTONS &gt; +24H</div>
     </div>
     <div class="controls-row">
       <Button id="back-button" class="control-button" variant="secondary">
@@ -313,19 +335,30 @@
         <ButtonLabel id="sandbox-label" class="sandbox-label">Sandbox: OFF</ButtonLabel>
       </Button>
     </div>
-    <div id="sandbox-hint" class="sandbox-hint">Tap to arm. Clap = thunder.</div>
-    <div class="xr-row">
-      <Button id="reload-button" class="utility-button" variant="tertiary">
-        <ButtonLabel id="reload-label" class="utility-label">Reload</ButtonLabel>
+    <div id="sandbox-hint" class="sandbox-hint">Clap -&gt; thunder / Sweep one hand sideways -&gt; gust</div>
+    <div id="sandbox-actions" class="sandbox-actions">
+      <Button id="thunder-button" class="sandbox-action-button" variant="secondary">
+        <ButtonLabel id="thunder-label" class="sandbox-action-label">Thunder</ButtonLabel>
       </Button>
-      <Button id="location-button" class="utility-button" variant="tertiary">
-        <ButtonLabel id="location-label" class="utility-label">Location</ButtonLabel>
+      <Button id="gust-button" class="sandbox-action-button" variant="secondary">
+        <ButtonLabel id="gust-label" class="sandbox-action-label">Gust</ButtonLabel>
       </Button>
-      <Button id="lang-button" class="utility-button" variant="tertiary">
-        <ButtonLabel id="lang-label" class="utility-label">RU</ButtonLabel>
+    </div>
+    <div id="sandbox-note" class="sandbox-note"></div>
+    <div class="footer-row">
+      <Button id="reload-button" class="footer-button" variant="tertiary">
+        <ButtonLabel id="reload-label" class="footer-label">Reload</ButtonLabel>
       </Button>
-      <Button id="exit-button" class="utility-button" variant="tertiary">
-        <ButtonLabel id="exit-label" class="utility-label">Exit</ButtonLabel>
+      <Button id="location-button" class="footer-button" variant="tertiary">
+        <ButtonLabel id="location-label" class="footer-label">Location</ButtonLabel>
+      </Button>
+    </div>
+    <div class="footer-row">
+      <Button id="lang-button" class="footer-button" variant="tertiary">
+        <ButtonLabel id="lang-label" class="footer-label">RU</ButtonLabel>
+      </Button>
+      <Button id="exit-button" class="footer-button" variant="tertiary">
+        <ButtonLabel id="exit-label" class="footer-label">Exit</ButtonLabel>
       </Button>
     </div>
   </div>
@@ -340,7 +373,7 @@
         <ButtonLabel id="location-saint-petersburg-label" class="picker-label">St Petersburg</ButtonLabel>
       </Button>
     </div>
-    <div class="xr-row">
+    <div class="footer-row">
       <Button id="location-london" class="picker-button" variant="secondary">
         <ButtonLabel id="location-london-label" class="picker-label">London</ButtonLabel>
       </Button>
@@ -348,7 +381,7 @@
         <ButtonLabel id="location-berlin-label" class="picker-label">Berlin</ButtonLabel>
       </Button>
     </div>
-    <div class="xr-row">
+    <div class="footer-row">
       <Button id="location-new-york" class="picker-button" variant="secondary">
         <ButtonLabel id="location-new-york-label" class="picker-label">New York</ButtonLabel>
       </Button>
@@ -356,7 +389,7 @@
         <ButtonLabel id="location-tokyo-label" class="picker-label">Tokyo</ButtonLabel>
       </Button>
     </div>
-    <div class="xr-row">
+    <div class="footer-row">
       <Button id="location-auto-button" class="picker-button" variant="primary">
         <ButtonLabel id="location-auto-label" class="picker-label">My location</ButtonLabel>
       </Button>
@@ -364,6 +397,5 @@
         <ButtonLabel id="location-back-label" class="picker-label">Back</ButtonLabel>
       </Button>
     </div>
-    <div id="location-picker-hint" class="picker-hint">My location uses device/IP.</div>
   </div>
 </Panel>

@@ -2,6 +2,11 @@
  * WEATHER//ROOM capability profile: what the active XR session can do.
  * Derived from the session's granted features — never user-agent sniffing.
  * Outside XR (IWER/desktop preview): conservative defaults, full particles.
+ * Session-init limit (verified in packages/core/src/init/xr.ts): the SDK
+ * translates depth-sensing into a SINGLE usagePreference/dataFormatPreference
+ * pair — currently gpu-optimized/float32 — so an Android runtime offering
+ * only CPU/LA depth may deny the grant. Hit-test-only AR must still enter
+ * and place measured contacts; only real-world occlusion degrades.
  */
 
 import type { World } from '@iwsdk/core';

@@ -21,18 +21,28 @@ import {
   Object3D,
   PlaneGeometry,
   ShaderMaterial,
+  Vector2,
   Vector3,
+  Vector4,
 } from '@iwsdk/core';
 import type { Entity, ReadonlySignal } from '@iwsdk/core';
 import { capabilityProfile } from '../capabilities.js';
 import type { CapabilityProfile } from '../capabilities.js';
 import { enableDepthOcclusion } from '../depth-occlusion.js';
 import { enableHandField, HAND_FIELD_LAYERS } from '../hand-field.js';
-import { enableBeamLighting } from '../light-shared.js';
+import { enableBeamLighting, enableLightning } from '../light-shared.js';
 import { roomModel } from '../room.js';
-import { sandboxGustFactor } from '../sandbox-gust.js';
+import {
+  sandboxGustAgeS,
+  sandboxGustDirX,
+  sandboxGustDirZ,
+  sandboxGustFactor,
+  sandboxGustHasOrigin,
+  sandboxGustOriginX,
+  sandboxGustOriginZ,
+} from '../sandbox-gust.js';
 import { weatherStore } from '../weather-state.js';
-import { windVectorFromFrame } from '../wind-shared.js';
+import { sandboxGustVector, windVectorFromFrame } from '../wind-shared.js';
 
 const STREAK_FULL = 120;
 const STREAK_REDUCED = 60;
@@ -45,15 +55,28 @@ attribute float aAlpha;
 attribute float aSeed;
 attribute float aCurve;
 uniform float uTime;
+uniform vec4 uGustWake;
+uniform vec2 uGustDir;
 varying float vAlpha;
 varying float vSeed;
 varying vec2 vUv;
+varying float vWake;
 void main() {
   vAlpha = aAlpha;
   vSeed = aSeed;
   vUv = uv;
   vec3 p = position;
   p.y += sin(position.x * 6.283185 + aSeed * 6.283185 + uTime * 0.2) * aCurve;
+  // Travelling gust wake: the ribbon swells as the front passes its head.
+  vec4 wp = instanceMatrix * vec4(p, 1.0);
+  vec4 world = modelMatrix * wp;
+  float along = dot(world.xz - uGustWake.xy, uGustDir);
+  float front = uGustWake.z - along;
+  // uGustWake.z is the front radius: 0 = no wake. A ~1.2 m band ahead of the
+  // front lifts, the passed air settles — one visible travelling pulse.
+  float band = uGustWake.z > 0.001 ? exp(-front * front * 1.4) * step(0.0, front + 0.6) : 0.0;
+  vWake = band * uGustWake.w;
+  p.y += vWake * 0.12;
   gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(p, 1.0);
 }
 `;
@@ -62,6 +85,7 @@ uniform float uTime;
 varying float vAlpha;
 varying float vSeed;
 varying vec2 vUv;
+varying float vWake;
 void main() {
   // Luminous air filament: gaussian core across the width and a brightness
   // pulse travelling along the flow. The smooth end dissolve is replaced by
@@ -75,11 +99,12 @@ void main() {
   float pulse = 0.55 + 0.45 * sin(vUv.x * 8.0 - uTime * (1.5 + vSeed * 2.0) + vSeed * 40.0);
   // Air is only visible where the light crosses it.
   float beam = rBeamFactor(vBeamWorld);
-  float a = core * torn * tips * pulse * vAlpha * beam;
+  float a = core * torn * tips * pulse * vAlpha * beam * (1.0 + vWake * 1.6);
   if (a < 0.01) discard;
   float outA = a * 0.6;
   // Green-gray air: distinct from steel-blue rain at a glance.
-  gl_FragColor = vec4(vec3(0.55, 0.72, 0.62) * beam, outA);
+  vec3 color = mix(vec3(0.55, 0.72, 0.62) * beam, uWrFlashTint, min(0.85, uWrFlash * 0.7));
+  gl_FragColor = vec4(color, outA);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -113,7 +138,8 @@ void main() {
   float a = dot_ * twinkle * vAlpha;
   if (a < 0.01) discard;
   float outA = a * 0.55 * beam;
-  gl_FragColor = vec4(vec3(0.6, 0.74, 0.62), outA);
+  vec3 color = mix(vec3(0.6, 0.74, 0.62), uWrFlashTint, min(0.85, uWrFlash * 0.7));
+  gl_FragColor = vec4(color, outA);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -160,7 +186,11 @@ export class WindSystem extends createSystem({}) {
     this.streakMat = new ShaderMaterial({
       vertexShader: STREAK_VERTEX,
       fragmentShader: STREAK_FRAGMENT,
-      uniforms: { uTime: { value: 0 } },
+      uniforms: {
+        uTime: { value: 0 },
+        uGustWake: { value: new Vector4(0, 0, 0, 0) },
+        uGustDir: { value: new Vector2(0, -1) },
+      },
       transparent: true,
       depthWrite: false,
       side: DoubleSide,
@@ -170,6 +200,8 @@ export class WindSystem extends createSystem({}) {
     // read the shared light shaft, with the depth test layered on top.
     enableBeamLighting(this.streakMat);
     enableDepthOcclusion(this.streakMat);
+    // The strike envelope lifts every virtual material coherently.
+    enableLightning(this.streakMat);
     // Staged rollout: implemented, off until the rain/dust wave is verified
     // on hardware (flag in hand-field.ts). With the flag false the shader
     // source is untouched and the field costs nothing.
@@ -196,6 +228,7 @@ export class WindSystem extends createSystem({}) {
     });
     enableBeamLighting(this.sparkMat);
     enableDepthOcclusion(this.sparkMat);
+    enableLightning(this.sparkMat);
     if (HAND_FIELD_LAYERS.wind) enableHandField(this.sparkMat);
     this.sparks = new InstancedMesh(sparkGeo, this.sparkMat, SPARK_FULL);
     this.sparks.frustumCulled = false;
@@ -214,22 +247,26 @@ export class WindSystem extends createSystem({}) {
 
   update(delta: number): void {
     const current = weatherStore.current();
-    if (current == null || !current.frame.available.windSpeedKmh || !current.frame.available.windDirectionDeg) {
+    const dt = Math.min(delta, 0.05);
+    const { min, max } = roomModel;
+    const spanX = Math.max(0.5, max.x - min.x);
+    const spanY = Math.max(0.5, max.y - min.y);
+    const spanZ = Math.max(0.5, max.z - min.z);
+    // Forecast flow first (missing data = zero base, never NaN); the sandbox
+    // gust folds in additively inside windVectorFromFrame, so calm weather
+    // still bends to the sweep and the field keeps drifting instead of
+    // parking to zero. A gust surge alone now reads as visible wind.
+    if (current != null) windVectorFromFrame(current.frame, 1, this.wind);
+    else sandboxGustVector(this.wind);
+    const sweepGust = sandboxGustFactor();
+    if (current == null && sweepGust <= 0) {
       this.streaks.count = 0;
       this.sparks.count = 0;
       return;
     }
     const meanWind = current?.drivers.wind ?? 0;
     const gust = current?.drivers.gust ?? 0;
-    // A sandbox sweep gust counts as a full gust surge on top of the forecast.
-    const sweepGust = sandboxGustFactor();
     const strength = Math.min(1, meanWind + Math.max(0, gust - meanWind) * 0.55 + sweepGust * 0.8);
-    const dt = Math.min(delta, 0.05);
-    const { min, max } = roomModel;
-    const spanX = Math.max(0.5, max.x - min.x);
-    const spanY = Math.max(0.5, max.y - min.y);
-    const spanZ = Math.max(0.5, max.z - min.z);
-    windVectorFromFrame(current.frame, 1, this.wind);
     const speed = BASE_SPEED * (1 + strength * 14);
     const time = performance.now() / 1000;
 
@@ -272,6 +309,11 @@ export class WindSystem extends createSystem({}) {
     this.sparks.count = sparkLive;
     this.streakMat.uniforms.uTime.value = time;
     this.sparkMat.uniforms.uTime.value = time;
+    // Travelling gust wake: the front expands from the sweep origin along
+    // the stored gust direction (~3.5 m/s); the shader lifts ribbons in a
+    // band around the front so the wave visibly crosses the room. No origin
+    // (UI thunder path) degrades to a room-wide surge with no front.
+    this.writeGustWake();
 
     // Fade filaments aimed straight at the camera (they would read as dots).
     const screenWind = this.wind.x * cosYaw - this.wind.z * sinYaw;
@@ -361,6 +403,28 @@ export class WindSystem extends createSystem({}) {
     this.dummy.updateMatrix();
     for (let i = 0; i < count; i += 1) mesh.setMatrixAt(i, this.dummy.matrix);
     mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /**
+   * Feed the travelling-wake uniforms: origin XZ + front radius + strength
+   * packed into uGustWake (x, z, radius, gain), direction into uGustDir.
+   * Front speed ~3.5 m/s crosses a room in about a second, matching the gust
+   * envelope's felt life; gain follows the decaying factor so the wake dies
+   * with the wind, not after it.
+   */
+  private writeGustWake(): void {
+    const wake = this.streakMat.uniforms.uGustWake.value as Vector4;
+    const dir = this.streakMat.uniforms.uGustDir.value as Vector2;
+    const factor = sandboxGustFactor();
+    if (!(factor > 0.01) || !sandboxGustHasOrigin()) {
+      wake.set(0, 0, 0, 0);
+      dir.set(0, -1);
+      return;
+    }
+    const age = sandboxGustAgeS();
+    const radius = Number.isFinite(age) ? Math.max(0, age) * 3.5 : 0;
+    wake.set(sandboxGustOriginX(), sandboxGustOriginZ(), radius, Math.min(1, factor * 1.4));
+    dir.set(sandboxGustDirX(), sandboxGustDirZ());
   }
 
   private seedField(

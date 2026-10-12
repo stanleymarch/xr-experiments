@@ -16,6 +16,15 @@
  * its field inside a volume the viewer never sees while the panel still shows
  * nonzero drivers. The capped volume therefore grows toward the tracked
  * viewer within its cap; distant geometry uses a head-centered fallback.
+ *
+ * Rebuild continuity: a mesh-to-mesh rebuild snapshots the finished grid
+ * first, so queries keep answering from the snapshot while the incremental
+ * build refills (remaps and late plane/mesh data never flash the floor
+ * away). A rebuild that maps nothing restores the snapshot instead of
+ * claiming an empty box; only an empty surface set clears knowledge.
+ * Probe hits are kept as a bounded ring so puddles can sit on the measured
+ * patch instead of random floor. Unmapped/out-of-range columns always read
+ * null — never measured, never the fallback elevation.
  */
 
 import { Box3, Vector3 } from '@iwsdk/core';
@@ -32,14 +41,42 @@ const MAX_SPAN_XZ = 8;
 const MAX_SPAN_Y = 4;
 /** Bound triangle setup and raster-cell tests together on every build step. */
 const SURFACE_WORK_PER_STEP = 4096;
-/** Minimum world-space normal.y for a face to count as an upward surface. */
-const UPWARD_NORMAL_Y = 0.5;
+/** Minimum world-space |normal.y| for a face to count as a horizontal surface. */
+const HORIZONTAL_NORMAL_Y = 0.5;
+/** Bounded horizontal height layers kept per grid cell, sorted ascending.
+ * Four covers floor + table + tall furniture + shell top without unbounded
+ * growth; insert-sorted, deduplicated, allocated only on grid (re)build. */
+const LAYERS_PER_CELL = 4;
+/** Heights closer than this merge into one layer (same physical surface). */
+const LAYER_MERGE_M = 0.04;
+/** Distinct measured probe hits retained for puddle placement. */
+export const PROBE_HIT_CAPACITY = 16;
+/** A repeat hit inside this radius refreshes nothing (same patch). */
+const PROBE_HIT_MIN_SEP_M = 0.2;
+/** Mapped floor cells copied per puddle reseed (xz pairs). */
+export const FLOOR_CELL_COPY_MAX = 64;
+
+/**
+ * Extra plane-space correction carried on a tracked surface object. The
+ * framework builds plane meshes as origin-centered boxes spanning the polygon
+ * extents, so an off-center polygon's extents center must be added before
+ * the world transform. Centered polygons yield ~0 (no-op); mesh vertices are
+ * already mesh-space exact (use 0).
+ */
+export interface RoomSurfaceSource extends Object3D {
+  /** Plane-polygon centroid in surface-local meters (x). */
+  offsetX?: number;
+  /** Plane-polygon centroid in surface-local meters (z). */
+  offsetZ?: number;
+}
 
 type SurfaceEntry = {
   /** Owner of the geometry; carries the world matrix used for sampling. */
   readonly object: Object3D;
   readonly positions: ArrayLike<number> | null;
   readonly indices: ArrayLike<number> | null;
+  offsetX: number;
+  offsetZ: number;
 };
 
 /**
@@ -59,6 +96,8 @@ class RoomModel {
   /** True while hit-test probe sampling owns the volume (no mesh knowledge). */
   private probing = false;
   private readonly box = new Box3();
+  private readonly shiftedBox = new Box3();
+  private readonly planeOffset = new Vector3();
   private readonly surfaceNormal = new Vector3();
   private readonly triangleA = new Vector3();
   private readonly triangleB = new Vector3();
@@ -66,8 +105,12 @@ class RoomModel {
   private readonly triangleEdge = new Vector3();
   private readonly anchorPos = new Vector3();
   private hasAnchor = false;
-  // Coarse top-surface height grid over [gridMinX, ...] (NaN = no hit).
-  private grid = new Float32Array(0);
+  // Coarse layered height grid over [gridMinX, ...] (NaN = no hit): each cell
+  // keeps up to LAYERS_PER_CELL sorted ascending heights, so a table layer
+  // never evicts the floor layer beneath it and the shell top never hides
+  // either. No ceiling heuristic: queries pick the right layer generically.
+  private layers = new Float32Array(0);
+  private layerCounts = new Uint8Array(0);
   private gridCols = 0;
   private gridRows = 0;
   private gridMinX = 0;
@@ -82,10 +125,48 @@ class RoomModel {
   private rasterMaxCol = -1;
   private rasterMaxRow = -1;
   private triangleDenominator = 0;
+  /** Last finished grid: answers queries while a rebuild refills live. Stale
+   * by design after remaps — spatially keyed, so it only answers where the
+   * user has already been, never in newly entered space. */
+  private snapLayers = new Float32Array(0);
+  private snapCounts = new Uint8Array(0);
+  private snapCols = 0;
+  private snapRows = 0;
+  private snapMinX = 0;
+  private snapMinZ = 0;
+  private readonly snapMin = new Vector3();
+  private readonly snapMax = new Vector3();
+  private snapHas = false;
+  private snapProbing = false;
+  /** True while the live grid holds servable knowledge (finished mesh build
+   * with mapped cells, or at least one probe record). */
+  private liveFinished = false;
+  /** Bounded ring of distinct measured probe hits (x/y/z triples). */
+  private readonly probeHits = new Float32Array(PROBE_HIT_CAPACITY * 3);
+  private probeHitCount = 0;
+  private probeCursor = 0;
+  /** Bumped on every finished mesh build with mapped cells. */
+  meshRevision = 0;
+  /** Bumped on every distinct probe hit and every probe-ring reset. */
+  probeRevision = 0;
 
   /** Probe hits are not mesh ownership; the sampler must keep collecting. */
   get hasMeshSurfaces(): boolean {
-    return this.hasSurfaces && !this.probing;
+    return this.hasSurfaces && !this.probing && !this.building && this.liveFinished;
+  }
+
+  /**
+   * Compact honest surface state for status notices: 'mesh' = measured
+   * plane/mesh layers, 'probe' = sparse measured hit-test patch only,
+   * 'pending' = sensing with no servable knowledge yet, 'none' = no live
+   * knowledge (a stale snapshot may still answer behind the user).
+   * Never imply a whole room from a probe patch.
+   */
+  roomSurfaceStatus(): 'mesh' | 'probe' | 'pending' | 'none' {
+    if (this.building) return 'pending';
+    if (this.hasMeshSurfaces) return 'mesh';
+    if (this.probing) return this.hasSurfaces ? 'probe' : 'pending';
+    return this.hasSurfaces ? 'mesh' : 'none';
   }
 
   /**
@@ -93,11 +174,13 @@ class RoomModel {
    * computed immediately (cheap, bounding-box based); the height grid is then
    * filled incrementally by `step()`. When `anchor` (viewer head position) is
    * supplied, the capped volume is translated so it contains the anchor.
+   * The finished grid is snapshotted first, so queries stay warm while the
+   * refill runs; a remap that yields no mapped cells restores the snapshot.
+   * Child meshes are sampled (for semantic room shells), while a supplied
+   * plane centroid recenters off-center polygon-frame geometry.
    */
   beginRebuild(objects: readonly Object3D[], anchor?: Vector3): void {
     this.building = false;
-    // Mesh/plane knowledge always wins: a real rebuild ends probe ownership.
-    this.probing = false;
     this.entries = [];
     this.entryIndex = 0;
     this.geometryCursor = 0;
@@ -108,10 +191,29 @@ class RoomModel {
       this.reset();
       return;
     }
+    // Snapshot whatever was servable: an empty surface set clears (with a
+    // head-anchored fallback for the viewer), but a live empty remap must
+    // never zero or orphan what the room already measured.
+    this.snapshotLive();
+    // Retain probe records until a mesh build actually maps support.
+    this.probing = false;
     this.box.makeEmpty();
-    for (const object of objects) this.box.expandByObject(object);
+    for (const object of objects) {
+      const source: RoomSurfaceSource = object;
+      const geometry = (object as Object3D & { geometry?: BufferGeometry }).geometry;
+      if (geometry != null && (source.offsetX || source.offsetZ)) {
+        object.updateWorldMatrix(true, false);
+        if (geometry.boundingBox == null) geometry.computeBoundingBox();
+        if (geometry.boundingBox != null) {
+          this.planeOffset.set(source.offsetX ?? 0, 0, source.offsetZ ?? 0);
+          this.shiftedBox.copy(geometry.boundingBox).translate(this.planeOffset).applyMatrix4(object.matrixWorld);
+          this.box.union(this.shiftedBox);
+        }
+        for (const child of object.children) this.box.expandByObject(child);
+      } else this.box.expandByObject(object);
+    }
     if (this.box.isEmpty()) {
-      this.reset();
+      this.restoreSnapshot();
       return;
     }
     this.min.copy(this.box.min);
@@ -146,7 +248,7 @@ class RoomModel {
     if (this.hasAnchor) {
       this.containAnchor();
       if (!this.contains(this.anchorPos)) {
-        this.reset();
+        this.restoreSnapshot();
         return;
       }
     }
@@ -154,20 +256,31 @@ class RoomModel {
     this.allocateGrid();
 
     for (const object of objects) {
-      object.updateWorldMatrix(true, false);
-      const mesh = object as Object3D & { geometry?: BufferGeometry };
-      const geometry = mesh.geometry;
-      const positions = geometry?.getAttribute?.('position')?.array ?? null;
-      const indices = geometry?.index?.array ?? null;
-      if (positions == null) continue;
-      this.entries.push({ object, positions, indices });
+      const source: RoomSurfaceSource = object;
+      const offsetX = typeof source.offsetX === 'number' ? source.offsetX : 0;
+      const offsetZ = typeof source.offsetZ === 'number' ? source.offsetZ : 0;
+      this.collectEntry(object, offsetX, offsetZ);
+      for (const child of object.children) this.collectEntry(child, 0, 0);
     }
     this.building = this.entries.length > 0;
     if (!this.building) {
-      // Nothing sampleable arrived: keep the compact fallback volume instead
-      // of claiming an empty giant box.
-      this.reset();
+      // Nothing sampleable arrived: restore what was measured instead of
+      // claiming an empty giant box.
+      this.restoreSnapshot();
     }
+  }
+
+  /** Sample one object when it carries BufferGeometry; offset pre-applied. */
+  private collectEntry(object: Object3D, offsetX: number, offsetZ: number): void {
+    object.updateWorldMatrix(true, false);
+    const holder: unknown = object;
+    const geometry = holder != null && typeof holder === 'object' && 'geometry' in holder
+      ? (holder.geometry as BufferGeometry | undefined)
+      : undefined;
+    const positions = geometry?.getAttribute?.('position')?.array ?? null;
+    const indices = geometry?.index?.array ?? null;
+    if (positions == null) return;
+    this.entries.push({ object, positions, indices, offsetX, offsetZ });
   }
 
   /**
@@ -186,22 +299,94 @@ class RoomModel {
     }
     this.hasAnchor = true;
     this.anchorPos.copy(anchor);
-    this.min.set(anchor.x - FALLBACK_HALF_XZ, 0, anchor.z - FALLBACK_HALF_XZ);
-    this.max.set(anchor.x + FALLBACK_HALF_XZ, FALLBACK_HEIGHT, anchor.z + FALLBACK_HALF_XZ);
+    this.setFallbackBounds();
     this.hasSurfaces = false;
     this.allocateGrid();
+    this.clearProbeHits();
     this.probing = true;
     return true;
+  }
+
+  /** Drop the bounded probe ring (volume abandoned or mesh took over). */
+  private clearProbeHits(): void {
+    this.probeHitCount = 0;
+    this.probeCursor = 0;
+    this.probeRevision += 1;
   }
 
   /**
    * Record one measured hit-test surface point into the probe grid. The
    * first mapped cell flips `hasSurfaces`: probe knowledge is only ever
    * claimed from points the session actually measured, never faked.
+   * Distinct hits are also kept in a bounded ring for puddle placement.
    */
   recordProbePoint(x: number, y: number, z: number): void {
     if (!this.probing || this.gridCols === 0) return;
-    if (this.record(x, y, z)) this.hasSurfaces = true;
+    if (!this.record(x, y, z)) return;
+    // Reference-space drift can put measured ground below y=0. It must
+    // remain reachable by falling drops, not below their recycle boundary.
+    if (y < this.min.y && this.anchorPos.y - y <= MAX_SPAN_Y) {
+      this.min.y = y;
+      this.max.y = Math.min(this.max.y, y + MAX_SPAN_Y);
+    }
+    this.hasSurfaces = true;
+    this.liveFinished = true;
+    for (let i = 0; i < this.probeHitCount; i += 1) {
+      const dx = this.probeHits[i * 3] - x;
+      const dy = this.probeHits[i * 3 + 1] - y;
+      const dz = this.probeHits[i * 3 + 2] - z;
+      if (dx * dx + dy * dy + dz * dz < PROBE_HIT_MIN_SEP_M * PROBE_HIT_MIN_SEP_M) return;
+    }
+    const slot = this.probeHitCount < PROBE_HIT_CAPACITY
+      ? this.probeHitCount++
+      : this.probeCursor;
+    this.probeHits[slot * 3] = x;
+    this.probeHits[slot * 3 + 1] = y;
+    this.probeHits[slot * 3 + 2] = z;
+    if (this.probeHitCount >= PROBE_HIT_CAPACITY) this.probeCursor = (slot + 1) % PROBE_HIT_CAPACITY;
+    this.probeRevision += 1;
+  }
+
+  /** Distinct measured probe hits, oldest-first, as x/y/z triples. */
+  copyProbeHits(target: Float32Array): number {
+    const count = Math.min(this.probeHitCount, PROBE_HIT_CAPACITY);
+    const take = Math.min(count, Math.floor(target.length / 3));
+    const start = count < PROBE_HIT_CAPACITY ? 0 : this.probeCursor;
+    for (let i = 0; i < take; i += 1) {
+      const from = ((start + i) % PROBE_HIT_CAPACITY) * 3;
+      target[i * 3] = this.probeHits[from];
+      target[i * 3 + 1] = this.probeHits[from + 1];
+      target[i * 3 + 2] = this.probeHits[from + 2];
+    }
+    return take;
+  }
+
+  /**
+   * Copy mapped floor-cell centers (xz pairs + their lowest heights into
+   * the parallel array) for hit-backed puddle reseeds. Caps at
+   * FLOOR_CELL_COPY_MAX; returns the copied count.
+   */
+  copyMappedFloorCells(xz: Float32Array, heights: Float32Array): number {
+    if (!this.hasSurfaces || this.gridCols === 0) return 0;
+    const cells = this.gridCols * this.gridRows;
+    let occupied = 0;
+    for (let cell = 0; cell < cells; cell += 1) {
+      if (this.layerCounts[cell] > 0) occupied += 1;
+    }
+    const take = Math.min(occupied, FLOOR_CELL_COPY_MAX, Math.floor(xz.length / 2), heights.length);
+    let copied = 0;
+    let seen = 0;
+    for (let cell = 0; cell < cells && copied < take; cell += 1) {
+      if (this.layerCounts[cell] === 0) continue;
+      if (seen++ < Math.floor(copied * occupied / take)) continue;
+      const col = cell % this.gridCols;
+      const row = Math.floor(cell / this.gridCols);
+      xz[copied * 2] = this.gridMinX + (col + 0.5) * GRID_CELL;
+      xz[copied * 2 + 1] = this.gridMinZ + (row + 0.5) * GRID_CELL;
+      heights[copied] = this.layers[cell * LAYERS_PER_CELL];
+      copied += 1;
+    }
+    return copied;
   }
 
   /**
@@ -214,7 +399,7 @@ class RoomModel {
     this.reset();
   }
 
-  /** Allocate (or reuse) the height grid over the current min/max. */
+  /** Allocate (or reuse) the layered height grid over the current min/max. */
   private allocateGrid(): void {
     const spanX = Math.max(GRID_CELL, this.max.x - this.min.x);
     const spanZ = Math.max(GRID_CELL, this.max.z - this.min.z);
@@ -222,10 +407,14 @@ class RoomModel {
     this.gridRows = Math.max(1, Math.ceil(spanZ / GRID_CELL));
     this.gridMinX = this.min.x;
     this.gridMinZ = this.min.z;
-    if (this.grid.length !== this.gridCols * this.gridRows) {
-      this.grid = new Float32Array(this.gridCols * this.gridRows);
+    const cells = this.gridCols * this.gridRows;
+    if (this.layers.length !== cells * LAYERS_PER_CELL) {
+      this.layers = new Float32Array(cells * LAYERS_PER_CELL);
+      this.layerCounts = new Uint8Array(cells);
     }
-    this.grid.fill(Number.NaN);
+    this.layers.fill(Number.NaN);
+    this.layerCounts.fill(0);
+    this.liveFinished = false;
   }
 
   /**
@@ -248,13 +437,21 @@ class RoomModel {
     if (this.entryIndex >= this.entries.length) {
       this.building = false;
       this.entries = [];
-      // Knowledge without a single mapped cell is useless: fall back to the
-      // compact default volume rather than an empty detected box.
+      // A remap that yields no mapped cells restores the snapshot instead
+      // of zeroing wetness or orphaning the floor; only a first-ever empty
+      // scan falls back to the compact default volume.
       let mapped = false;
-      for (let i = 0; i < this.grid.length; i += 1) {
-        if (Number.isFinite(this.grid[i])) { mapped = true; break; }
+      for (let i = 0; i < this.layerCounts.length; i += 1) {
+        if (this.layerCounts[i] > 0) { mapped = true; break; }
       }
-      if (!mapped) this.reset();
+      if (mapped) {
+        this.probing = false;
+        this.clearProbeHits();
+        this.hasSurfaces = true;
+        this.liveFinished = true;
+        this.meshRevision += 1;
+        this.snapshotLive();
+      } else this.restoreSnapshot();
     }
     return this.building;
   }
@@ -275,14 +472,14 @@ class RoomModel {
         const ia = (entry.indices?.[this.geometryCursor] ?? this.geometryCursor) * 3;
         const ib = (entry.indices?.[this.geometryCursor + 1] ?? this.geometryCursor + 1) * 3;
         const ic = (entry.indices?.[this.geometryCursor + 2] ?? this.geometryCursor + 2) * 3;
-        this.triangleA.set(positions[ia], positions[ia + 1], positions[ia + 2]).applyMatrix4(entry.object.matrixWorld);
-        this.triangleB.set(positions[ib], positions[ib + 1], positions[ib + 2]).applyMatrix4(entry.object.matrixWorld);
-        this.triangleC.set(positions[ic], positions[ic + 1], positions[ic + 2]).applyMatrix4(entry.object.matrixWorld);
+        this.triangleA.set(positions[ia] + entry.offsetX, positions[ia + 1], positions[ia + 2] + entry.offsetZ).applyMatrix4(entry.object.matrixWorld);
+        this.triangleB.set(positions[ib] + entry.offsetX, positions[ib + 1], positions[ib + 2] + entry.offsetZ).applyMatrix4(entry.object.matrixWorld);
+        this.triangleC.set(positions[ic] + entry.offsetX, positions[ic + 1], positions[ic + 2] + entry.offsetZ).applyMatrix4(entry.object.matrixWorld);
         const a = this.triangleA, b = this.triangleB, c = this.triangleC;
         this.surfaceNormal.subVectors(b, a);
         this.triangleEdge.subVectors(c, a);
         this.surfaceNormal.cross(this.triangleEdge).normalize();
-        if (this.surfaceNormal.y < UPWARD_NORMAL_Y) {
+        if (Math.abs(this.surfaceNormal.y) < HORIZONTAL_NORMAL_Y) {
           this.geometryCursor += 3;
           continue;
         }
@@ -329,14 +526,47 @@ class RoomModel {
     return consumed;
   }
 
-  /** Keep the highest upward surface per grid cell. Returns false when out of range. */
+  /**
+   * Insert y into the cell's sorted layer list, merging near-equal heights.
+   * Accepts both windings: enclosed shells expose their lowest level as a
+   * downward face. Up to four distinct levels are retained; fuller cells
+   * use the bounded eviction policy below. Returns false when out of range.
+   */
   private record(x: number, y: number, z: number): boolean {
     const col = Math.floor((x - this.gridMinX) / GRID_CELL);
     const row = Math.floor((z - this.gridMinZ) / GRID_CELL);
     if (col < 0 || row < 0 || col >= this.gridCols || row >= this.gridRows) return false;
-    const index = row * this.gridCols + col;
-    const previous = this.grid[index];
-    if (!Number.isFinite(previous) || y > previous) this.grid[index] = y;
+    const cell = row * this.gridCols + col;
+    const base = cell * LAYERS_PER_CELL;
+    const count = this.layerCounts[cell];
+    for (let i = 0; i < count; i += 1) {
+      if (Math.abs(this.layers[base + i] - y) < LAYER_MERGE_M) return true;
+    }
+    if (count >= LAYERS_PER_CELL) {
+      // Cell full: keep the span representative. A new extreme evicts the
+      // far extreme (new low drops the high, new high drops the second-high
+      // so the lowest level survives); a mid height is dropped. No allocation.
+      const lo = this.layers[base];
+      const hi = this.layers[base + count - 1];
+      if (y < lo - LAYER_MERGE_M) {
+        for (let i = count - 1; i > 0; i -= 1) this.layers[base + i] = this.layers[base + i - 1];
+        this.layers[base] = y;
+      } else if (y > hi + LAYER_MERGE_M) {
+        // New highest: drop the second-highest, keeping the lowest level,
+        // the mid layers (tables), the old top, and the new top.
+        this.layers[base + count - 2] = this.layers[base + count - 1];
+        this.layers[base + count - 1] = y;
+      }
+      return true;
+    }
+    // Sorted insert into the bounded slot range.
+    let at = count;
+    while (at > 0 && this.layers[base + at - 1] > y) {
+      this.layers[base + at] = this.layers[base + at - 1];
+      at -= 1;
+    }
+    this.layers[base + at] = y;
+    this.layerCounts[cell] = count + 1;
     return true;
   }
 
@@ -376,40 +606,156 @@ class RoomModel {
     }
   }
 
+  private setFallbackBounds(): void {
+    const x = this.hasAnchor ? this.anchorPos.x : 0;
+    const z = this.hasAnchor ? this.anchorPos.z : 0;
+    this.min.set(x - FALLBACK_HALF_XZ, 0, z - FALLBACK_HALF_XZ);
+    this.max.set(x + FALLBACK_HALF_XZ, FALLBACK_HEIGHT, z + FALLBACK_HALF_XZ);
+  }
+
   private reset(): void {
-    if (this.hasAnchor) {
-      // Head-centered compact fallback: the mesh contributed no mappable
-      // surface, so seed around the viewer instead of the world origin.
-      this.min.set(this.anchorPos.x - FALLBACK_HALF_XZ, 0, this.anchorPos.z - FALLBACK_HALF_XZ);
-      this.max.set(this.anchorPos.x + FALLBACK_HALF_XZ, FALLBACK_HEIGHT, this.anchorPos.z + FALLBACK_HALF_XZ);
-    } else {
-      this.min.set(-FALLBACK_HALF_XZ, 0, -FALLBACK_HALF_XZ);
-      this.max.set(FALLBACK_HALF_XZ, FALLBACK_HEIGHT, FALLBACK_HALF_XZ);
-    }
+    this.setFallbackBounds();
+    this.probing = false;
     this.hasSurfaces = false;
     this.building = false;
+    this.liveFinished = false;
+    this.snapHas = false;
+    this.snapProbing = false;
+    this.snapCols = 0;
+    this.snapRows = 0;
     this.entries = [];
     this.entryIndex = 0;
     this.geometryCursor = 0;
     this.triangleReady = false;
-    this.grid = new Float32Array(0);
+    this.layers = new Float32Array(0);
+    this.layerCounts = new Uint8Array(0);
     this.gridCols = 0;
     this.gridRows = 0;
+    this.probeHitCount = 0;
+    this.probeCursor = 0;
+    this.probeRevision += 1;
+  }
+
+  /** Keep the servable grid before a refill: bulk copy, no allocation churn. */
+  private snapshotLive(): void {
+    if (!this.hasSurfaces || this.gridCols === 0 || !this.liveFinished) return;
+    if (this.snapLayers.length !== this.layers.length) {
+      this.snapLayers = new Float32Array(this.layers.length);
+      this.snapCounts = new Uint8Array(this.layerCounts.length);
+    }
+    this.snapLayers.set(this.layers);
+    this.snapCounts.set(this.layerCounts);
+    this.snapCols = this.gridCols;
+    this.snapRows = this.gridRows;
+    this.snapMinX = this.gridMinX;
+    this.snapMinZ = this.gridMinZ;
+    this.snapMin.copy(this.min);
+    this.snapMax.copy(this.max);
+    this.snapHas = true;
+    this.snapProbing = this.probing;
   }
 
   /**
-   * Highest detected surface at column (x, z) at or below `belowY`.
-   * Returns null outside the grid, over unmapped cells, or when the mapped
-   * surface is above the query point.
+   * A remap that yields nothing restores the snapshot volume instead of
+   * zeroing measured state; a first-ever empty scan keeps today's compact
+   * fallback (callers must still treat null columns as unmeasured).
+   */
+  private restoreSnapshot(): void {
+    if (!this.snapHas || this.snapCols === 0) {
+      // Probe hits live outside the mesh grid: an empty mesh remap with no
+      // finished snapshot keeps probe knowledge, not the fallback box.
+      if (this.probeHitCount > 0) return;
+      this.reset();
+      return;
+    }
+    if (this.layers.length !== this.snapLayers.length) {
+      this.layers = new Float32Array(this.snapLayers.length);
+      this.layerCounts = new Uint8Array(this.snapCounts.length);
+    }
+    this.layers.set(this.snapLayers);
+    this.layerCounts.set(this.snapCounts);
+    this.gridCols = this.snapCols;
+    this.gridRows = this.snapRows;
+    this.gridMinX = this.snapMinX;
+    this.gridMinZ = this.snapMinZ;
+    // The snapshot keeps the pre-remap volume including its sensed floor.
+    this.min.copy(this.snapMin);
+    this.max.copy(this.snapMax);
+    this.building = false;
+    this.entries = [];
+    this.liveFinished = true;
+    this.hasSurfaces = true;
+    this.probing = this.snapProbing;
+    if (this.hasAnchor && !this.contains(this.anchorPos)) {
+      // Keep old measured columns spatially keyed, but place the weather at
+      // the current viewer and allow fresh probes here.
+      this.setFallbackBounds();
+      this.allocateGrid();
+      this.hasSurfaces = false;
+      this.probing = false;
+      this.clearProbeHits();
+    }
+  }
+
+  /**
+   * Highest mapped layer at column (x, z) at or below `belowY`: a falling
+   * drop meets the table when above it, the lowest measured level once past
+   * it — generic layer pick, no ceiling heuristic. Serves the finished
+   * snapshot while a rebuild refills. Returns null outside the
+   * grid, over unmapped cells, or when every layer is above the query point.
    */
   surfaceHeightAt(x: number, z: number, belowY: number): number | null {
-    if (!this.hasSurfaces || this.gridCols === 0) return null;
-    const col = Math.floor((x - this.gridMinX) / GRID_CELL);
-    const row = Math.floor((z - this.gridMinZ) / GRID_CELL);
-    if (col < 0 || row < 0 || col >= this.gridCols || row >= this.gridRows) return null;
-    const height = this.grid[row * this.gridCols + col];
-    if (!Number.isFinite(height) || height > belowY) return null;
-    return height;
+    if (this.building && this.snapHas && this.floorLayerAt(x, z, this.snapLayers, this.snapCounts, this.snapCols, this.snapRows, this.snapMinX, this.snapMinZ) != null) {
+      return this.layerAtOrBelow(x, z, belowY, this.snapLayers, this.snapCounts, this.snapCols, this.snapRows, this.snapMinX, this.snapMinZ);
+    }
+    const live = this.hasSurfaces && this.gridCols > 0
+      ? this.layerAtOrBelow(x, z, belowY, this.layers, this.layerCounts, this.gridCols, this.gridRows, this.gridMinX, this.gridMinZ)
+      : null;
+    if (live != null) return live;
+    if (!this.snapHas || this.snapCols === 0) return null;
+    return this.layerAtOrBelow(x, z, belowY, this.snapLayers, this.snapCounts, this.snapCols, this.snapRows, this.snapMinX, this.snapMinZ);
+  }
+
+  /**
+   * Lowest mapped layer at column (x, z): the puddle level beneath tables
+   * and upper levels. Serves the finished snapshot while a rebuild refills.
+   * Returns null outside the grid or over unmapped cells; absence of a
+   * measured layer is not a ground elevation.
+   */
+  floorHeightAt(x: number, z: number): number | null {
+    if (this.building && this.snapHas) {
+      const finished = this.floorLayerAt(x, z, this.snapLayers, this.snapCounts, this.snapCols, this.snapRows, this.snapMinX, this.snapMinZ);
+      if (finished != null) return finished;
+    }
+    const live = this.hasSurfaces && this.gridCols > 0
+      ? this.floorLayerAt(x, z, this.layers, this.layerCounts, this.gridCols, this.gridRows, this.gridMinX, this.gridMinZ)
+      : null;
+    if (live != null) return live;
+    if (!this.snapHas || this.snapCols === 0) return null;
+    return this.floorLayerAt(x, z, this.snapLayers, this.snapCounts, this.snapCols, this.snapRows, this.snapMinX, this.snapMinZ);
+  }
+
+  private layerAtOrBelow(x: number, z: number, belowY: number, layers: Float32Array, counts: Uint8Array, cols: number, rows: number, minX: number, minZ: number): number | null {
+    const col = Math.floor((x - minX) / GRID_CELL);
+    const row = Math.floor((z - minZ) / GRID_CELL);
+    if (col < 0 || row < 0 || col >= cols || row >= rows) return null;
+    const cell = row * cols + col;
+    const base = cell * LAYERS_PER_CELL;
+    const count = counts[cell] ?? 0;
+    for (let i = count - 1; i >= 0; i -= 1) {
+      const height = layers[base + i];
+      if (height <= belowY) return height;
+    }
+    return null;
+  }
+
+  private floorLayerAt(x: number, z: number, layers: Float32Array, counts: Uint8Array, cols: number, rows: number, minX: number, minZ: number): number | null {
+    const col = Math.floor((x - minX) / GRID_CELL);
+    const row = Math.floor((z - minZ) / GRID_CELL);
+    if (col < 0 || row < 0 || col >= cols || row >= rows) return null;
+    const cell = row * cols + col;
+    if ((counts[cell] ?? 0) === 0) return null;
+    return layers[cell * LAYERS_PER_CELL];
   }
 }
 

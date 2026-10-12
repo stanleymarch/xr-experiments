@@ -7,6 +7,7 @@
 import { createSystem, Mesh, Vector3, XRMesh, XRPlane } from '@iwsdk/core';
 import type { Entity, Object3D } from '@iwsdk/core';
 import { roomModel } from '../room.js';
+import type { RoomSurfaceSource } from '../room.js';
 
 const headPosition = new Vector3();
 
@@ -22,6 +23,28 @@ type MeshSource = {
   vertices?: ArrayLike<number>;
   indices?: ArrayLike<number>;
 };
+
+/**
+ * Center of the reported plane polygon in surface-local meters. The
+ * framework uses an origin-centered box with the polygon's width/depth,
+ * discarding its extents center (createPlaneGeometry). Sampling and bounds
+ * add that center before the world transform, restoring the native plane
+ * position. A centered polygon yields ~0 (no-op).
+ */
+function planeCentroidXZ(polygon: readonly { x: number; y: number; z: number }[] | undefined): { x: number; z: number } {
+  if (polygon == null || polygon.length === 0) return { x: 0, z: 0 };
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+  for (const point of polygon) {
+    if (point.x < minX) minX = point.x;
+    if (point.x > maxX) maxX = point.x;
+    if (point.z < minZ) minZ = point.z;
+    if (point.z > maxZ) maxZ = point.z;
+  }
+  return { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2 };
+}
 
 
 /** Bounded stride sample; full mesh scans cost tens of millions of ops per
@@ -54,11 +77,11 @@ function geometrySignature(
     const geometry = object.geometry;
     const positions = geometry.getAttribute('position');
     if (positions != null) {
-      signature = mixSampled(signature, positions.array as ArrayLike<number>);
+      signature = mixSampled(signature, positions.array as unknown as ArrayLike<number>);
     }
     const indices = geometry.index;
     if (indices != null) {
-      signature = mixSampled(signature, indices.array as ArrayLike<number>);
+      signature = mixSampled(signature, indices.array as unknown as ArrayLike<number>);
     }
   }
   if (plane != null) {
@@ -123,12 +146,12 @@ export class RoomSensingSystem extends createSystem({
       for (const entity of this.tracked) {
         const object = entity.object3D;
         if (object == null) continue;
-        const plane = this.queries.planes.entities.has(entity)
-          ? (entity.getValue(XRPlane, '_plane') as PlaneSource | undefined)
-          : undefined;
-        const mesh = this.queries.meshes.entities.has(entity)
-          ? (entity.getValue(XRMesh, '_mesh') as MeshSource | undefined)
-          : undefined;
+        const isPlane = this.queries.planes.entities.has(entity);
+        const rawPlane: unknown = isPlane ? entity.getValue(XRPlane, '_plane') : undefined;
+        const plane = (rawPlane != null && typeof rawPlane === 'object' ? rawPlane : undefined) as PlaneSource | undefined;
+        const isMesh = this.queries.meshes.entities.has(entity);
+        const rawMesh: unknown = isMesh ? entity.getValue(XRMesh, '_mesh') : undefined;
+        const mesh = (rawMesh != null && typeof rawMesh === 'object' ? rawMesh : undefined) as MeshSource | undefined;
         const signature = geometrySignature(object, plane, mesh);
         const previous = this.signatures.get(entity);
         if (previous !== undefined && Number.isFinite(previous) && previous !== signature) {
@@ -165,10 +188,20 @@ export class RoomSensingSystem extends createSystem({
     roomModel.step();
   }
 
-  private currentObjects(): Object3D[] {
-    const objects: Object3D[] = [];
+  private currentObjects(): RoomSurfaceSource[] {
+    const objects: RoomSurfaceSource[] = [];
     for (const entity of this.tracked) {
-      if (entity.object3D != null) objects.push(entity.object3D);
+      const object = entity.object3D;
+      if (object == null) continue;
+      const source: RoomSurfaceSource = object;
+      if (this.queries.planes.entities.has(entity)) {
+        const raw: unknown = entity.getValue(XRPlane, '_plane');
+        const plane = (raw != null && typeof raw === 'object' ? raw : undefined) as PlaneSource | undefined;
+        const centroid = planeCentroidXZ(plane?.polygon);
+        source.offsetX = centroid.x;
+        source.offsetZ = centroid.z;
+      }
+      objects.push(source);
     }
     return objects;
   }

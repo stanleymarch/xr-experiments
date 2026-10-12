@@ -128,12 +128,12 @@ switch, presentation layer only:
 
 | Variable | Source field | Scene behavior |
 |---|---|---|
-| Rain | `precipitation` mm/h → `drivers.rain` | Instanced, head-facing streaks tilt with wind; square-root display-density scaling keeps light rain legible. Streaks are 14 mm wide with a chromatic-fringe core and dissipate with distance (`clamp(1.2/(1+0.3d)·e^(-fog·6d), 0.3, 1.2)`), so the near/far apparent-thickness ratio measures 3.0 instead of 1.0. Splash hits are a six-ray comb lifted 3 cm along the surface normal. Puddles require mapped floor cells. |
+| Rain | `precipitation` mm/h → `drivers.rain` | Instanced, head-facing streaks tilt with wind; square-root display-density scaling keeps light rain legible. Streaks are 14 mm wide with a chromatic-fringe core and dissipate with distance (`clamp(1.2/(1+0.3d)·e^(-fog·6d), 0.3, 1.2)`), so the near/far apparent-thickness ratio measures 3.0 instead of 1.0. Splash hits are a six-ray comb lifted 3 cm along the surface normal. Puddles use the lowest measured layer in each mapped column. |
 | Snow | `snowfall` cm/h → `drivers.snow` | Head-facing flakes drift under wind and settle for 1.2 s on mapped surfaces before recycling. Providers without snowfall use their snow weather code plus precipitation for visual classification only; the missing numeric snowfall still displays `--`. |
 | Wind | `wind_speed_10m`, `wind_direction_10m`, `wind_gusts_10m` | 120 advected ribbon streaks with riding seeds/leaves show mean flow; torn fibre bands replace the smooth tails, and gust excess intensifies flow and rain tilt. The shared vector maps meteorological “from” to world “to”; it is not north-aligned. |
 | Clouds / visibility | `cloud_cover`, `weather_code`, `relative_humidity_2m`, `visibility` | FogExp2 combines cloud, humidity and low-visibility/fog codes. One thick cloud slab ray-marches the shared 128×128 noise atlas vertically; the sample count is adaptive off a seeded frame-time EMA (4 samples only below 0.85 × 13.9 ms, 2 above 1.05 × 13.9 ms, each switch logged with the measured frame time). The dead flash branch is live again: a `WeatherEvent.Thunder` listener and the storm-hour schedule drive one Gaussian pulse that lifts sun/fill, thickens the fog and tints it. Dust motes are gated by the light shaft instead of pressure. |
 | Light shaft | `daylight`-derived sun + `cloud_cover` | One additive cone (1 draw call, 64 triangles) pins its apex to the sun and drives the shared beam uniforms every frame; rain brightness, wind fibres, snow gating, dust motes and the puddle specular all read the same beam, so the room has one light source instead of per-layer colours. |
-| Puddles | `rain` history + mapped floor cells | An analytic sky mirror, not a render target: noise-built water normal, `reflect(-V, n)` graded from horizon to zenith tone, one narrow beam specular and a rim fresnel that lifts alpha. No SSR, no full-screen pass. |
+| Puddles | `rain` history + lowest mapped horizontal layers | An analytic sky mirror, not a render target: noise-built water normal, `reflect(-V, n)` graded from horizon to zenith tone, one narrow beam specular and a rim fresnel that lifts alpha. Fourteen bounded patches grow with wetness; mapping updates preserve water. Real-depth occlusion hides water behind furniture. No SSR, no full-screen pass. |
 
 This intentionally requests the main hourly scene variables, not every
 Open-Meteo variable. UV/radiation, snow depth, daily sunrise/sunset, soil
@@ -196,11 +196,11 @@ the viewer (scene scale 0.18) and the rail at its placement described
 above; positions are not saved across sessions. Near and ray grab components
 use separate entities: the SDK installs only one grab handle per entity.
 
-The spatial `Место` / `Location` button swaps the panel to an equal-height
-city chooser: six preset cities in a 2-column grid, `Моё место` (auto:
+The spatial `Место` / `Location` button swaps the panel to a content-sized
+city chooser: six preset cities in a 2-column grid, `Найти меня` (auto:
 device/IP) and `Назад` (back). Tapping a city sets the manual location,
 closes the chooser, and reloads; the provenance line shows the result
-(e.g. `Tokyo (вручную)` then `Эфир: Open-Meteo`). The browser HUD keeps the
+(e.g. `Tokyo (вручную)`). Ready-state source/tutorial paragraphs are hidden. The browser HUD keeps the
 full row — preset select with a `Choose a city` placeholder, `lat, lon`
 entry, `Set`/`My location`. The location line always names the provenance:
 `55.86°, -4.25° (вручную)` for manual coordinates, `По IP (Berlin)` for
@@ -214,10 +214,10 @@ height (the Quest Browser window is ~587 px tall): the card is a flex
 column whose body scrolls while Reload / Enter AR / Exit live in a fixed
 footer outside the scroll area, so actions stay reachable and scrolled
 content can never sit under them. Compact tiers tighten rhythm below
-700 px and 560 px of height while keeping 44 px touch targets. The spatial
-panel keeps all utility controls
-(Reload / Location / RU / Exit) in one compact 4-button row of 80 px
-kit-floor buttons, centered on the 340 px panel.
+700 px and 560 px of height while keeping 48 px touch targets. The spatial
+panel uses two utility rows (Reload / Location, RU / Exit), 136-wide by
+48-high authored buttons, and content-driven height on its existing 340-wide
+surface. Timeline controls and Sandbox have separate rows with clear gutters.
 
 ## Typography
 
@@ -237,10 +237,18 @@ editor and application realms.
 Room sensing rasterizes triangle interiors into a 25 cm height grid, including
 the interiors of sparse four-vertex XR planes. Triangle setup and cell tests
 share a 4096-work-unit frame budget; large triangles resume across frames.
-Rain splashes and briefly settled snow use the highest upward-facing height
-in each cell. This is an approximation, not a rigid-body collision world.
-Puddles require mapped floor cells; ceiling clouds use bounds, not collisions.
-A floor-only scan still leaves precipitation-source height above the viewer.
+Each cell keeps up to four sorted horizontal layers, accepting either triangle
+winding and merging heights within 4 cm. Rain and settled snow query the highest
+layer below their current height; a room ceiling no longer replaces the floor
+or table. Additional levels can be discarded to keep storage/work bounded.
+This is an approximation, not a rigid-body collision world.
+
+Puddles anchor 3 cm above the lowest measured layer. This is not a semantic
+floor label: an incomplete column containing only furniture can place water on
+that furniture. Unmapped columns hide their patches; with no sensing at all,
+the documented fallback volume supplies the preview elevation. Mapping updates
+do not reset wetness. Ceiling clouds use bounds, not collisions; a floor-only
+scan still leaves precipitation-source height above the viewer.
 
 Without tracked planes/meshes, five persistent, capability-gated hit-test
 probes sample nearby floor/table cells every 0.5 s. The first hit does not
@@ -354,9 +362,9 @@ virtual depth from `modelViewMatrix * vec4(position, 1.0)` — the mesh origin f
 every instance of an `InstancedMesh`, and a silent no-op on a raw
 `ShaderMaterial`. `src/weather/depth-occlusion.ts` injects an equivalent but
 instance-correct test through `onBeforeCompile` (interpolated `gl_Position.xyw`,
-sampled per stereo view). Rain splashes and puddles stay unoccluded on purpose:
-they are decals anchored to the sampled real surface, where a depth test against
-that same surface would flicker them away.
+sampled per stereo view). Rain splashes and puddles use this same depth test:
+their 3 cm surface lift matches its bias, keeping contact water visible on its
+own sampled level while hiding it behind nearer furniture.
 
 Measured in IWER (`metaQuest3`, `living_room`), head at (0, 1.6, 0) aimed at the
 couch and table, ECS paused so both frames contain identical particles:
@@ -820,9 +828,10 @@ too and why this module owns its own decode.
   temperature/apparent temperature, precipitation/probability, snowfall,
   WMO code, humidity/daylight, wind/direction/gusts, clouds, pressure and
   visibility.
-- Surface reactions use a 25 cm sampled height grid, not rigid-body room
-  colliders. This IWER run did not have real room geometry; real floor
-  puddle placement and Quest/Android surface sensing remain hardware checks.
+- Surface reactions use a bounded, layered 25 cm sampled grid, not rigid-body
+  room colliders. The supplied IWER living-room mesh now verifies floor/table
+  selection and water rendering; real Quest/Android surface coverage still
+  requires hardware validation.
 
 Physical Quest 3 passthrough, Android browser behavior/permissions, surface
 coverage, comfort, and standalone performance remain unverified. IWER does not
@@ -908,11 +917,11 @@ before the weather visuals at 30.5-36.5):
   strip is pinned back to rest each held frame so a grab can never drag it out
   of place. The ray and knob paths are unchanged and stay absolute.
 
-Sandbox mode is a store flag with a `SandboxToggle` event; its switch is the
-panel's existing hint row (runtime name `weather-toggle-sandbox`), which flips
-its text and colour instead of adding a new UIKitML control. Gaze tracking is
-deliberately not enabled: it is an optional descriptor, and gaze+pinch would be
-an add-on to the strip rather than a required path.
+Sandbox mode is a store flag with a `SandboxToggle` event. Its existing
+`sandbox-button` (`weather-toggle-sandbox`) changes text and colour; permanent
+instruction paragraphs have been removed from the main panel. Gaze tracking
+is deliberately not enabled: it is an optional descriptor, and gaze+pinch
+would be an add-on to the strip rather than a required path.
 
 ### Hands wave verification (2026-10-10, managed IWER, by query)
 
@@ -1122,3 +1131,48 @@ the emulator API can set — it exposes one pose per controller, while the SDK's
 grab sphere follows the grip space, so the strip's relative-scrub mapping is
 covered by review and typecheck only and needs a headset or an emulator that
 exposes the grip pose.
+
+### Panel and rain-floor repair acceptance (2026-10-11)
+
+- Removed permanent tutorial/source paragraphs from both main panels. Loading,
+  demo, stale-data, out-of-coverage and XR failure notices remain contextual.
+  The spatial footer is two rows, not four cramped buttons across one row;
+  the city picker no longer applies horizontal padding twice.
+- Actual IWER controller rays exercised back/forward/NOW, Sandbox on/off,
+  EN/RU, location-picker open/back, Reload, Exit and browser re-entry. Named
+  state confirmed the transitions; Russian picker/footer buttons were visible
+  and unclipped at 136 x 48 authored units.
+- Reproduced the missing-water failure: all 14 puddle columns previously
+  returned no surface below the room top. After the layered-grid fix, 10
+  columns resolve the emulated floor at approximately -0.00432 m and water
+  rests at +0.02568 m; four unmapped columns stay hidden. Sampled table columns
+  return ~0.795 m above the table and the lower floor below it.
+- A synthetic daytime-rain scenario, explicitly labelled DEMO, produced
+  2,490 streaks and 48 active contacts after 120 frames at 0.05 s. Water wetness
+  reached 0.2268 and the measured patch radius was 0.2889 m. A full mapping
+  rebuild preserved wetness (0.2304 -> 0.4602), rather than draining it.
+  Real ray input to +12 h stopped rain and contacts while retaining wet water.
+- Frozen app-only captures isolate actual render contributions: depth on/off
+  changes 5,657 pixels, and hiding only puddles changes 1,055 pixels (979 in the
+  lower half), using a maximum-channel difference threshold of 8/255. The
+  existing rain depth path remains enabled; puddles now use it too. These
+  emulated-room measurements do not prove real-headset silhouettes.
+- Unframed browser checks at 390 x 844 and 384 x 500 found no horizontal
+  overflow, reachable footer actions and >=48 px visible touch controls.
+  Back/NOW, expand/collapse and language switching were exercised. The compact
+  card measured 366 x 416.6 px on the Russian phone view and 340 x 378 px in the
+  minimum English window.
+- Evidence: `artifacts/ui-runtime-review.jpg`, `panel-repaired-ru.png`,
+  `rain-floor-depth-on.png`, `rain-floor-depth-off.png`,
+  `rain-floor-without-water.png`, `phone-390x844.png`, `phone-384x500.png` and
+  `repair-smoke.json`. Original real weather was restored, temporary runtime
+  state removed, depth re-enabled and ECS resumed.
+- Final runtime log capture contains no error entries or missing UIKit class
+  warnings. Existing emulator warnings remain: resizing while XR is presenting
+  and ANGLE X4000 for `f_wrDepthUv`. The live depth probe resolves inverse-unit
+  depth (center approximately 1.79 m); no warning was suppressed.
+- Final `npm run typecheck && npm run build` passed. Vite retains dependency
+  annotation and large-bundle warnings; this repair does not change bundling.
+
+Physical Quest room scanning, passthrough-water contrast, furniture silhouettes
+and Android hardware behavior remain unverified by this repair.

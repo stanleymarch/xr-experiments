@@ -1,10 +1,10 @@
 /**
  * WEATHER//ROOM real-world depth occlusion for the app's custom shader
- * materials.
- *
- * Why this exists next to the framework's `DepthOccludable`: the framework
- * injects its depth test into three's built-in material shaders (it anchors on
- * `#include <fog_vertex>`, `uniform vec3 diffuse;` and
+ * materials. Strictly optional: depth-sensing is requested non-required, so
+ * a hit-test-only Android session enters AR with no occlusion while measured
+ * rain contacts and puddles still work. Never tag the weather InstancedMeshes
+ * with the framework `DepthOccludable`: it injects into built-in material
+ * shaders (anchoring on `#include <fog_vertex>`, `uniform vec3 diffuse;` and
  * `vec4 diffuseColor = vec4( diffuse, opacity );`) and derives the virtual
  * fragment depth from `modelViewMatrix * vec4(position, 1.0)`. For an
  * `InstancedMesh` that expression is the mesh origin, identical for every

@@ -37,7 +37,8 @@ export class WeatherAudioSystem extends createSystem({}) {
   private windGain: GainNode | null = null;
   private rainLevel = 0;
   private windLevel = 0;
-
+  /** Seconds since the last accepted Gust event; swells the wind bed. */
+  private gustAgeS = Number.POSITIVE_INFINITY;
   /**
    * The AudioContext is created suspended and resumed on the first user
    * gesture. Desktop unlocks on window pointerdown; immersive VR never gets
@@ -65,6 +66,10 @@ export class WeatherAudioSystem extends createSystem({}) {
       () => window.removeEventListener('pointerdown', unlock),
       unsubscribeVisible,
       weatherEvents.on(WeatherEvent.Thunder, () => this.rumble()),
+      // Gust is the single whoosh owner: gesture sweeps and UI buttons emit
+      // the event, this listener answers — never the emitter, so the paths
+      // cannot double-play. The wind bed also swells briefly (update below).
+      weatherEvents.on(WeatherEvent.Gust, (detail: unknown) => this.gustWhoosh(detail)),
       weatherEvents.on(WeatherEvent.TimelineGrab, () => this.tick(520, 0.05, 0.03)),
       weatherEvents.on(WeatherEvent.TimelineSnap, () => {
         this.tick(660, 0.06, 0.03);
@@ -141,15 +146,19 @@ export class WeatherAudioSystem extends createSystem({}) {
   }
 
   update(delta: number): void {
+    if (this.gustAgeS < 30) this.gustAgeS += Math.min(delta, 0.1);
     if (this.rainGain == null || this.windGain == null || this.ctx == null) return;
     if (this.ctx.state !== 'running') return;
     const current = weatherStore.current();
     const rain = current?.drivers.rain ?? 0;
-    // Wind bed follows mean flow with a floor so calm hours stay quiet.
+    // Wind bed follows mean flow with a floor so calm hours stay quiet —
+    // plus a brief swell after each accepted gust so the wave is heard even
+    // in calm weather (decays ~1.2 s, matching the gust envelope's tail).
     const wind = Math.min(1, ((current?.drivers.wind ?? 0) - 0.05) / 0.95);
+    const gustSwell = this.gustAgeS < 1.2 ? (1 - this.gustAgeS / 1.2) * 0.55 : 0;
     const ease = Math.min(1, delta * 1.5);
     this.rainLevel += (rain - this.rainLevel) * ease;
-    this.windLevel += (Math.max(0, wind) - this.windLevel) * ease;
+    this.windLevel += (Math.max(0, Math.min(1, wind + gustSwell)) - this.windLevel) * ease;
     this.rainGain.gain.value = this.rainLevel * 0.22;
     this.windGain.gain.value = this.windLevel * 0.3;
   }
@@ -171,24 +180,90 @@ export class WeatherAudioSystem extends createSystem({}) {
     osc.stop(t + seconds + 0.05);
   }
 
-  /** Thunder rumble: crack + decaying low rumble under the visual flash. */
+  /**
+   * Thunder rumble: a satisfying low attack with a rolling tail. The onset
+   * crack lands ~90 ms after the accepted action (lightning first, thunder
+   * just behind it — the purposeful separation), then brown noise rolls
+   * through a falling lowpass for ~2.6 s with two restrike swells riding the
+   * decay, mirroring the visual envelope's tail. Reuses the 2 s looped brown
+   * buffer (playbackRate drift keeps the tail from looping audibly); only
+   * the per-strike nodes (source/filter/envelope) are created transiently.
+   */
   private rumble(): void {
     const ctx = this.ensureContext();
     if (ctx == null || ctx.state !== 'running' || this.master == null) return;
-    const t = ctx.currentTime;
+    // Purposeful lightning/rumble separation: the discharge flashes first.
+    const t = ctx.currentTime + 0.09;
     const brown = makeNoiseBuffer(ctx, true);
     const source = ctx.createBufferSource();
     source.buffer = brown;
+    source.loop = true;
+    source.playbackRate.value = 0.55;
     const lowpass = ctx.createBiquadFilter();
     lowpass.type = 'lowpass';
-    lowpass.frequency.setValueAtTime(900, t);
-    lowpass.frequency.exponentialRampToValueAtTime(90, t + 1.8);
+    lowpass.Q.value = 0.6;
+    lowpass.frequency.setValueAtTime(1400, t);
+    lowpass.frequency.exponentialRampToValueAtTime(320, t + 0.12);
+    lowpass.frequency.exponentialRampToValueAtTime(70, t + 2.4);
     const env = ctx.createGain();
     env.gain.setValueAtTime(0.0001, t);
-    env.gain.exponentialRampToValueAtTime(0.5, t + 0.04);
-    env.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
+    // Attack: fast but not a click (8 ms), then the rolling decay.
+    env.gain.exponentialRampToValueAtTime(0.65, t + 0.05);
+    env.gain.exponentialRampToValueAtTime(0.28, t + 0.4);
+    // Two restrike swells riding the tail, matching the visual shimmer.
+    env.gain.exponentialRampToValueAtTime(0.34, t + 0.62);
+    env.gain.exponentialRampToValueAtTime(0.14, t + 1.1);
+    env.gain.exponentialRampToValueAtTime(0.17, t + 1.45);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 2.6);
     source.connect(lowpass).connect(env).connect(this.master);
     source.start(t);
-    source.stop(t + 2.3);
+    source.stop(t + 2.7);
+    // Sub weight: one low sine drop under the crack so small speakers feel it.
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(68, t);
+    sub.frequency.exponentialRampToValueAtTime(34, t + 0.8);
+    const subEnv = ctx.createGain();
+    subEnv.gain.setValueAtTime(0.0001, t);
+    subEnv.gain.exponentialRampToValueAtTime(0.3, t + 0.03);
+    subEnv.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+    sub.connect(subEnv).connect(this.master);
+    sub.start(t);
+    sub.stop(t + 1.2);
+  }
+
+  /**
+   * Gust whoosh: the single audible answer to an accepted sweep (gesture or
+   * UI button). Brightness and level track the accepted strength; the swell
+   * starts on the event, not the motion, so the feedback lands with the wake.
+   */
+  private gustWhoosh(detail: unknown): void {
+    this.gustAgeS = 0;
+    let level = 0.7;
+    if (detail != null && typeof detail === 'object' && 'strength' in detail) {
+      const candidate = detail.strength;
+      if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+        level = Math.min(1, Math.max(0.25, candidate));
+      }
+    }
+    const ctx = this.ensureContext();
+    if (ctx == null || ctx.state !== 'running' || this.master == null) return;
+    const t = ctx.currentTime;
+    const white = makeNoiseBuffer(ctx, false);
+    const source = ctx.createBufferSource();
+    source.buffer = white;
+    source.loop = true;
+    const bandpass = ctx.createBiquadFilter();
+    bandpass.type = 'bandpass';
+    bandpass.Q.value = 1.1;
+    bandpass.frequency.setValueAtTime(500 + level * 500, t);
+    bandpass.frequency.exponentialRampToValueAtTime(240, t + 0.55);
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(0.1 + level * 0.22, t + 0.09);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+    source.connect(bandpass).connect(env).connect(this.master);
+    source.start(t);
+    source.stop(t + 0.8);
   }
 }

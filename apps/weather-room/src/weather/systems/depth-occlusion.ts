@@ -31,9 +31,11 @@
  * geometric occlusion still requires a rendered furniture/floor check.
  *
  * Degradation: outside XR the uniforms stay disabled and nothing is logged;
- * inside XR without the `depth-sensing` grant (denied Spatial permission, or a
- * runtime that cannot supply depth) one warning is logged per session and the
- * room renders exactly as it did before depth occlusion existed.
+ * inside XR without the `depth-sensing` grant (denied Spatial permission, a
+ * runtime that cannot supply depth, or a hit-test-only Android session under
+ * the single-preference GPU-float32 config) one warning is logged per session
+ * and the room renders exactly as it did before depth occlusion existed —
+ * measured rain contacts and puddles keep working.
  */
 
 import { createSystem, DepthTextures } from '@iwsdk/core';

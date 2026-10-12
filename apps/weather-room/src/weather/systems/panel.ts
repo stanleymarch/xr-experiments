@@ -1,8 +1,8 @@
 /**
- * Panel system: weather hero, selected time, key values and honest source
- * status; explicit sandbox, location and XR controls. Text pushes are
- * throttled to 2 Hz and deduplicated. Initial placement is once per session;
- * handheld screen AR uses native DOM controls instead of this spatial panel.
+ * Panel system: weather hero, place/time, timeline, sandbox, location and XR
+ * controls. Status shows only when actionable (loading/error/stale/demo).
+ * Text pushes are throttled to 2 Hz and deduplicated. Initial placement is
+ * once per session; handheld screen AR uses native DOM controls instead.
  */
 
 import {
@@ -42,6 +42,9 @@ import {
   weatherCodeName,
 } from '../i18n.js';
 import { PROVIDER_DISPLAY } from '../providers.js';
+// VFX-owned explicit triggers (sandbox-gust.ts slice lands them; lead
+// typechecks after integration). Buttons never emit events directly.
+import { trySandboxGust, trySandboxThunder } from '../sandbox-gust.js';
 import { LOCATION_PRESETS, setManualLocation } from '../weather-data.js';
 import { reloadWeather } from './weather-loader.js';
 import { PanelMoveGrip } from '../components/timeline-handle.js';
@@ -146,15 +149,21 @@ export class PanelSystem extends createSystem({
   private readonly probeTargets: Object3D[] = [];
   /** Panel scene entity carrying PokeInteractable for touch input. */
   private pokeEntity: Entity | null = null;
+  private pokeImpulse: ContactImpulse | null = null;
   /** Raw pill element, the anchor for the poke impulse flash. */
   private modeElement: Object3D | null = null;
   private sandboxElement: Object3D | null = null;
-  /** Sandbox button + hint rows as text lines for the toggle copy. */
+  /** Sandbox button text line for the toggle copy. */
   private sandboxButtonEl: TextLine | null = null;
   private sandboxLabelEl: TextLine | null = null;
+  /** Two-row gesture guidance shown only while sandbox is ON. */
   private sandboxHintEl: TextLine | null = null;
-  /** Paired visual for poke presses and sandbox flips. */
-  private pokeImpulse: ContactImpulse | null = null;
+  /** Transient accepted-action answer (Thunder!/Gust!), hidden otherwise. */
+  private sandboxNoteEl: TextLine | null = null;
+  private actionNoteUntil = -1;
+  /** Controller-mode explicit triggers (VFX helper-gated), hidden for hands. */
+  private sandboxActionsEl: UIKitComponent | null = null;
+  private sandboxControllers: boolean | null = null;
   /** Poke/ray press flash on the pill: 0 = idle, seconds since start. */
   private pressFlashT = -1;
   private wasPressed = false;
@@ -206,6 +215,8 @@ export class PanelSystem extends createSystem({
     this.sandboxButtonEl = asTextLine(panel.getElementById('sandbox-button'));
     this.sandboxLabelEl = asTextLine(panel.getElementById('sandbox-label'));
     this.sandboxHintEl = asTextLine(panel.getElementById('sandbox-hint'));
+    this.sandboxNoteEl = asTextLine(panel.getElementById('sandbox-note'));
+    this.sandboxActionsEl = panel.getElementById('sandbox-actions');
     this.pokeImpulse = new ContactImpulse(this.world, POKE_IMPULSE_COLOR, 'Panel Poke Impulse');
     this.cleanupFuncs.push(
       () => {
@@ -313,6 +324,32 @@ export class PanelSystem extends createSystem({
     };
     sandboxToggle.addEventListener('click', toggleSandbox);
     this.cleanupFuncs.push(() => sandboxToggle.removeEventListener('click', toggleSandbox));
+    // Controller-mode explicit triggers: never emit directly — the VFX
+    // helpers are sandbox-gated, emit the canonical events, and drive the
+    // same lightning/rumble/wake as gestures (no duplicated whoosh/haptic
+    // here). Hands never see these buttons; they keep gesture guidance.
+    const thunderButton = panel.getElementById('thunder-button');
+    if (thunderButton != null) thunderButton.name = 'weather-sandbox-thunder';
+    const triggerThunder = () => {
+      tick();
+      trySandboxThunder('ui');
+    };
+    thunderButton?.addEventListener('click', triggerThunder);
+    const gustButton = panel.getElementById('gust-button');
+    if (gustButton != null) gustButton.name = 'weather-sandbox-gust';
+    const triggerGust = () => {
+      tick();
+      const head = this.world.player.head;
+      head.updateWorldMatrix(true, false);
+      const dir = new Vector3(0, 0, -1).applyQuaternion(head.quaternion);
+      const len = Math.hypot(dir.x, dir.z);
+      trySandboxGust(1, len > 1e-4 ? dir.x / len : 0, len > 1e-4 ? dir.z / len : -1, 'ui');
+    };
+    gustButton?.addEventListener('click', triggerGust);
+    this.cleanupFuncs.push(
+      () => thunderButton?.removeEventListener('click', triggerThunder),
+      () => gustButton?.removeEventListener('click', triggerGust),
+    );
     if (exitButton != null && this.world.xrEnabled) {
       exitButton.name = 'weather-exit-xr';
       const exitXR = () => {
@@ -334,6 +371,7 @@ export class PanelSystem extends createSystem({
       // next update() push goes through even when the weather is unchanged.
       onLanguageChange(() => {
         this.lastText = '';
+        this.applySandboxState(weatherStore.state.peek().sandbox);
         this.applyStaticLabels(panel);
         this.lastPushAt = -PANEL_PUSH_INTERVAL_S;
       }),
@@ -360,6 +398,16 @@ export class PanelSystem extends createSystem({
         }
         this.lastText = '';
         this.lastPushAt = -PANEL_PUSH_INTERVAL_S;
+      }),
+      // Accepted sandbox actions (gesture or controller-helper path): one
+      // transient answer line, no tutorial wall. The Gust name is
+      // VFX-owned; the literal matches their contract until both slices
+      // integrate (lead typechecks after).
+      weatherEvents.on(WeatherEvent.Thunder, () => {
+        this.showActionFeedback(t('sandboxThunderDone'));
+      }),
+      weatherEvents.on(WeatherEvent.Gust, () => {
+        this.showActionFeedback(t('sandboxGustDone'));
       }),
     );
     this.applyStaticLabels(panel);
@@ -571,6 +619,16 @@ export class PanelSystem extends createSystem({
     if (this.snapFlashT > 0.45) this.snapFlashT = -1;
     this.pokeImpulse?.update(dt);
     this.pushPillBackground();
+    // Transient action answer expires on wall-clock time, independent of
+    // the 2 Hz text throttle below.
+    if (this.actionNoteUntil >= 0 && performance.now() >= this.actionNoteUntil) {
+      this.actionNoteUntil = -1;
+      this.sandboxNoteEl?.setProperties({ text: '', display: 'none' });
+    }
+    const controllers = this.hasControllers();
+    if (controllers !== this.sandboxControllers) {
+      this.applySandboxState(weatherStore.state.peek().sandbox, controllers);
+    }
     if (this.statusEl == null || this.valuesEl == null || this.playheadEl == null) return;
     if (time - this.lastPushAt < PANEL_PUSH_INTERVAL_S && this.snapFlashT < 0) return;
     const lang = getLanguage();
@@ -590,7 +648,7 @@ export class PanelSystem extends createSystem({
       this.valuesEl.setProperties({ text: t('missingValue') });
       this.pushStatus(
         status.kind === 'loading' ? `${t('loadingPrefix')}${localizeLoadingLabel(status.label, lang)}` : t('statusLoading'),
-        status.kind === 'loading' ? t('statusWaiting') : t('missingValue'),
+        t('statusLocating'),
       );
       this.lastPushAt = time;
       return;
@@ -610,22 +668,23 @@ export class PanelSystem extends createSystem({
       providerDisplay !== '' && (status.kind === 'loading' || status.kind === 'locating')
         ? ` · ${providerDisplay}`
         : '';
-    // Keep provider/fallback provenance in one secondary line.
-    const statusText =
-      status.kind === 'demo' || demoDataset
+    // Ready is silent: the pill, hero and place/time already carry the state.
+    // Only loading, locating, demo, stale and out-of-coverage write a notice.
+    const needsNotice =
+      status.kind !== 'ready' || demoDataset || frame.stale || frame.outOfCoverage;
+    const statusText = !needsNotice
+      ? ''
+      : status.kind === 'demo' || demoDataset
         ? `${t('statusDemoSynthetic')}${staleSuffix}`
-          : status.kind === 'ready'
-            ? `${sourceStatus(providerDisplay, staleSuffix, lang)}`
-            : status.kind === 'loading'
-              ? `${t('loadingPrefix')}${localizeLoadingLabel(status.label, lang)}`
-              : status.kind === 'locating'
-                ? t('statusLocating')
-                : t('statusReady');
+          : status.kind === 'loading'
+            ? `${t('loadingPrefix')}${localizeLoadingLabel(status.label, lang)}${providerToken}`
+            : status.kind === 'locating'
+              ? `${t('statusLocating')}${providerToken}`
+              : `${sourceStatus(providerDisplay, staleSuffix, lang)}${frame.outOfCoverage ? t('beyondSuffixPipe') : ''}`;
     const locationText =
       dataset != null
         ? localizePlaceLabel(dataset.label.split(' · ').slice(1).join(' · ') || dataset.label, lang)
         : (status.kind === 'loading' ? t('statusRequestingLocation') : t('missingValue'));
-    const secondaryText = `${statusText}${providerToken}${frame.outOfCoverage ? t('beyondSuffixPipe') : ''}`;
     const at = playheadTime(dataset!, playheadHours, new Date());
     const clock = `${at.getHours() < 10 ? `0${at.getHours()}` : at.getHours()}:${at.getMinutes() < 10 ? `0${at.getMinutes()}` : at.getMinutes()}`;
     const deltaLabel = isLive
@@ -641,34 +700,43 @@ export class PanelSystem extends createSystem({
     // 0.8-1.2 m in both languages (Russian runs longer).
     const heroText =
       `${valueOrDash(frame.temperatureC, (n) => n.toFixed(1), '°C')} · ${weatherCode}`;
-    const valuesText =
+    // Two bounded rows (rain / wind) instead of one long line: RU pressure
+    // and gust copy can no longer collide with the status or sandbox rows.
+    const rainText =
       `${t('rain')} ${valueOrDash(frame.precipitationMm, (n) => n.toFixed(1), 'mm/h')} ` +
-      `(${valueOrDash(frame.precipitationProbabilityPct, (n) => String(Math.round(n)), '%')})\n` +
+      `(${valueOrDash(frame.precipitationProbabilityPct, (n) => String(Math.round(n)), '%')})`;
+    const windText =
       `${t('wind')} ${valueOrDash(frame.windSpeedKmh, (n) => String(Math.round(n)), `km/h${compass}`)}`;
+    const valuesText = `${rainText}\n${windText}`;
     const modeText = demoDataset || status.kind === 'demo' ? t('badgeDemo') : t('badgeLive');
     this.pillBase = demoDataset || status.kind === 'demo' ? PILL_BASE_DEMO : PILL_BASE_LIVE;
-    const combined = `${lang}|${secondaryText}|${locationText}|${deltaLabel}|${heroText}|${valuesText}|${modeText}`;
+    const combined = `${lang}|${statusText}|${locationText}|${deltaLabel}|${heroText}|${valuesText}|${modeText}`;
     if (combined === this.lastText) return;
     this.lastText = combined;
     this.lastPushAt = time;
     // The pill surface (base/hover/flash) is owned by pushPillBackground,
     // which runs every frame; only the text rides the 2 Hz push.
     this.modeEl?.setProperties({ text: modeText });
-    this.statusEl.setProperties({ text: secondaryText });
     this.locationEl?.setProperties({ text: locationText });
     this.pickerLocationEl?.setProperties({ text: locationText });
     this.playheadEl.setProperties({ text: deltaLabel });
     this.heroEl?.setProperties({ text: heroText });
     this.valuesEl.setProperties({ text: valuesText });
+    this.statusEl.setProperties({ text: statusText, display: statusText === '' ? 'none' : 'flex' });
     const panel = this.world.getSceneObject<UIKitMLAsset>('weather-panel');
-    if (panel != null) this.applyStaticLabels(panel);
+    if (panel != null) {
+      // Hint copy + controller-row visibility follow language and input
+      // mode; the answer line is transient, so it never joins the dedupe.
+      this.applySandboxState(weatherStore.state.peek().sandbox);
+      this.applyStaticLabels(panel);
+    }
   }
 
   private pushStatus(statusText: string, locationText: string): void {
     const combined = `${getLanguage()}|${statusText}|${locationText}`;
     if (combined === this.lastText) return;
     this.lastText = combined;
-    this.statusEl?.setProperties({ text: statusText });
+    this.statusEl?.setProperties({ text: statusText, display: statusText === '' ? 'none' : 'flex' });
     this.locationEl?.setProperties({ text: locationText });
     this.pickerLocationEl?.setProperties({ text: locationText });
   }
@@ -691,10 +759,14 @@ export class PanelSystem extends createSystem({
 
   /**
    * Sandbox toggle state: labelled Button text flips OFF/ON (whole button
-   * repaints via variant + background), the hint line keeps the gesture
-   * instructions in both languages. Everything reads from the dictionary.
+   * repaints via variant + background). OFF is clean (no hint, no actions,
+   * no note); ON shows the succinct two-row tutorial, the transient answer
+   * line, and — controller mode only — the explicit Thunder/Gust buttons.
+   * Controller grips never clash: their motion path (grip-sweep / strike)
+   * needs no buttons, so prompts never ask two controllers to touch.
    */
-  private applySandboxState(on: boolean): void {
+  private applySandboxState(on: boolean, controllers = this.hasControllers()): void {
+    this.sandboxControllers = controllers;
     const label = this.sandboxLabelEl ?? this.sandboxButtonEl;
     label?.setProperties({ text: on ? t('sandboxOn') : t('sandboxOff') });
     this.sandboxButtonEl?.setProperties({
@@ -702,10 +774,36 @@ export class PanelSystem extends createSystem({
       backgroundColor: on ? SANDBOX_BG_ON : SANDBOX_BG_OFF,
       color: on ? SANDBOX_TEXT_ON : SANDBOX_TEXT_OFF,
     });
-    this.sandboxHintEl?.setProperties({ text: on ? t('sandboxHintOn') : t('sandboxHint') });
+    this.sandboxHintEl?.setProperties({
+      text: on ? t(controllers ? 'sandboxControllers' : 'sandboxHands') : '',
+      display: on ? 'flex' : 'none',
+    });
+    this.sandboxActionsEl?.setProperties({ display: on && controllers ? 'flex' : 'none' });
+    if (!on) this.sandboxNoteEl?.setProperties({ text: '', display: 'none' });
   }
 
-  /** Static button/hint labels (markup defaults are English-only). */
+  /** True when any tracked-pointer source is a controller (no hand joints). */
+  private hasControllers(): boolean {
+    const session = this.world.xrSession;
+    if (session == null) return false;
+    for (const source of session.inputSources) {
+      if (source.targetRayMode !== 'tracked-pointer') continue;
+      if (source.hand == null && (source.handedness === 'left' || source.handedness === 'right')) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Transient accepted-action answer: Thunder!/Gust! for ~2.5 s of wall
+   * time, then hidden. Sandbox-gated so stray events never paint text.
+   */
+  private showActionFeedback(text: string): void {
+    if (!weatherStore.state.peek().sandbox) return;
+    this.sandboxNoteEl?.setProperties({ text, display: 'flex' });
+    this.actionNoteUntil = performance.now() + 2500;
+  }
+
+  /** Static button labels (markup defaults are English-only). */
   private applyStaticLabels(panel: UIKitMLAsset): void {
     const setLabel = (id: string, text: string): void => {
       const node = panel.getElementById(id);
@@ -719,10 +817,10 @@ export class PanelSystem extends createSystem({
     setLabel('reload-label', t('reload'));
     setLabel('exit-label', t('exit'));
     setLabel('lang-label', t('langName'));
-    this.applySandboxState(weatherStore.state.peek().sandbox);
     setLabel('location-label', t('locationLabelPrefix'));
+    setLabel('thunder-label', t('sandboxThunder'));
+    setLabel('gust-label', t('sandboxGust'));
     setLabel('location-picker-title', t('locationChoose'));
-    setLabel('location-picker-hint', t('locationPickerHint'));
     setLabel('location-auto-label', t('locationClear'));
     setLabel('location-back-label', t('locationBack'));
     for (const preset of LOCATION_PRESETS) {
@@ -732,13 +830,9 @@ export class PanelSystem extends createSystem({
     }
     const busy = weatherStore.state.peek().status.kind === 'loading' || weatherStore.state.peek().status.kind === 'locating';
     panel.requireElementById('reload-button').setProperties({ disabled: busy });
-    // The label never grows: the busy wording ("Loading…" / "Загрузка…") is the
-    // longest string this panel can write and the 80 px utility box is sized for
-    // "Reload" / "Обновить", while the four-column row (4 x 80 px + margins in a
-    // 340 px panel) has no width left to grow. The busy state is carried by the
-    // disabled styling (already applied above) plus the status line, so the
-    // label always fits its box and never reflows.
+    // The Reload label never changes: the busy state rides the disabled
+    // styling plus the status notice, so the 136 px footer button never
+    // reflows under longer RU copy.
     setLabel('reload-label', t('reload'));
-    setLabel('timeline-hint', t('timelineHint'));
   }
 }

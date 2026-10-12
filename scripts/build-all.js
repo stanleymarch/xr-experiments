@@ -15,7 +15,7 @@ const siteDir = path.join(root, '_site')
 const isDir = (p) => fs.existsSync(p) && fs.statSync(p).isDirectory()
 
 // Files that stay in the repo but must not ship to the site.
-const SITE_FILTER = (src) => !/(?:^|[\\/])(?:README\.md|exp\.json)$/.test(src)
+const SITE_FILTER = (src) => !/(?:^|[\\/])(?:README\.md|exp\.json|AGENTS\.md|\.omp|\.agents)(?:[\\/]|$)/.test(src)
 
 function listWall() {
   if (!isDir(wallDir)) return []
@@ -111,7 +111,7 @@ function assemble(wallNames, appNames) {
   for (const name of appNames) {
     const dist = path.join(appsDir, name, 'dist')
     if (!isDir(dist)) throw new Error(`IWSDK app "${name}" produced no dist/`)
-    fs.cpSync(dist, path.join(siteDir, 'iwsdk', name), {recursive: true})
+    fs.cpSync(dist, path.join(siteDir, 'iwsdk', name), {recursive: true, filter: SITE_FILTER})
     manifest.push({stack: 'iwsdk', name, path: `iwsdk/${name}/`, ...readMeta(appsDir, name)})
   }
 

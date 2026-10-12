@@ -150,3 +150,70 @@ function injectBeam(shader: WebGLProgramParametersWithUniforms): void {
   );
   shader.fragmentShader = `varying vec3 vBeamWorld;\n${BEAM_UNIFORMS}${BEAM_HELPERS}${shader.fragmentShader}`;
 }
+
+/* ------------------------------------------------------------------ *
+ * Shared lightning envelope: one coherent virtual-material response
+ * ------------------------------------------------------------------ */
+
+/**
+ * A single strike must read as one light shared by every virtual material
+ * (cloud deck, rain, wind filaments, wet patches, dust) — coherent
+ * illumination across layers matters more than an isolated spark, and a
+ * restrained onset/tail avoids any strobe reading. The envelope is written
+ * once per frame by AtmosphereSystem (the only writer) and read by any layer
+ * wired with `enableLightning`. It never touches physical passthrough:
+ * virtual materials only, no extra shadow map, no transient overwrite of
+ * `uBeamIntensity` (LightFieldSystem keeps owning the beam).
+ */
+export const lightningUniforms = {
+  /** 0 = no strike; ~1 at the onset peak, then a governed decay + tail. */
+  uWrFlash: { value: 0 },
+  /** Pale electric tint the virtual materials breathe toward mid-flash. */
+  uWrFlashTint: { value: new Color(0xcfe0ff) },
+};
+
+/** Write the envelope level; clamps to 0..1.25 (restrike peaks overshoot 1). */
+export function setLightningFlash(level: number): void {
+  const clamped = Number.isFinite(level) ? Math.min(1.25, Math.max(0, level)) : 0;
+  lightningUniforms.uWrFlash.value = clamped;
+}
+
+/** Current envelope level for CPU-side gating (no shader readback). */
+export function lightningFlashLevel(): number {
+  return lightningUniforms.uWrFlash.value;
+}
+
+const LIGHTNING_DECLARATIONS = /* glsl */ `uniform float uWrFlash;
+uniform vec3 uWrFlashTint;
+`;
+
+/** Materials already wired, so a second call cannot inject the hooks twice. */
+const lightningMaterials = new Set<ShaderMaterial>();
+
+/**
+ * Give one custom `ShaderMaterial` the shared strike envelope: the uniforms
+ * plus the `uWrFlash` / `uWrFlashTint` declarations in the fragment stage.
+ * The layer keeps its own shader source and decides how much of the tint to
+ * take; only the envelope is injected. Idempotent per material and safe to
+ * combine with `enableBeamLighting` / `enableDepthOcclusion` in any order —
+ * each hook preserves whatever `onBeforeCompile` already held.
+ */
+export function enableLightning(material: ShaderMaterial): void {
+  if (lightningMaterials.has(material)) return;
+  if (!material.fragmentShader.includes(FRAGMENT_OUTPUT)) {
+    console.warn(
+      '[weather-room] lightning skipped: shader has no gl_FragColor output',
+    );
+    return;
+  }
+  lightningMaterials.add(material);
+  Object.assign(material.uniforms, lightningUniforms);
+  const previous = material.onBeforeCompile as
+    | ((shader: WebGLProgramParametersWithUniforms, renderer: unknown) => void)
+    | undefined;
+  material.onBeforeCompile = (shader, renderer) => {
+    previous?.(shader, renderer);
+    shader.fragmentShader = `${LIGHTNING_DECLARATIONS}${shader.fragmentShader}`;
+  };
+  material.needsUpdate = true;
+}

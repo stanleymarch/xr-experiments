@@ -32,7 +32,7 @@ Desired architecture:
 apps/
   weather-room/       fresh Meta IWSDK app
 8thwall/              active iPhone/iPad WebAR; preserve
-.omp/                 project-local OMP config, agents, skills and prompts
+.omp/, .agents/       ignored local tooling; never commit sessions/settings
 docs/tasks/            durable autonomous implementation briefs
 MIGRATION.md           concept-only XR Blocks migration record
 AGENTS.md              repository-wide operating rules

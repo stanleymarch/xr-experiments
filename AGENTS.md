@@ -7,7 +7,7 @@ This repository is migrating from the discontinued Google XR Blocks experiments 
 - `apps/` — new Meta IWSDK experiences for Quest 3 and supported Android WebXR.
 - `8thwall/` — active iPhone/iPad WebAR code. It is supported code, not legacy.
 - `docs/tasks/` — durable implementation briefs for autonomous coding-agent work.
-- `.omp/` — project-local Oh My Pi routing, agents and skills.
+- `.omp/` and `.agents/` — ignored local coding-tool settings, sessions and generated skills; not published source.
 
 Planned greenfield IWSDK experiences:
 

@@ -1,7 +1,9 @@
 /**
- * Rain-fed water patches anchored to mapped upward-facing floor cells.
- * They accumulate during rain, dry slowly, and use a soft-edge shader with
- * a restrained moving sky sheen instead of pretending to run rigid-body fluid.
+ * Rain-fed water patches anchored to measured floor: mesh floor cells when
+ * mapped, distinct hit-test hits on the probe-only path. They accumulate
+ * during rain, dry slowly, and use a soft-edge shader with a restrained
+ * moving sky sheen instead of pretending to run rigid-body fluid.
+ * Unmeasured columns hide the patch: no random floor, no head-height guess.
  */
 
 import {
@@ -15,8 +17,9 @@ import {
   ShaderMaterial,
 } from '@iwsdk/core';
 import type { Entity } from '@iwsdk/core';
+import { enableDepthOcclusion } from '../depth-occlusion.js';
 import { enableBeamLighting } from '../light-shared.js';
-import { roomModel } from '../room.js';
+import { FLOOR_CELL_COPY_MAX, PROBE_HIT_CAPACITY, roomModel } from '../room.js';
 import { weatherStore } from '../weather-state.js';
 
 // F5/F6: saturated slate mirror — clear day carries steel blue, overcast a
@@ -25,6 +28,11 @@ const SKY_DAY_CLEAR = new Color(0x4a7a9e);
 const SKY_OVERCAST = new Color(0x4c5a68);
 
 const PATCH_COUNT = 14;
+/** Visible fast enough to read during active rain; ~2 min dry-out. */
+const WET_RATE_PER_S = 0.12;
+const DRY_RATE_PER_S = 0.008;
+/** Hide patches below this wetness (first visible water within ~a second). */
+const WET_VISIBLE = 0.06;
 const VERTEX = /* glsl */ `
 attribute float aWetness;
 varying float vWetness;
@@ -75,8 +83,8 @@ void main() {
   // Organic boundary: radius wobbles around the rim and breathes slowly.
   vec2 rim = vec2(cos(ang), sin(ang));
   float wob = snoise(rim * 1.6 + uTime * 0.02) * 0.6 + snoise(rim * 3.3 - uTime * 0.015) * 0.4;
-  float edge0 = 0.52 + wob * 0.3;
-  float body = 1.0 - smoothstep(edge0 - 0.26, edge0, r);
+  float edge0 = 0.82 + wob * 0.12;
+  float body = 1.0 - smoothstep(edge0 - 0.18, edge0, r);
   float inner = 1.0 - smoothstep(0.0, edge0, r);
   // Expanding rain rings, only while it is actually raining.
   float rings = 0.0;
@@ -113,13 +121,19 @@ export class PuddlesSystem extends createSystem({}) {
   private patches!: InstancedMesh;
   private readonly wetness = new Float32Array(PATCH_COUNT);
   private readonly xz = new Float32Array(PATCH_COUNT * 2);
+  private readonly patchY = new Float32Array(PATCH_COUNT);
   private readonly lastBounds = new Float32Array(6);
+  private readonly cellXZ = new Float32Array(FLOOR_CELL_COPY_MAX * 2);
+  private readonly cellH = new Float32Array(FLOOR_CELL_COPY_MAX);
+  private readonly hitXYZ = new Float32Array(PROBE_HIT_CAPACITY * 3);
   private readonly dummy = new Object3D();
   private readonly skyColor = new Color();
   private daylightEase = 0.5;
   private material!: ShaderMaterial;
-  private initialized = false;
-  private lastHasSurfaces = false;
+  private lastMeshRevision = -1;
+  private lastProbeRevision = -1;
+  private lastStatus: string | null = null;
+  private lastWetnessLoggedAt = 0;
   init(): void {
     const geo = new CircleGeometry(1, 28);
     const wetnessAttr = new InstancedBufferAttribute(this.wetness, 1);
@@ -134,6 +148,10 @@ export class PuddlesSystem extends createSystem({}) {
     });
     // Puddles are mirrors of the same shaft the sun specular comes from.
     enableBeamLighting(this.material);
+    // Floor decals must hide behind real furniture like rain contacts do.
+    enableDepthOcclusion(this.material);
+    // Patches sit only on measured columns (flat decals at their height),
+    // so water never covers walls or floats past the real floor.
     this.patches = new InstancedMesh(geo, this.material, PATCH_COUNT);
     this.patches.frustumCulled = false;
     this.patches.instanceMatrix.setUsage(DynamicDrawUsage);
@@ -154,28 +172,38 @@ export class PuddlesSystem extends createSystem({}) {
     const rain = current?.drivers.rain ?? 0;
     const { min, max } = roomModel;
     const moved =
-      !this.initialized ||
-      roomModel.hasSurfaces !== this.lastHasSurfaces ||
       Math.abs(min.x - this.lastBounds[0]) > 0.25 ||
       Math.abs(min.y - this.lastBounds[1]) > 0.25 ||
       Math.abs(min.z - this.lastBounds[2]) > 0.25 ||
       Math.abs(max.x - this.lastBounds[3]) > 0.25 ||
       Math.abs(max.y - this.lastBounds[4]) > 0.25 ||
       Math.abs(max.z - this.lastBounds[5]) > 0.25;
-    if (moved) {
-      this.seedPatches(min.x, min.z, max.x - min.x, max.z - min.z);
+    const status = roomModel.roomSurfaceStatus();
+    // Reseed only on new measured knowledge (mesh revision, probe hits, or
+    // a volume move) — never on a clock — and never clear wetness: mapping
+    // updates only move the patch columns, evaporation is the only drain.
+    if (
+      !roomModel.building &&
+      (roomModel.meshRevision !== this.lastMeshRevision ||
+        roomModel.probeRevision !== this.lastProbeRevision ||
+        status !== this.lastStatus ||
+        moved)
+    ) {
+      this.reseedPatches();
       this.lastBounds[0] = min.x;
       this.lastBounds[1] = min.y;
       this.lastBounds[2] = min.z;
       this.lastBounds[3] = max.x;
       this.lastBounds[4] = max.y;
       this.lastBounds[5] = max.z;
-      this.lastHasSurfaces = roomModel.hasSurfaces;
+      this.lastMeshRevision = roomModel.meshRevision;
+      this.lastProbeRevision = roomModel.probeRevision;
+      this.lastStatus = status;
     }
     const dt = Math.min(delta, 0.05);
     const time = performance.now() / 1000;
-    this.material.uniforms.uTime.value = time;
-    this.material.uniforms.uRain.value = rain;
+    (this.material.uniforms.uTime as { value: number }).value = time;
+    (this.material.uniforms.uRain as { value: number }).value = rain;
     // Wet sheen mirrors the actual sky: slate when overcast, warmer and
     // brighter when daylight escapes the cover, dim at night.
     const daylight = current?.drivers.daylight ?? 0.5;
@@ -185,37 +213,73 @@ export class PuddlesSystem extends createSystem({}) {
       .copy(SKY_DAY_CLEAR)
       .lerp(SKY_OVERCAST, cloud)
       .multiplyScalar(0.2 + 0.8 * this.daylightEase);
-    (this.material.uniforms.uSky.value as Color).copy(this.skyColor);
+    (this.material.uniforms.uSky as { value: Color }).value.copy(this.skyColor);
+    let visible = 0;
     for (let i = 0; i < PATCH_COUNT; i += 1) {
-      this.wetness[i] = Math.max(0, Math.min(1, this.wetness[i] + rain * 0.08 * dt - (1 - rain) * 0.0025 * dt));
+      this.wetness[i] = Math.max(0, Math.min(1, this.wetness[i] + rain * WET_RATE_PER_S * dt - (1 - rain) * DRY_RATE_PER_S * dt));
       const x = this.xz[i * 2];
       const z = this.xz[i * 2 + 1];
-      const surfaceY = roomModel.hasSurfaces
-        ? roomModel.surfaceHeightAt(x, z, min.y + 0.12)
-        : min.y;
-      if (surfaceY == null || this.wetness[i] < 0.015) {
+      // Water sits on the lowest measured layer in this column. An incomplete
+      // scan can contain only furniture, so this is not a semantic floor label.
+      // Unmeasured columns hide the patch: no random floor, no head-height
+      // guess, no-capability fallback is explicitly not ground.
+      const surfaceY = Number.isFinite(this.patchY[i]) && roomModel.hasSurfaces ? roomModel.floorHeightAt(x, z) : null;
+      const placedY = surfaceY ?? this.patchY[i];
+      if (surfaceY != null) this.patchY[i] = surfaceY;
+      if (placedY == null || !Number.isFinite(placedY) || this.wetness[i] < WET_VISIBLE) {
         this.dummy.position.set(0, -10, 0);
         this.dummy.scale.set(0.001, 0.001, 1);
       } else {
-        this.dummy.position.set(x, surfaceY + 0.012, z);
+        // +0.03 matches the real-depth bias so the patch rests on its own
+        // sampled level instead of clipping into it.
+        this.dummy.position.set(x, placedY + 0.03, z);
         this.dummy.rotation.set(-Math.PI / 2, 0, this.seedAngle(i));
-        const radius = 0.11 + this.wetness[i] * 0.34;
+        const radius = 0.14 + this.wetness[i] * 0.4;
         this.dummy.scale.set(radius * (0.8 + (i % 4) * 0.08), radius, 1);
+        visible += 1;
       }
       this.dummy.updateMatrix();
       this.patches.setMatrixAt(i, this.dummy.matrix);
     }
     this.patches.instanceMatrix.needsUpdate = true;
-    (this.patches.geometry.getAttribute('aWetness') as InstancedBufferAttribute).needsUpdate = true;
+    (this.patches.geometry.getAttribute('aWetness') as unknown as { needsUpdate: boolean }).needsUpdate = true;
+    if (rain > 0.05 && time - this.lastWetnessLoggedAt > 5) {
+      this.lastWetnessLoggedAt = time;
+      let peak = 0;
+      for (let i = 0; i < PATCH_COUNT; i += 1) peak = Math.max(peak, this.wetness[i]);
+      console.info(`[weather-room] puddles: status=${status} visible=${visible}/${PATCH_COUNT} peakWet=${peak.toFixed(2)}`);
+    }
   }
 
-  private seedPatches(minX: number, minZ: number, spanX: number, spanZ: number): void {
-    this.initialized = true;
+  /**
+   * Place every patch on measured support: mapped floor cells first, then
+   * distinct probe hits on the probe-only path (a bounded patch around the
+   * viewer, never a whole room). Anything unplaced hides (NaN height).
+   * Wetness is never touched here.
+   */
+  private reseedPatches(): void {
+    for (let i = 0; i < PATCH_COUNT; i += 1) this.patchY[i] = Number.NaN;
+    // Mesh path: mapped floor cells. Probe-only path: the hit ring directly
+    // (the probe grid cells ARE those hits quantized — using both would
+    // stack two patches per hit). Anything unplaced hides (NaN height).
+    const probeOnly = roomModel.roomSurfaceStatus() === 'probe';
+    const cells = probeOnly ? 0 : roomModel.copyMappedFloorCells(this.cellXZ, this.cellH);
+    const hits = roomModel.copyProbeHits(this.hitXYZ);
     for (let i = 0; i < PATCH_COUNT; i += 1) {
-      const seed = ((i * 2654435761) % 1000) / 1000;
-      this.xz[i * 2] = minX + (0.12 + ((seed * 7.13) % 0.76)) * Math.max(0.5, spanX);
-      this.xz[i * 2 + 1] = minZ + (0.12 + ((seed * 17.7) % 0.76)) * Math.max(0.5, spanZ);
-      this.wetness[i] = 0;
+      if (i < cells) {
+        const cell = Math.floor(i * cells / Math.min(cells, PATCH_COUNT));
+        this.xz[i * 2] = this.cellXZ[cell * 2];
+        this.xz[i * 2 + 1] = this.cellXZ[cell * 2 + 1];
+        this.patchY[i] = this.cellH[cell];
+      } else if (i - cells < hits) {
+        const h = i - cells;
+        this.xz[i * 2] = this.hitXYZ[h * 3];
+        this.xz[i * 2 + 1] = this.hitXYZ[h * 3 + 2];
+        this.patchY[i] = this.hitXYZ[h * 3 + 1];
+      } else {
+        this.xz[i * 2] = 0;
+        this.xz[i * 2 + 1] = 0;
+      }
     }
   }
 
@@ -227,6 +291,9 @@ export class PuddlesSystem extends createSystem({}) {
     super.destroy();
     this.wetness.fill(0);
     this.xz.fill(0);
-    this.initialized = false;
+    this.patchY.fill(Number.NaN);
+    this.lastMeshRevision = -1;
+    this.lastProbeRevision = -1;
+    this.lastStatus = null;
   }
 }

@@ -6,6 +6,7 @@
 
 import { DepthSensingSystem, World } from '@iwsdk/core';
 import projectOptions from 'virtual:iwsdk-project';
+import { ensureAudioContextAvailable } from './weather/audio-stub.js';
 import { BrowserPanelSystem } from './weather/systems/browser-panel.js';
 import { DepthOcclusionSystem } from './weather/systems/depth-occlusion.js';
 import { HandOccluderSystem } from './weather/systems/hand-occluder.js';
@@ -26,7 +27,18 @@ import { TimelineSystem } from './weather/systems/timeline.js';
 import { WeatherLoaderSystem } from './weather/systems/weather-loader.js';
 import { WindSystem } from './weather/systems/wind.js';
 
+// The framework's always-on AudioSystem constructs a three.js AudioListener
+// inside World.create; on engines without WebAudio that constructor throw
+// aborts the entire boot (a dead page on such phones). Install the silent
+// stub first — a no-op wherever real WebAudio exists.
+ensureAudioContextAvailable();
+
 const boot = (world: World): void => {
+  // Flat browser HUD first: its init is pure DOM, and it must mount even when
+  // a later spatial system stalls on font/worker/wasm work. Phones used to
+  // show a dead page because the DOM HUD was registered behind the UIKitML
+  // panel and never got to init.
+  world.registerSystem(BrowserPanelSystem, { priority: 38 });
   world.registerSystem(ControlGrabIntentSystem, { priority: -3.9 });
   // Real-world depth image -> occlusion. The framework system stays registered
   // for the depth feature diagnostics only (its texture work is off: nothing
@@ -78,7 +90,6 @@ const boot = (world: World): void => {
   world.registerSystem(TimelineSystem, { priority: 36 });
   world.registerSystem(WeatherAudioSystem, { priority: 36.5 });
   world.registerSystem(PanelSystem, { priority: 37 });
-  world.registerSystem(BrowserPanelSystem, { priority: 38 });
 };
 
 const onBootError = (reason: unknown): void => {

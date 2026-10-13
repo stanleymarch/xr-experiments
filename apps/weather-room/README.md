@@ -1206,9 +1206,61 @@ and Android hardware behavior remain unverified by this repair.
   the MCP round trip is slower than its life. The events themselves are proven
   by the counters above, the note element exists and is wired to the same
   `WeatherEvent.Gust` / `WeatherEvent.Thunder` subscriptions.
+
+### Physical-device round: chest-height puddles and the dead phone page (2026-10-13)
+
+Two real-device reports, both traced to a concrete cause and fixed.
+
+**Puddles at chest level on Quest.** The framework flattens *every* detected
+plane into an XZ plate (`createPlaneGeometry` reads only the polygon's x/z
+extents), so on a real headset the plate of a *vertical* wall plane lands at
+the wall origin height with an up-facing normal. The height grid recorded it
+as a horizontal "floor" layer at ~1.2-1.4 m: when the floor plane was missing
+or late, `floorHeightAt` returned the wall plate and puddles, rain contact
+and wind all sat at chest level. The emulated room always reported a real
+floor, which is why IWER screenshots looked right.
+
+- `src/weather/plane-admission.ts` rejects `orientation === 'vertical'`
+  planes (legacy runtimes without orientation stay admitted) and horizontal
+  plates above head + 0.35 m (ceilings, which would otherwise become the
+  lowest layer when no floor plane exists).
+- `RoomSensingSystem` skips wall planes at qualify time (their refinement
+  churn no longer triggers grid rebuilds) and drops wall/ceiling plates from
+  every rebuild.
+- Fixtures (throwaway, bundled with esbuild, removed after the run): 9/9
+  admission predicates — vertical rejected, horizontal/absent admitted,
+  head+margin boundary kept, just-past-margin cut, floor and table kept — and
+  6/6 over a Quest-like inventory (floor 0 m, walls 1.28/1.35 m, ceiling
+  2.45 m, table 0.74 m): with the floor plane present the lowest admitted
+  layer is the real floor; with the floor plane missing nothing is served as
+  ground, where the unfiltered code would have served 1.31 m. The IWER
+  emulator reports no detected planes at all (0 plane entities in the session),
+  so this path is only exercisable on real hardware or in these fixtures.
+
+**Dead page on phones.** Reproduced in WebKit (iOS Safari's engine): the
+framework registers its always-on `AudioSystem` during `World.create`, and
+that system's init constructs a three.js `AudioListener` →
+`new (window.AudioContext || window.webkitAudioContext)`. Where no audio
+stack exists the constructor throws, `World.create` rejects, and the boot
+aborts before any UI: the page is an empty canvas with no HUD, no controls
+and no weather.
+
+- `src/weather/audio-stub.ts` installs a silent `AudioContext` stand-in only
+  when the host has no (or a throwing) WebAudio constructor, before
+  `World.create`. Verified in WebKit: boot proceeds past audio into
+  `AudioListener.updateMatrixWorld` (which needs `listener.upX/Y/Z`, added to
+  the stub) instead of dying at the constructor.
+- `BrowserPanelSystem` is now registered **first**: the flat HUD is pure DOM
+  and must mount even when a later spatial system stalls on font/worker/wasm
+  work. Previously it was registered behind the UIKitML panel and never
+  reached `init` when the MSDF font worker failed (its worker source contains
+  `import.meta`, which errors when the generator builds a classic worker —
+  harmless for the flat HUD once the ordering is fixed).
+
 - Still unverified: the same gestures, room scanning, passthrough contrast and
   depth grants on a physical Quest 3 or Android device (device lists are empty
   in this environment).
+
 
 ### Local measured-room fixtures (2026-10-13)
 

@@ -6,18 +6,16 @@
 
 import { createSystem, Mesh, Vector3, XRMesh, XRPlane } from '@iwsdk/core';
 import type { Entity, Object3D } from '@iwsdk/core';
+import { isCeilingPlate, isWallPlane } from '../plane-admission.js';
+import type { PlaneSource } from '../plane-admission.js';
 import { roomModel } from '../room.js';
 import type { RoomSurfaceSource } from '../room.js';
-
-const headPosition = new Vector3();
 
 /** Minimum seconds between signature scans and grid rebuilds. */
 const REBUILD_DEBOUNCE_S = 0.5;
 
-type PlaneSource = {
-  lastChangedTime?: number;
-  polygon?: readonly { x: number; y: number; z: number }[];
-};
+const headPosition = new Vector3();
+
 type MeshSource = {
   lastChangedTime?: number;
   vertices?: ArrayLike<number>;
@@ -45,6 +43,7 @@ function planeCentroidXZ(polygon: readonly { x: number; y: number; z: number }[]
   }
   return { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2 };
 }
+
 
 
 /** Bounded stride sample; full mesh scans cost tens of millions of ops per
@@ -119,6 +118,12 @@ export class RoomSensingSystem extends createSystem({
   init(): void {
     const remember = (entity: Entity): void => {
       if (entity.object3D != null && !this.tracked.has(entity)) {
+        // Wall plates are never room-surface sources (see isWallPlane);
+        // skipping them here also keeps their refinement churn from
+        // triggering grid rebuilds.
+        if (this.queries.planes.entities.has(entity) && isWallPlane(entity.getValue(XRPlane, '_plane'))) {
+          return;
+        }
         this.tracked.add(entity);
         this.signatures.set(entity, Number.NaN);
       }
@@ -168,7 +173,7 @@ export class RoomSensingSystem extends createSystem({
       roomModel.step();
       this.world.player.head.getWorldPosition(headPosition);
       if (!roomModel.contains(headPosition)) {
-        roomModel.beginRebuild(this.currentObjects(), headPosition);
+      roomModel.beginRebuild(this.currentObjects(headPosition.y), headPosition);
         roomModel.step();
       }
       return;
@@ -177,7 +182,7 @@ export class RoomSensingSystem extends createSystem({
     if (!roomModel.contains(headPosition)) this.pendingRebuild = true;
     if (!this.pendingRebuild) return;
     if (time - this.lastRebuildAt < REBUILD_DEBOUNCE_S) return;
-    const objects = this.currentObjects();
+    const objects = this.currentObjects(headPosition.y);
     this.pendingRebuild = false;
     this.lastRebuildAt = time;
     // The weather happens around the viewer: anchor the volume to the head so
@@ -188,7 +193,7 @@ export class RoomSensingSystem extends createSystem({
     roomModel.step();
   }
 
-  private currentObjects(): RoomSurfaceSource[] {
+  private currentObjects(headY: number): RoomSurfaceSource[] {
     const objects: RoomSurfaceSource[] = [];
     for (const entity of this.tracked) {
       const object = entity.object3D;
@@ -196,7 +201,11 @@ export class RoomSensingSystem extends createSystem({
       const source: RoomSurfaceSource = object;
       if (this.queries.planes.entities.has(entity)) {
         const raw: unknown = entity.getValue(XRPlane, '_plane');
+        if (isWallPlane(raw)) continue;
         const plane = (raw != null && typeof raw === 'object' ? raw : undefined) as PlaneSource | undefined;
+        // Plates are scene-root children, so position.y is their world level.
+        object.updateWorldMatrix(true, false);
+        if (isCeilingPlate(object.position.y, headY)) continue;
         const centroid = planeCentroidXZ(plane?.polygon);
         source.offsetX = centroid.x;
         source.offsetZ = centroid.z;

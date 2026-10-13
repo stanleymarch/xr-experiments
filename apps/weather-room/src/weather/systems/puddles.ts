@@ -33,6 +33,13 @@ const WET_RATE_PER_S = 0.12;
 const DRY_RATE_PER_S = 0.008;
 /** Hide patches below this wetness (first visible water within ~a second). */
 const WET_VISIBLE = 0.06;
+/**
+ * How far below the viewer's head ground may still be. A column whose lowest
+ * measured layer is higher than this (chest-height wall plates on real
+ * headsets, tall furniture) is not ground: the decal would float in the air.
+ * Knee-to-waist height for a standing viewer, chair height for a seated one.
+ */
+const PUDDLE_GROUND_CLEARANCE_M = 0.6;
 const VERTEX = /* glsl */ `
 attribute float aWetness;
 varying float vWetness;
@@ -214,6 +221,12 @@ export class PuddlesSystem extends createSystem({}) {
       .lerp(SKY_OVERCAST, cloud)
       .multiplyScalar(0.2 + 0.8 * this.daylightEase);
     (this.material.uniforms.uSky as { value: Color }).value.copy(this.skyColor);
+    // Water pools on ground, not on chest-high support: a column whose lowest
+    // measured layer is above knee-to-waist height is furniture or a bad
+    // measurement, and a puddle decal floating there reads as a defect.
+    const head = this.world.player.head;
+    head.updateWorldMatrix(true, false);
+    const groundCeilingY = head.position.y - PUDDLE_GROUND_CLEARANCE_M;
     let visible = 0;
     for (let i = 0; i < PATCH_COUNT; i += 1) {
       this.wetness[i] = Math.max(0, Math.min(1, this.wetness[i] + rain * WET_RATE_PER_S * dt - (1 - rain) * DRY_RATE_PER_S * dt));
@@ -225,8 +238,8 @@ export class PuddlesSystem extends createSystem({}) {
       // guess, no-capability fallback is explicitly not ground.
       const surfaceY = Number.isFinite(this.patchY[i]) && roomModel.hasSurfaces ? roomModel.floorHeightAt(x, z) : null;
       const placedY = surfaceY ?? this.patchY[i];
-      if (surfaceY != null) this.patchY[i] = surfaceY;
-      if (placedY == null || !Number.isFinite(placedY) || this.wetness[i] < WET_VISIBLE) {
+      if (surfaceY != null && surfaceY <= groundCeilingY) this.patchY[i] = surfaceY;
+      if (placedY == null || !Number.isFinite(placedY) || placedY > groundCeilingY || this.wetness[i] < WET_VISIBLE) {
         this.dummy.position.set(0, -10, 0);
         this.dummy.scale.set(0.001, 0.001, 1);
       } else {

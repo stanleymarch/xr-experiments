@@ -116,6 +116,19 @@ function needsSilentContext(): boolean {
 
 
 /**
+ * Link audio nodes without chaining `connect()` calls: some engines return
+ * `undefined` from `AudioNode.connect()`, so `a.connect(b).connect(c)` throws
+ * there — and a throw inside a UI handler silently kills the button.
+ */
+export function connectAudio(
+  ...nodes: Array<AudioNode | AudioParam>
+): void {
+  for (let i = 1; i < nodes.length; i += 1) {
+    (nodes[i - 1] as AudioNode).connect(nodes[i] as AudioNode);
+  }
+}
+
+/**
  * Install the silent context when (and only when) the host has no WebAudio.
  * Must run before World.create: the always-on AudioSystem inits with it.
  */

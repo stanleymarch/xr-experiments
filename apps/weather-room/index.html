@@ -21,8 +21,9 @@
             host.id = 'boot-error';
             host.setAttribute('aria-live', 'assertive');
             var style =
-              'position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;' +
-              'max-height:60vh;overflow:auto;margin:0;padding:14px 16px;' +
+            'position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;' +
+              /* Diagnostics only: a late runtime error must never freeze input. */
+              'pointer-events:none;' +
               'background:#0d1930;color:#eef5ff;border:1px solid #79d7f2;' +
               'border-radius:12px;font:12px/1.5 Geologica,system-ui,monospace;' +
               'white-space:pre-wrap;word-break:break-word;';

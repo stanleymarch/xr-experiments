@@ -8,6 +8,7 @@
  */
 
 import { createSystem, VisibilityState } from '@iwsdk/core';
+import { connectAudio } from '../audio-stub.js';
 import { WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
 
 /** Seconds of looped noise per buffer; short enough to stay cheap. */
@@ -116,7 +117,7 @@ export class WeatherAudioSystem extends createSystem({}) {
     rainLowpass.frequency.value = 7000;
     const rainGain = ctx.createGain();
     rainGain.gain.value = 0;
-    rainSource.connect(rainHighpass).connect(rainLowpass).connect(rainGain).connect(master);
+    connectAudio(rainSource, rainHighpass, rainLowpass, rainGain, master);
     rainSource.start();
 
     // Wind: brown-noise bed with a slow breathing LFO on the lowpass.
@@ -133,9 +134,9 @@ export class WeatherAudioSystem extends createSystem({}) {
     lfo.frequency.value = 0.13;
     const lfoGain = ctx.createGain();
     lfoGain.gain.value = 160;
-    lfo.connect(lfoGain).connect(windLowpass.frequency);
+    connectAudio(lfo, lfoGain, windLowpass.frequency);
     lfo.start();
-    windSource.connect(windLowpass).connect(windGain).connect(master);
+    connectAudio(windSource, windLowpass, windGain, master);
     windSource.start();
 
     this.ctx = ctx;
@@ -175,7 +176,7 @@ export class WeatherAudioSystem extends createSystem({}) {
     env.gain.setValueAtTime(0, t);
     env.gain.linearRampToValueAtTime(gain, t + 0.008);
     env.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
-    osc.connect(env).connect(this.master);
+    connectAudio(osc, env, this.master);
     osc.start(t);
     osc.stop(t + seconds + 0.05);
   }
@@ -215,7 +216,7 @@ export class WeatherAudioSystem extends createSystem({}) {
     env.gain.exponentialRampToValueAtTime(0.14, t + 1.1);
     env.gain.exponentialRampToValueAtTime(0.17, t + 1.45);
     env.gain.exponentialRampToValueAtTime(0.0001, t + 2.6);
-    source.connect(lowpass).connect(env).connect(this.master);
+    connectAudio(source, lowpass, env, this.master);
     source.start(t);
     source.stop(t + 2.7);
     // Sub weight: one low sine drop under the crack so small speakers feel it.
@@ -227,7 +228,7 @@ export class WeatherAudioSystem extends createSystem({}) {
     subEnv.gain.setValueAtTime(0.0001, t);
     subEnv.gain.exponentialRampToValueAtTime(0.3, t + 0.03);
     subEnv.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
-    sub.connect(subEnv).connect(this.master);
+    connectAudio(sub, subEnv, this.master);
     sub.start(t);
     sub.stop(t + 1.2);
   }
@@ -262,7 +263,7 @@ export class WeatherAudioSystem extends createSystem({}) {
     env.gain.setValueAtTime(0.0001, t);
     env.gain.exponentialRampToValueAtTime(0.1 + level * 0.22, t + 0.09);
     env.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
-    source.connect(bandpass).connect(env).connect(this.master);
+    connectAudio(source, bandpass, env, this.master);
     source.start(t);
     source.stop(t + 0.8);
   }

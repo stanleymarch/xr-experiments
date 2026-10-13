@@ -1,6 +1,6 @@
 /** Native HTML controls for desktop/phone browsers AND handheld phone XR; tracked-hands XR uses the spatial panel. */
 
-import { buildSessionInit, createSystem, normalizeReferenceSpec, resolveReferenceSpaceType, SessionMode } from '@iwsdk/core';
+import { buildSessionInit, createSystem, normalizeReferenceSpec, resolveReferenceSpaceType, SessionMode, Vector3 } from '@iwsdk/core';
 import { WeatherEvent, playheadTime, weatherEvents, weatherStore } from '../weather-state.js';
 import type { HourCrossedDetail } from '../weather-state.js';
 import { Haptics, pulseHaptics } from '../feedback.js';
@@ -21,6 +21,7 @@ import {
   type Language,
 } from '../i18n.js';
 import { PROVIDER_DISPLAY } from '../providers.js';
+import { trySandboxGust, trySandboxThunder } from '../sandbox-gust.js';
 import {
   LOCATION_PRESETS,
   buildDemoDataset,
@@ -258,15 +259,27 @@ body:xr-overlay #scene-container {
   min-width: 48px;
   padding: 10px 16px;
   border-radius: 999px;
-  border: 1px solid rgba(169, 216, 255, 0.19);
-  background: rgba(120, 184, 255, 0.07);
+  border: 1px solid rgba(169, 216, 255, 0.26);
+  background: rgba(120, 184, 255, 0.11);
   color: #eef5ff;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
   touch-action: manipulation;
+  /* iOS keeps a tap's hover for the whole AR session; never paint a tap
+     highlight on top of the resting ring. */
+  -webkit-tap-highlight-color: transparent;
 }
-#${BROWSER_PANEL_ROOT_ID} button:hover,
+/* Real pointers only: iOS applies :hover on tap and keeps it sticky, which
+   drew one control with a doubled ring while its neighbours stayed flat.
+   Keyboard focus keeps the ring on every device. */
+@media (hover: hover) and (pointer: fine) {
+  #${BROWSER_PANEL_ROOT_ID} button:hover {
+    border-color: rgba(121, 215, 242, 0.42);
+    outline: 2px solid rgba(121, 215, 242, 0.55);
+    outline-offset: 1px;
+  }
+}
 #${BROWSER_PANEL_ROOT_ID} button:focus-visible {
   border-color: rgba(121, 215, 242, 0.42);
   outline: 2px solid rgba(121, 215, 242, 0.55);
@@ -381,6 +394,15 @@ body:xr-overlay #scene-container {
   background: #f2b63d;
   border-color: #f2b63d;
   color: #060b18;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-sandbox-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+#${BROWSER_PANEL_ROOT_ID} .browser-panel-sandbox-actions[hidden] {
+  display: none;
 }
 #${BROWSER_PANEL_ROOT_ID} .browser-panel-body {
   display: flex;
@@ -497,6 +519,9 @@ body:xr-overlay #scene-container {
   #${BROWSER_PANEL_ROOT_ID}:not(.browser-panel-expanded):not(.browser-panel-concealed) .browser-panel-body {
     overflow: hidden;
     flex: 0 0 auto;
+    /* The collapsed stack is budgeted to the 140px cap: no double bottom
+       padding under the fixed footer. */
+    padding-bottom: 0;
   }
   #${BROWSER_PANEL_ROOT_ID}:not(.browser-panel-expanded):not(.browser-panel-concealed) .browser-panel-body > :not(.browser-panel-compact) {
     display: none !important;
@@ -507,7 +532,11 @@ body:xr-overlay #scene-container {
     display: flex !important;
     align-items: center;
     gap: 8px;
-    margin: 0 0 8px;
+    margin: 0 0 10px;
+  }
+  /* Single-line readout, baseline-centred against the 48px controls. */
+  #${BROWSER_PANEL_ROOT_ID}:not(.browser-panel-concealed) .browser-panel-compact [data-testid="weather-compact"] {
+    line-height: 1.2;
   }
   /* Expanded phones keep a way back: the compact strip hides its summary
      line but keeps the 48px collapse control above the scroll body. */
@@ -522,28 +551,56 @@ body:xr-overlay #scene-container {
   #${BROWSER_PANEL_ROOT_ID}:not(.browser-panel-concealed) button[data-testid="card-more"] {
     display: inline-flex !important;
     flex: 0 0 auto;
+    box-sizing: border-box;
     width: 48px;
     height: 48px;
     min-width: 48px;
     min-height: 48px;
     margin: 0;
     padding: 0;
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1;
     align-items: center;
     justify-content: center;
   }
-  /* Phone XR only: the collapsed strip gains an intentional 48px Hide
-     control next to Expand. Browser sessions never see it. */
+  /* Phone XR card: symmetric gutters, centred frame, device-safe bottom.
+     Scoped to :not(concealed) so the 48px restore pill keeps its own
+     zero-padding geometry. */
+  #${BROWSER_PANEL_ROOT_ID}[data-session="phone-xr"]:not(.browser-panel-concealed) {
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    right: calc(12px + env(safe-area-inset-right, 0px));
+    width: auto;
+    max-width: 420px;
+    margin-left: auto;
+    margin-right: auto;
+    /* An immersive session reports no safe-area insets, yet the home
+       indicator still occupies the bottom of the glass: 24px clears it. */
+    bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    padding: 8px 12px 10px;
+    border-radius: 16px;
+  }
+  #${BROWSER_PANEL_ROOT_ID}[data-session="phone-xr"].browser-panel-expanded:not(.browser-panel-concealed) {
+    max-height: calc(100dvh - 36px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  }
+  /* The Hide control carries a visible label, so it is a content-sized pill
+     beside the 48px Expand circle: the ink never spills its own ring. */
   #${BROWSER_PANEL_ROOT_ID}[data-session="phone-xr"]:not(.browser-panel-expanded):not(.browser-panel-concealed) button[data-testid="hud-hide"] {
     display: inline-flex !important;
     flex: 0 0 auto;
-    width: 48px;
+    box-sizing: border-box;
+    width: auto;
     height: 48px;
-    min-width: 48px;
+    min-width: 76px;
     min-height: 48px;
     margin: 0;
-    padding: 0;
+    padding: 0 16px;
     align-items: center;
     justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
   }
   #${BROWSER_PANEL_ROOT_ID} .browser-panel-meta {
     margin-bottom: 4px;
@@ -555,17 +612,59 @@ body:xr-overlay #scene-container {
     margin-left: 0;
     margin-right: 0;
   }
+  /* Footer: two equal capsules that share the strip's 8px rhythm; a 1px
+     divider strong enough to read as structure over a live camera. */
   #${BROWSER_PANEL_ROOT_ID} .browser-panel-utility {
     flex-wrap: nowrap;
+    margin-top: 0;
+    padding-top: 10px;
+    border-top: 1px solid rgba(169, 216, 255, 0.22);
   }
   #${BROWSER_PANEL_ROOT_ID} .browser-panel-utility > button {
-    padding-left: 6px;
-    padding-right: 6px;
+    box-sizing: border-box;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 48px;
+    min-height: 48px;
+    padding: 0 12px;
+    border-radius: 999px;
     font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   #${BROWSER_PANEL_ROOT_ID} select,
   #${BROWSER_PANEL_ROOT_ID} input[type="text"] {
     max-width: 100%;
+  }
+}
+/* Narrow phones: tighten the strip's rhythm before shortening the readout. */
+@media (max-width: 380px) {
+  #${BROWSER_PANEL_ROOT_ID}:not(.browser-panel-concealed) .browser-panel-compact {
+    gap: 6px;
+  }
+  #${BROWSER_PANEL_ROOT_ID}[data-session="phone-xr"]:not(.browser-panel-expanded):not(.browser-panel-concealed) button[data-testid="hud-hide"] {
+    min-width: 68px;
+    padding: 0 12px;
+  }
+}
+/* Last resort under 340px: the Hide pill becomes a 48px glyph target with
+   the same footprint; the text node stays in the DOM for the accessible
+   name. */
+@media (max-width: 340px) {
+  #${BROWSER_PANEL_ROOT_ID}[data-session="phone-xr"]:not(.browser-panel-expanded):not(.browser-panel-concealed) button[data-testid="hud-hide"] {
+    min-width: 48px;
+    width: 48px;
+    padding: 0;
+    font-size: 0;
+    letter-spacing: 0;
+  }
+  #${BROWSER_PANEL_ROOT_ID}[data-session="phone-xr"]:not(.browser-panel-expanded):not(.browser-panel-concealed) button[data-testid="hud-hide"]::before {
+    content: "\\25BE";
+    font-size: 14px;
+    line-height: 1;
   }
 }
 @media (max-height: 560px) {
@@ -643,6 +742,9 @@ export class BrowserPanelSystem extends createSystem({}) {
   private hideButton: HTMLButtonElement | null = null;
   private showButton: HTMLButtonElement | null = null;
   private sandboxNote: HTMLElement | null = null;
+  private sandboxActions: HTMLElement | null = null;
+  private sandboxThunderButton: HTMLButtonElement | null = null;
+  private sandboxGustButton: HTMLButtonElement | null = null;
   private actionTimer: number | null = null;
   /** Intentional hide-to-a-single-button (phone XR only); Exit via restore. */
   private hudConcealed = false;
@@ -800,6 +902,22 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.exitButton?.addEventListener('click', exitXR);
     this.langButton?.addEventListener('click', switchLanguage);
     this.sandboxButton?.addEventListener('click', toggleSandbox);
+    const summonThunder = (): void => {
+      tick();
+      firmTap();
+      trySandboxThunder('ui');
+    };
+    const summonGust = (): void => {
+      tick();
+      firmTap();
+      const head = this.world.player.head;
+      head.updateWorldMatrix(true, false);
+      const dir = new Vector3(0, 0, -1).applyQuaternion(head.quaternion);
+      const length = Math.hypot(dir.x, dir.z);
+      trySandboxGust(1, length > 1e-4 ? dir.x / length : 0, length > 1e-4 ? dir.z / length : -1, 'ui');
+    };
+    this.sandboxThunderButton?.addEventListener('click', summonThunder);
+    this.sandboxGustButton?.addEventListener('click', summonGust);
     this.compactExpand?.addEventListener('click', expandHud);
     this.hideButton?.addEventListener('click', concealHud);
     this.showButton?.addEventListener('click', revealHud);
@@ -818,6 +936,8 @@ export class BrowserPanelSystem extends createSystem({}) {
       () => this.reloadButton?.removeEventListener('click', reload),
       () => this.enterButton?.removeEventListener('click', launchXR),
       () => this.sandboxButton?.removeEventListener('click', toggleSandbox),
+      () => this.sandboxThunderButton?.removeEventListener('click', summonThunder),
+      () => this.sandboxGustButton?.removeEventListener('click', summonGust),
       () => this.compactExpand?.removeEventListener('click', expandHud),
       () => this.hideButton?.removeEventListener('click', concealHud),
       () => this.showButton?.removeEventListener('click', revealHud),
@@ -1163,6 +1283,25 @@ export class BrowserPanelSystem extends createSystem({}) {
     this.sandboxButton.textContent = t('sandboxOff');
     this.sandboxButton.setAttribute('aria-label', t('ariaSandbox'));
     sandboxRow.append(this.sandboxButton);
+    // Explicit sandbox actions. They exist in the spatial panel only, which
+    // left the phone HUD with a toggle that could not produce the moment it
+    // advertised: no clap input there, and no way to summon lightning. Hidden
+    // until the sandbox is on, so the default card keeps its chrome.
+    this.sandboxActions = document.createElement('div');
+    this.sandboxActions.className = 'browser-panel-sandbox-actions';
+    this.sandboxActions.hidden = true;
+    this.sandboxThunderButton = document.createElement('button');
+    this.sandboxThunderButton.type = 'button';
+    this.sandboxThunderButton.dataset.testid = 'sandbox-thunder';
+    this.sandboxThunderButton.textContent = t('sandboxThunder');
+    this.sandboxThunderButton.setAttribute('aria-label', t('ariaSandboxThunder'));
+    this.sandboxGustButton = document.createElement('button');
+    this.sandboxGustButton.type = 'button';
+    this.sandboxGustButton.dataset.testid = 'sandbox-gust';
+    this.sandboxGustButton.textContent = t('sandboxGust');
+    this.sandboxGustButton.setAttribute('aria-label', t('ariaSandboxGust'));
+    this.sandboxActions.append(this.sandboxThunderButton, this.sandboxGustButton);
+    sandboxRow.append(this.sandboxActions);
     // Transient accepted-action feedback: a one-line honest answer to the
     // last Thunder/Gust moment. No permanent tutorial paragraphs.
     this.sandboxNote = el('p', 'sandbox-note', '');
@@ -1512,6 +1651,15 @@ export class BrowserPanelSystem extends createSystem({}) {
       this.sandboxButton.dataset.state = on ? 'on' : 'off';
       this.sandboxButton.setAttribute('aria-label', t('ariaSandbox'));
       this.sandboxButton.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    if (this.sandboxActions != null) this.sandboxActions.hidden = !weatherStore.state.peek().sandbox;
+    if (this.sandboxThunderButton != null) {
+      this.sandboxThunderButton.textContent = t('sandboxThunder');
+      this.sandboxThunderButton.setAttribute('aria-label', t('ariaSandboxThunder'));
+    }
+    if (this.sandboxGustButton != null) {
+      this.sandboxGustButton.textContent = t('sandboxGust');
+      this.sandboxGustButton.setAttribute('aria-label', t('ariaSandboxGust'));
     }
     this.root?.querySelector('.browser-panel-sandbox')?.setAttribute('aria-label', t('ariaSandbox'));
     this.applyCollapsed();

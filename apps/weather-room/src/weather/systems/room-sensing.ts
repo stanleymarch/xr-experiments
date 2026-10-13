@@ -5,8 +5,8 @@
  */
 
 import { createSystem, Mesh, Vector3, XRMesh, XRPlane } from '@iwsdk/core';
-import type { Entity, Object3D } from '@iwsdk/core';
-import { isCeilingPlate, isWallPlane } from '../plane-admission.js';
+import type { BufferGeometry, Entity, Object3D } from '@iwsdk/core';
+import { isCeilingPlate, isDegeneratePlate, isTiltedPlate, isWallPlane } from '../plane-admission.js';
 import type { PlaneSource } from '../plane-admission.js';
 import { roomModel } from '../room.js';
 import type { RoomSurfaceSource } from '../room.js';
@@ -206,6 +206,7 @@ export class RoomSensingSystem extends createSystem({
         // Plates are scene-root children, so position.y is their world level.
         object.updateWorldMatrix(true, false);
         if (isCeilingPlate(object.position.y, headY)) continue;
+        if (!this.isSurfacePlate(object)) continue;
         const centroid = planeCentroidXZ(plane?.polygon);
         source.offsetX = centroid.x;
         source.offsetZ = centroid.z;
@@ -213,6 +214,27 @@ export class RoomSensingSystem extends createSystem({
       objects.push(source);
     }
     return objects;
+  }
+
+  /**
+   * True when a plane plate actually looks like a horizontal surface: two
+   * dimensional in XZ and not tilted away from world up. `orientation` is
+   * the cheap first cut, but real headsets may omit it, and the framework's
+   * plate keeps the plane pose — so geometry decides here.
+   */
+  private isSurfacePlate(object: Object3D): boolean {
+    const elements = object.matrixWorld.elements;
+    const upY = elements[5];
+    const upLength = Math.hypot(elements[4], elements[5], elements[6]) || 1;
+    if (isTiltedPlate(upY / upLength)) return false;
+    const geometry = (object as Object3D & { geometry?: BufferGeometry }).geometry;
+    if (geometry == null) return true;
+    if (geometry.boundingBox == null) geometry.computeBoundingBox();
+    const box = geometry.boundingBox;
+    if (box == null) return true;
+    const scaleX = Math.hypot(elements[0], elements[1], elements[2]);
+    const scaleZ = Math.hypot(elements[8], elements[9], elements[10]);
+    return !isDegeneratePlate((box.max.x - box.min.x) * scaleX, (box.max.z - box.min.z) * scaleZ);
   }
 
   override destroy(): void {

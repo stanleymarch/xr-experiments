@@ -40,6 +40,7 @@ import {
 import type { Entity, Object3D, World } from '@iwsdk/core';
 import { bevelBox } from '../scene-assets/lib/hardsurface.js';
 import { Haptics } from './feedback.js';
+import { connectAudio } from './audio-stub.js';
 import type { HapticPulse } from './feedback.js';
 
 export type Handedness = 'left' | 'right';
@@ -669,7 +670,7 @@ function cue(frequencyHz: number, gain: number, seconds: number): void {
   env.gain.setValueAtTime(0, now);
   env.gain.linearRampToValueAtTime(gain, now + 0.006);
   env.gain.exponentialRampToValueAtTime(0.0001, now + seconds);
-  osc.connect(env).connect(ctx.destination);
+  connectAudio(osc, env, ctx.destination);
   osc.start(now);
   osc.stop(now + seconds + 0.05);
 }
@@ -724,7 +725,7 @@ function noiseCue(startHz: number, endHz: number, gain: number, seconds: number)
   env.gain.setValueAtTime(0, t);
   env.gain.linearRampToValueAtTime(gain, t + 0.012);
   env.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
-  source.connect(lowpass).connect(env).connect(ctx.destination);
+  connectAudio(source, lowpass, env, ctx.destination);
   source.start(t);
   source.stop(t + seconds + 0.05);
 }

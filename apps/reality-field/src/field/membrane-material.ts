@@ -1,11 +1,19 @@
 /**
- * REALITY//ROOM — the material of the room.
+ * REALITY//FIELD — the material of the room.
  *
- * The skin is deliberately almost invisible at rest: a thin fresnel sheen
- * that says "this room has a surface now" without hiding the real room
- * behind a coloured shell. When a wave passes, the same skin lights up along
- * the wave front, so the wave is readable as light travelling across a real
- * wall rather than as a glowing blob.
+ * The skin is deliberately invisible at rest: the room is only lit by its own
+ * wave. When a wave passes, the skin lights up along the front, so the wave is
+ * readable as light travelling across a real wall rather than as a glowing
+ * blob.
+ *
+ * Two different shaders do two different jobs:
+ *
+ * - the vertex shader *displaces* the surface, so the room physically dents as
+ *   the front passes. The skin's vertices are ~0.2 m apart, which is fine for
+ *   a slow, soft dent;
+ * - the fragment shader *lights* the surface. Doing this per pixel rather than
+ *   per vertex is what makes the front a crisp travelling contour instead of a
+ *   blurred patch smeared across the mesh resolution.
  */
 
 import { AdditiveBlending, Color, DoubleSide, ShaderMaterial } from '@iwsdk/core';
@@ -14,36 +22,34 @@ import type { WaveUniforms } from './wave.js';
 
 const VERTEX_SHADER = /* glsl */ `
 ${WAVE_GLSL}
-varying float vEnergy;
-varying vec3 vNormalW;
-varying vec3 vViewDirW;
+varying vec3 vWorldPos;
 
 void main() {
   float energy = 0.0;
   vec3 displaced = position + waveDisplace(position, energy);
-  vEnergy = energy;
+  vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
   vec4 worldPos = modelMatrix * vec4(displaced, 1.0);
-  vNormalW = normalize(mat3(modelMatrix) * normal);
-  vViewDirW = normalize(cameraPosition - worldPos.xyz);
   gl_Position = projectionMatrix * viewMatrix * worldPos;
 }
 `;
 
 const FRAGMENT_SHADER = /* glsl */ `
-varying float vEnergy;
-varying vec3 vNormalW;
-varying vec3 vViewDirW;
+${WAVE_GLSL}
+varying vec3 vWorldPos;
 uniform vec3 uBaseColor;
 uniform vec3 uHotColor;
 
 void main() {
-  float facing = abs(dot(normalize(vNormalW), normalize(vViewDirW)));
-  float rim = pow(1.0 - facing, 2.5);
-  float energy = clamp(vEnergy, 0.0, 2.0);
-  vec3 color = mix(uBaseColor, uHotColor, clamp(energy * 1.7, 0.0, 1.0));
-  // Additive blending: alpha scales how much light is added. The resting
-  // skin is a faint sheen; the wave front is the light.
-  float alpha = rim * 0.14 + clamp(energy * 3.4, 0.0, 1.0);
+  // Only the energy matters here; the displacement is the vertex shader's job.
+  float energy = 0.0;
+  waveDisplace(vWorldPos, energy);
+  energy = clamp(energy, 0.0, 2.0);
+  vec3 color = mix(uBaseColor, uHotColor, clamp(energy * 3.0, 0.0, 1.0));
+  // Additive blending: alpha scales how much light is added. The skin is
+  // layered (a plane and a mesh can cover the same pixel), so the resting
+  // value must be exactly zero; only the crest adds light.
+  float alpha = 1.0 - exp(-energy * 8.0);
+  if (alpha < 0.004) discard;
   gl_FragColor = vec4(color, alpha);
 }
 `;
@@ -59,8 +65,8 @@ export function createSkinMaterial(waveUniforms: WaveUniforms): ShaderMaterial {
       uImpulseSpeed: waveUniforms.uImpulseSpeed,
       uWaveTime: waveUniforms.uWaveTime,
       uWaveWidth: waveUniforms.uWaveWidth,
-      uBaseColor: { value: new Color(0.32, 0.56, 0.95) },
-      uHotColor: { value: new Color(0.86, 0.95, 1.0) },
+      uBaseColor: { value: new Color(0.26, 0.55, 1.0) },
+      uHotColor: { value: new Color(0.94, 0.98, 1.0) },
     },
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,

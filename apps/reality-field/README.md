@@ -23,14 +23,17 @@ npm run typecheck
 
 ## The two faces
 
-- **DREAM REALITY** (default) — a thin luminous skin stretched over the
-  sensed room, motes suspended in the air, and the wave readable as light
-  travelling across a real wall.
+- **DREAM REALITY** (default) — the sensed room is the instrument. At rest it
+  is untouched; a soft spark of light marks the spot the pointing ray has
+  found, and grows as the pinch charges. The strike sends a thin luminous
+  front across the real walls, floor and furniture, while motes drift in the
+  air around it.
 - **DEBUG REALITY** — the technical reconstruction: the sensed planes and
   mesh bounds as outlines, the pointing ray, the contact point, the surface
   normal there, and a live readout of what the room currently knows.
 
-Switch with the panel's **Toggle debug view** button.
+Switch with the panel's **Debug view** button (or `D` on the desktop
+preview).
 
 ## Interaction
 
@@ -56,9 +59,11 @@ debug view, `R` resets the field.
    plus the analytic rectangles and boxes used to find where a pointing ray
    actually meets the room.
 2. **The wave.** Eight impulse slots (origin, direction, amplitude, speed,
-   birth time) are uploaded as uniforms. The skin's vertex shader turns
-   them into a travelling Gaussian front; the fragment shader lights the
-   same front up. Nothing is simulated on the CPU.
+   birth time) are uploaded as uniforms. The skin's vertex shader turns them
+   into a travelling Gaussian front and dents the surface; the fragment
+   shader computes the same front per pixel, so the light is a crisp
+   travelling contour instead of a glow smeared across the mesh resolution.
+   Nothing is simulated on the CPU.
 3. **The air.** Motes drift on a cheap curl field. Hands push and pull
    them, and a fresh impact gathers them for a moment.
 
@@ -104,22 +109,25 @@ public/scenes/main.iwsdk.scene.json
 ## What is verified, and what is not
 
 Verified in the IWSDK managed runtime / IWER (Meta Quest 3 emulation,
-`immersive-ar`, emulated `sunlit_living_room`), on 2026-10-19:
+`immersive-ar`, emulated `sunlit_living_room`), on 2026-10-20:
 
 | Check | Result |
 | --- | --- |
 | `npm run typecheck`, `npm run build` | pass |
 | Managed runtime starts, scene loads, panel renders | pass |
-| Console after a fresh session | no errors |
+| Console after a fresh session | no application errors |
 | Session enters `immersive-ar`, granted `plane-detection`, `mesh-detection`, `hand-tracking`, `hit-test` | pass |
 | Room sensed: 15 planes + 14 meshes, 28 surfaces reported on the panel | pass |
 | Controller trigger: press charges, release fires the impulse where the ray meets the measured surface (impact counter rises) | pass |
-| Hand pinch (session `select` events): same strike path, hand skeleton and gesture (`open`) tracked | pass |
-| Wave front: the skin lights up along the travelling front across floor and furniture (frozen frame with `ecs pause` + `ecs step`) | pass |
-| Impact ring: expands and fades on the struck surface | pass |
+| Hand pinch (session `select` events): same strike path, hand skeleton and gesture tracked | pass |
+| Aim spark: a soft point of light marks the aimed surface and grows with the charge (controller and hand) | pass |
+| Wave front: a thin luminous contour crosses the floor, table, sofa and walls (frozen frames at 0.1, 0.35, 0.7 and 1.1 s with `ecs pause` + `ecs step`) | pass |
+| Impact ring: thin, expands and fades on the struck surface | pass |
+| Two-hand tension: holding both triggers raises TENSION to 0.99; the release produces a visibly stronger, faster wave | pass |
+| Panel captures the trigger: pressing a panel button does not strike the room behind it | pass |
 | DEBUG view: plane rectangles and mesh bounds drawn correctly, pointing ray and contact point shown | pass |
-| Panel buttons: **Debug view** toggles the mode, **Reset field** clears the field (impact counter back to 0) | pass |
-| Skin and debug outline withdrawn when the session ends | pass |
+| Panel buttons: **Debug view** toggles the mode, **Reset field** clears the field (impact counter back to 0), **Exit to Browser** ends the session | pass |
+| Skin and debug outline withdrawn when the session ends; panel returns to `browser preview` | pass |
 | Desktop preview (no XR): panel, motes, 60 fps | pass |
 
 Not verified, and still open:
@@ -134,12 +142,13 @@ Not verified, and still open:
   planes only, and without hit-test there is no second source of contact
   points.
 - **Depth occlusion.** The skin and the motes draw over real furniture.
-- **Two-hand tension.** The tension value is computed and displayed, but
-  stretching the field with two real hands was not exercised in the
-  emulator, which reports one pointer at a time.
 - **The mote push/pull.** The open-palm push and the fist pull are
   implemented and the gestures are recognised, but their visual effect on
   the dust was not measured.
+- **Joint-pinch tension.** Tension was proven with two held triggers (the
+  same code path, with the held select treated as a pinch); the joint
+  distance path was not exercised, because IWER's `set-select-value` fires
+  the select events without closing the emulated finger joints.
 
 See [docs/tasks/reality-field.md](../../../docs/tasks/reality-field.md) in
 the repository for the full brief.

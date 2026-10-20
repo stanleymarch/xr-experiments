@@ -33,7 +33,7 @@ import { fieldState } from '../field/state.js';
 import type { Entity } from '@iwsdk/core';
 
 /** Motes kept alive when the field has no authored count. */
-const DEFAULT_MOTES = 1400;
+const DEFAULT_MOTES = 2000;
 /** Half-width of the mote volume around the viewer, meters. */
 const VOLUME_HALF_XZ = 2.6;
 /** Height of the mote volume relative to the head, meters. */
@@ -55,7 +55,7 @@ varying float vLife;
 void main() {
   vLife = aLife;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  gl_PointSize = clamp(aSize * (5.0 / max(-mv.z, 0.2)), 1.0, 12.0);
+  gl_PointSize = clamp(aSize * (8.0 / max(-mv.z, 0.25)), 1.5, 16.0);
   gl_Position = projectionMatrix * mv;
 }
 `;
@@ -68,7 +68,7 @@ void main() {
   if (d > 0.25) discard;
   float glow = exp(-d * 11.0);
   vec3 color = mix(vec3(0.34, 0.56, 0.98), vec3(0.92, 0.98, 1.0), vLife);
-  gl_FragColor = vec4(color * 1.35, glow * (0.22 + 0.7 * vLife));
+  gl_FragColor = vec4(color * 1.35, glow * (0.3 + 0.75 * vLife));
 }
 `;
 

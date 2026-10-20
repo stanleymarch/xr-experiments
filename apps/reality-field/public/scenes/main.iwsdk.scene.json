@@ -22,8 +22,8 @@
         "Field": {
           "mode": "dream",
           "waveSpeed": 1.7,
-          "waveWidth": 0.34,
-          "moteCount": 1400
+          "waveWidth": 0.09,
+          "moteCount": 2000
         }
       }
     },
@@ -35,7 +35,7 @@
         "asset": "field-panel"
       },
       "transform": {
-        "position": [0, 1.28, -1.15]
+        "position": [0, 1.08, -1.15]
       },
       "components": {
         "RayInteractable": {}

@@ -99,3 +99,48 @@ simulation can be frozen, advanced a frame at a time and photographed.
 - **The wave needs a slow clock to be seen.** 1.7 m/s with a long decay
   tail: the room should still be ringing a second and a half after the
   strike.
+
+## Art pass (second verification, 2026-10-20)
+
+Re-checking the experience visually in IWER (four frozen wave frames, a
+charge sequence, DEBUG, hands, both panel modes) exposed problems that the
+functional checks had missed:
+
+- **The wave read as a flat blue sheet.** The front was computed only per
+  vertex on a ~0.2 m skin grid, a wide Gaussian (0.34 m) smeared it across
+  whole surfaces, and a hard alpha clamp saturated the band into one colour.
+  The front is now computed **per pixel** in the fragment shader (the vertex
+  shader keeps the displacement), the crest is narrow (0.09 m), the spatial
+  falloff is `1/(1 + 0.55 d²)` and the alpha is a soft exponential. The
+  result is a thin luminous contour that follows the real geometry.
+- **The resting skin was a milky veil.** Additive layers (a plane and a mesh
+  can cover the same pixel, and `DoubleSide` doubles every surface) made even
+  a 3% rim visible over the real room. The resting alpha is now exactly
+  zero: the room is only lit by its own wave.
+- **The impact ring was a giant white donut.** It is now a thin band that
+  fades in 1.2 s — the wave is the sentence, the ring is the punctuation.
+- **DREAM had no aiming feedback.** The strike landed wherever the ray
+  pointed, invisibly. A soft point of light (a one-vertex `Points` sprite)
+  now marks the contact and grows with the charge; it is hidden while the
+  pointer hovers the panel.
+- **Panel clicks struck the room behind the panel.** The trigger is now
+  captured while any `Hovered` UI element is under the pointer, so a button
+  press is only a button press.
+- **The panel covered the wall art.** Moved from 1.28 m to 1.08 m; its
+  background is 92% opaque for readability against bright passthrough.
+- **Tension was unreachable in the emulator.** A held select now counts as a
+  pinch for the tension check, so two triggers stretch the field; the joint
+  distance remains the primary signal on hand tracking. Verified: TENSION
+  0.99 with both triggers, and the release produces a visibly stronger wave.
+- **Motes were nearly invisible.** 2000 motes, larger and brighter points.
+
+Two traps worth remembering for this project:
+
+- Vite can keep serving an old module after a series of HMR edits, with the
+  browser executing a class that no longer matches the file (the stack line
+  numbers in the error no longer match the source). `browser reload` is not
+  always enough; restarting the managed runtime (`dev down` / `dev up`)
+  clears it.
+- A single-vertex `Points` marker buried itself in the surface when offset
+  along the picker's normal (the normal can point into the mesh). Offset the
+  marker toward the viewer instead.

@@ -57,9 +57,12 @@ vec3 waveDisplace(vec3 worldPos, out float energy) {
     float dist = length(delta);
     float front = age * uImpulseSpeed[i];
     float x = (dist - front) / max(uWaveWidth, 0.05);
+    // Narrow crest: the front must read as a travelling ridge, not as a
+    // filled disc. A wide Gaussian turns every surface into a flat light
+    // sheet and loses the room's own material.
     float ring = exp(-x * x);
-    float falloff = 1.0 / (1.0 + 0.35 * dist * dist);
-    float decay = exp(-age * 0.45);
+    float falloff = 1.0 / (1.0 + 0.55 * dist * dist);
+    float decay = exp(-age * 0.5);
     float a = amp * ring * falloff * decay;
     disp += uImpulseDir[i] * a;
     energy += abs(a);
@@ -112,7 +115,7 @@ export class WaveField {
       uImpulseStart: { value: starts },
       uImpulseSpeed: { value: speeds },
       uWaveTime: { value: 0 },
-      uWaveWidth: { value: 0.34 },
+      uWaveWidth: { value: 0.09 },
     };
   }
 

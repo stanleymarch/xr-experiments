@@ -23,7 +23,7 @@ export const Field = createComponent('Field', {
   /** Speed of the elastic wave front, meters per second. */
   waveSpeed: { type: Types.Float32, default: 1.7 },
   /** Width of the wave front, meters. */
-  waveWidth: { type: Types.Float32, default: 0.34 },
+  waveWidth: { type: Types.Float32, default: 0.09 },
   /** Live motes (particles suspended in the room air). */
   moteCount: { type: Types.Int32, default: 1400 },
 });

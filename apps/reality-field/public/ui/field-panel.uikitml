@@ -15,12 +15,12 @@
     border-radius: 1.2;
     border-width: 0.1;
     border-color: rgba(120, 136, 155, 0.55);
-    background-color: rgba(240, 244, 248, 0.86);
+    background-color: rgba(240, 244, 248, 0.92);
   }
 
   .panel-root:dark {
     border-color: rgba(255, 255, 255, 0.16);
-    background-color: rgba(12, 16, 22, 0.78);
+    background-color: rgba(12, 16, 22, 0.86);
   }
 
   .heading {

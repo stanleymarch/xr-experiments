@@ -4,11 +4,14 @@ Google XR Blocks is retired from active development in this repository. New Meta
 
 Retained concepts:
 
-- **WEATHER//ROOM** — the physical room manifests local weather from Open-Meteo: rain, wind, cloudiness, temperature and pressure, with a `-24h / NOW / +24h` timeline.
-- **REALITY//FIELD** — detected physical room geometry behaves as a force field for particles/fragments. Implemented as a native IWSDK app in `apps/reality-field`.
+- **WEATHER//ROOM** — the physical room manifests local weather from Open-Meteo: rain, wind, cloudiness, temperature and pressure, with a `-24h / NOW / +24h` timeline. Implemented in `apps/weather-room`.
+- **REALITY//FIELD** — the detected room becomes an elastic field: an impulse dents the measured surface and a luminous wave travels through its geometry. Implemented in `apps/reality-field`.
 - **CITY//ORBIT** — OSM/POI spatial city visualization in tabletop/360 modes with hand scaling.
 - **SOUND//SPACE** — microphone/FFT-driven spatial sound visualization with frozen sound sculptures.
 - **ECHO//ROOM** — spatial memory / temporal debugger of recent interactions.
+
+The three unrealised concepts are archived, with their mechanics, in
+[`docs/ideas/`](docs/ideas/). They are not part of the current catalog or build.
 
 Migration rules:
 

@@ -29,6 +29,15 @@
     h1 .glow { color: var(--accent); text-shadow: 0 0 18px rgba(53, 242, 255, 0.55); }
     header p { margin: 0; color: var(--muted); font-size: 0.95rem; font-weight: 300; }
     .lang { margin-top: 10px; font-size: 0.8rem; }
+    .quick {
+      margin: 14px 0 0; display: flex; flex-wrap: wrap; justify-content: center;
+      align-items: baseline; gap: 8px 16px; font-size: 0.86rem; color: var(--muted);
+    }
+    .quick a {
+      color: var(--accent); text-decoration: none; letter-spacing: 0.04em;
+      border-bottom: 1px solid rgba(53, 242, 255, 0.35); padding-bottom: 1px;
+    }
+    .quick a:hover { border-bottom-color: var(--accent); }
     .lang button {
       background: none; border: 1px solid #232342; color: var(--muted);
       border-radius: 999px; padding: 2px 12px; margin: 0 3px; cursor: pointer;
@@ -85,7 +94,12 @@
 <body>
   <header>
     <h1>xr<span class="glow">//</span>experiments</h1>
-    <p data-i18n="tagline">MR-погода и упругая комната на Meta IWSDK и три камерные AR-игры. Quest 3, телефон, десктоп.</p>
+    <p data-i18n="tagline">Два MR-опыта на Meta IWSDK — упругая комната и погода за окном — и три камерные AR-игры. Quest 3, телефон, десктоп.</p>
+    <p class="quick">
+      <span data-i18n="quick">Сразу в опыте:</span>
+      <a href="iwsdk/reality-field/">REALITY//FIELD</a>
+      <a href="iwsdk/weather-room/">WEATHER//ROOM</a>
+    </p>
     <div class="lang">
       <button id="lang-ru" class="on">RU</button><button id="lang-en">EN</button>
     </div>
@@ -101,8 +115,7 @@
       <tr><td>8th Wall engine (8frame 1.5.0), A-Frame</td><td><a href="https://www.8thwall.com/">8thwall.com</a> — коммерческий движок, бесплатный тир; <a href="https://aframe.io/">A-Frame</a> MIT</td><td>8thwall/</td></tr>
       <tr><td>Meta Immersive Web SDK 1.1.0-rc.1 + three.js (super-three)</td><td><a href="https://www.npmjs.com/package/@iwsdk/create">npm @iwsdk/create</a>, Meta Platforms, MIT; three.js MIT</td><td>apps/weather-room, apps/reality-field</td></tr>
       <tr><td>cannon-es</td><td><a href="https://github.com/pmndrs/cannon-es">pmndrs/cannon-es</a>, MIT (npm)</td><td>8thwall/knockdown</td></tr>
-      <tr><td>Open-Meteo API</td><td><a href="https://open-meteo.com/">open-meteo.com</a> — бесплатно без ключа, лимит 10 000 запр./сутки, некоммерческое использование</td><td>концепт WEATHER//ROOM → apps/weather-room</td></tr>
-      <tr><td>Overpass API / OpenStreetMap</td><td><a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>, ODbL; публичные серверы Overpass — умеренное использование, кэширование</td><td>концепт CITY//ORBIT</td></tr>
+      <tr><td>Open-Meteo API</td><td><a href="https://open-meteo.com/">open-meteo.com</a> — бесплатно без ключа, лимит 10 000 запр./сутки, некоммерческое использование; резерв — MET Norway, wttr.in</td><td>apps/weather-room</td></tr>
       <tr><td>Unbounded, Geologica</td><td>Google Fonts, <a href="https://scripts.sil.org/OFL">SIL Open Font License 1.1</a></td><td data-i18n="lic_fonts">эта страница</td></tr>
       <tr><td>QR-коды</td><td><a href="https://goqr.me/api/">goqr.me API</a> — бесплатный генератор, картинки по требованию</td><td data-i18n="lic_qr">карточки каталога</td></tr>
     </table>
@@ -110,17 +123,18 @@
   <footer>
     <a href="https://staniverse.xyz">staniverse.xyz</a>
     &middot; <a href="https://github.com/stanleymarch/xr-experiments">github.com/stanleymarch/xr-experiments</a>
-    &middot; <span data-i18n="foot">XR нужен HTTPS и поддерживающий браузер; камера/микрофон/геолокация спрашиваются на входе.</span>
+    &middot; <span data-i18n="foot">XR нужен HTTPS и поддерживающий браузер; камера (8th Wall) и геолокация для погоды спрашиваются на входе.</span>
   </footer>
   <script>
     const I18N = {
       ru: {
-        tagline: 'MR-погода и упругая комната на Meta IWSDK и три камерные AR-игры. Quest 3, телефон, десктоп.',
+        tagline: 'Два MR-опыта на Meta IWSDK — упругая комната и погода за окном — и три камерные AR-игры. Quest 3, телефон, десктоп.',
+        quick: 'Сразу в опыте:',
         lic_title: 'Технологии и лицензии',
         lic_intro: 'Стороннее — бесплатное, с атрибуцией. Наш код — MIT. Данные — по их лицензиям.',
         th_what: 'Что', th_src: 'Источник / лицензия', th_where: 'Где',
         lic_fonts: 'эта страница', lic_qr: 'карточки каталога',
-        foot: 'XR нужен HTTPS и поддерживающий браузер; камера/микрофон/геолокация спрашиваются на входе.',
+        foot: 'XR нужен HTTPS и поддерживающий браузер; камера (8th Wall) и геолокация для погоды спрашиваются на входе.',
         loading: 'Загрузка…', empty: 'Пока пусто.',
         err: 'Не удалось загрузить список опытов.',
         open: 'Открыть →',
@@ -130,12 +144,13 @@
         sec_8thwall_note: 'A-Frame · камерный AR на телефоне',
       },
       en: {
-        tagline: 'IWSDK mixed-reality weather, an elastic room and three camera-AR games. Quest 3, phone, desktop.',
+        tagline: 'Two Meta IWSDK mixed-reality experiences — an elastic room and local weather — plus three camera-AR games. Quest 3, phone, desktop.',
+        quick: 'Jump straight in:',
         lic_title: 'Tech & licenses',
         lic_intro: 'Third-party bits are free and credited. Our code is MIT. Data follows its licenses.',
         th_what: 'What', th_src: 'Source / license', th_where: 'Where',
         lic_fonts: 'this page', lic_qr: 'catalog cards',
-        foot: 'XR needs HTTPS and a capable browser; camera/mic/geolocation ask on entry.',
+        foot: 'XR needs HTTPS and a capable browser; camera (8th Wall) and location for weather ask on entry.',
         loading: 'Loading…', empty: 'Nothing yet.',
         err: 'Could not load the experiment list.',
         open: 'Open →',

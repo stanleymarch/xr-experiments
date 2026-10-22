@@ -360,6 +360,39 @@ config still targets 8081; the check ran on 8091 because another IWSDK
 workspace owns 8081 on this machine. Physical Quest 3 depth (`unsigned-short`)
 and Android WebXR remain unverified.
 
+### 2026-10-22 — production boot verification (live GitHub Pages)
+
+The live Pages build (`7af4aa7`, `assets/index-BYXKWpBH.js`) boots in a real
+browser. Playwright 1.63.0 headless Chromium loaded
+`https://stanleymarch.github.io/xr-experiments/iwsdk/weather-room/` with a
+granted geolocation (55.7558, 37.6173): `requestAnimationFrame` ran, the scene
+JSON and all six custom TTFs were fetched, `#weather-browser-panel` mounted, and
+the live Open-Meteo response rendered `LIVE`, `9.9 C · Clouds`, `rain 0.0 mm/h
+(1 %) · wind 7 km/h` and `My location (±0 m) · 55.76°, 37.62°`. The console had
+no boot error, only the expected headless WebGL `ReadPixels` warnings and the
+cloud ray-march diagnostics.
+
+The earlier "production hang" was a harness artifact, not an app regression. The
+OpenCode browser pane reported `document.visibilityState === 'visible'` but its
+`requestAnimationFrame` loop was suspended: a 3 s probe recorded 0 RAF callbacks
+while `setInterval` fired 78 times. `World.create` awaits `loadLevel`, and
+`LevelSystem.update` advances that promise inside the RAF loop, so the scene
+never starts in that pane. Use a visible browser or Playwright for boot checks;
+do not diagnose RAF-driven boot from the OpenCode pane.
+
+Timing caveat: in headless Chromium with software GL, the level resolved about
+52 s after navigation and the panel mounted about 66 s after navigation. Runtime
+MSDF atlas generation for the six Geologica/Unbounded faces dominates; this is
+not a Quest 3 or Android timing claim. The app's `LOADING` state appears only
+after the panel mounts, so a slow software renderer shows the gradient
+background for most of that time. Physical Quest 3 depth (`unsigned-short`),
+hardware frame pacing and Android WebXR remain unverified.
+
+The temporary production test of `bundle.fonts: ['inter']` was removed: the app
+never requests the Inter chunk because every text style resolves through the
+custom family map, and the unmodified `iwsdkDev()` production build above boots
+without it.
+
 ### Physical Quest 3 check (2026-10-08, serial 2G0YC5ZG5203DD)
 
 Rain visibility was verified on the real headset in `immersive-ar` (Rome,

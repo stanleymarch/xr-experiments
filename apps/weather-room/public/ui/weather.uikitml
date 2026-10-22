@@ -2,11 +2,6 @@
 <style>
   @font-face {
     font-family: "Geologica";
-    src: url("../fonts/Geologica-Regular.ttf");
-    font-weight: 400;
-  }
-  @font-face {
-    font-family: "Geologica";
     src: url("../fonts/Geologica-Medium.ttf");
     font-weight: 500;
   }
@@ -19,11 +14,6 @@
     font-family: "Geologica";
     src: url("../fonts/Geologica-Bold.ttf");
     font-weight: 700;
-  }
-  @font-face {
-    font-family: "Unbounded";
-    src: url("../fonts/Unbounded-Medium.ttf");
-    font-weight: 500;
   }
   @font-face {
     font-family: "Unbounded";

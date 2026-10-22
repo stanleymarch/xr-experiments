@@ -220,10 +220,38 @@ surface. Timeline controls and Sandbox have separate rows with clear gutters.
 Brand typography matches staniverse.xyz: Unbounded (headings) and Geologica
 (body) are vendored as OFL-1.1 files in `public/fonts/`, with license texts in
 `public/licenses/`. The DOM panel loads Latin and Cyrillic WOFF2 subsets by
-`unicode-range`. The spatial panel uses TTF faces with explicit Cyrillic-aware
-MSDF loaders in `src/weather/spatial-fonts.ts`; the SDK's default TTF loader
-otherwise generates an ASCII-only atlas, even from a Cyrillic-capable TTF.
-Russian copy was visually checked on both surfaces, not only in font files.
+`unicode-range`.
+
+The spatial panel uses four faces: Geologica 500, Geologica 600, Geologica 700
+and Unbounded 700. Their full-Cyrillic MSDF atlases are pre-generated at build
+time into `public/fonts/msdf/` (one glyph JSON + one 1024×1024 PNG page per
+face, ~2.6 MiB total). `src/weather/font-atlas.ts` patches
+`TTFLoader.loadAsync` before `World.create()`, so both the SDK's `@font-face`
+preload and the explicit loaders in `src/weather/spatial-fonts.ts` receive the
+baked face instead of running the WASM generator. If a baked asset is missing,
+the stock loader and the runtime Cyrillic loader remain the correctness
+fallback.
+
+Regenerate the atlases after changing a TTF, the charset, or the atlas options:
+
+```sh
+npx playwright install chromium   # once per machine/CI image
+npm run fonts:generate
+```
+
+The generated assets are checked in, so a normal `npm run build` does not need
+Playwright or Chromium. The generator uses the same `SPATIAL_FONT_CHARSET` and
+1024×1024/48 options as the runtime fallback (`src/weather/font-charset.ts`),
+writes a content-hashed `font-atlas-manifest.json`, and strips the font kerning
+table. The Geologica kerning table alone was ~6 MB of generated JSON; panel
+labels are short and do not need it. Unused `@font-face` weights (Geologica 400
+and Unbounded 500) are not declared or preloaded. Russian copy was visually
+checked on both surfaces, not only in font files.
+
+`index.html` paints a dependency-free branded boot overlay before the module
+bundle loads. It shows elapsed time, offers a Reload button after 30 s, and
+lifts once the world is ready or the DOM HUD / boot error appears. That covers
+the remaining scene and first-frame work instead of showing an empty page.
 The 3D timeline signposts are authored stroke-glyph
 geometry, not font rendering, so the manifest asset stays deterministic across
 editor and application realms.
@@ -380,18 +408,56 @@ while `setInterval` fired 78 times. `World.create` awaits `loadLevel`, and
 never starts in that pane. Use a visible browser or Playwright for boot checks;
 do not diagnose RAF-driven boot from the OpenCode pane.
 
-Timing caveat: in headless Chromium with software GL, the level resolved about
-52 s after navigation and the panel mounted about 66 s after navigation. Runtime
-MSDF atlas generation for the six Geologica/Unbounded faces dominates; this is
-not a Quest 3 or Android timing claim. The app's `LOADING` state appears only
-after the panel mounts, so a slow software renderer shows the gradient
-background for most of that time. Physical Quest 3 depth (`unsigned-short`),
-hardware frame pacing and Android WebXR remain unverified.
+Timing caveat: at that revision, in headless Chromium with software GL, the
+level resolved about 52 s after navigation and the panel mounted about 66 s
+after navigation. Runtime MSDF atlas generation for the six
+Geologica/Unbounded faces dominated; this is not a Quest 3 or Android timing
+claim. The app's `LOADING` state appears only after the panel mounts, so a slow
+software renderer showed the gradient background for most of that time. The
+pre-generated atlas change below supersedes this boot path.
 
 The temporary production test of `bundle.fonts: ['inter']` was removed: the app
 never requests the Inter chunk because every text style resolves through the
 custom family map, and the unmodified `iwsdkDev()` production build above boots
 without it.
+
+### 2026-10-22 — pre-generated MSDF atlases + boot overlay
+
+The spatial panel's MSDF atlases are now generated at build time, not at
+runtime. Four used faces (Geologica 500/600/700, Unbounded 700) are baked into
+`public/fonts/msdf/`; `src/weather/font-atlas.ts` patches `TTFLoader.loadAsync`
+before `World.create()` so the SDK `@font-face` preload and
+`spatial-fonts.ts` both receive the full-Cyrillic face from the static glyph
+JSON + PNG. The unused Geologica 400 and Unbounded 500 blocks were removed from
+`weather.uikitml`, kerning tables were stripped from the baked JSON, and the
+asset names include a content hash (`741ee571` for this build). The generated
+payload is 2.63 MiB across four JSON/PNG pairs. The generator is reproducible
+with `npm run fonts:generate`.
+
+`index.html` also paints a dependency-free branded boot overlay before the
+module bundle loads, reports elapsed time, offers Reload after 30 s, and lifts
+when the world is ready or the DOM HUD / boot error appears.
+
+Local production-build evidence (final bundle `assets/index-DXJGVGz0.js`,
+served over HTTP, not Pages): Playwright 1.63.0 headless Chromium with granted
+geolocation (55.7558, 37.6173) saw the overlay present at first paint, the DOM
+HUD at ~16.9 s, the overlay lifted at ~17.3 s, and `LIVE` weather at ~18.7 s.
+The network log contained four `fonts/msdf/*.json` and four `fonts/msdf/*.png`
+requests, no `.ttf` MSDF requests, and the panel rendered `LIVE`,
+`6.9 C · Clouds`, `rain 0.0 mm/h (0 %) · wind 6 km/h`. There were no page
+errors; only the expected headless WebGL `ReadPixels` performance warnings.
+This is roughly a 4× HUD-mount improvement over the ~66 s measurement above,
+but it is still a software-rendered desktop timing, not a Quest 3 or Android
+claim.
+
+The baked spatial face was also checked visually: in a local flat runtime the
+panel was temporarily placed in front of the camera and switched to Russian.
+The screenshot rendered `ЛАЙВ`, `СЕЙЧАС`, `6.9 °C · Облака`,
+`дождь 0.0 mm/h (0 %) ветер 6 km/h NW`, `Песочница: ВЫКЛ`,
+`Обновить`, `Место` and `Выйти` with no missing-glyph warnings. That check
+proves the baked Cyrillic atlas and family map in a flat render; it does not
+prove Quest-only sensing, immersive pose/comfort, or hardware frame pacing.
+Physical Quest 3 (`unsigned-short` depth) and Android WebXR remain unverified.
 
 ### Physical Quest 3 check (2026-10-08, serial 2G0YC5ZG5203DD)
 

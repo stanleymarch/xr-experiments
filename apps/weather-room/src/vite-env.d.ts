@@ -5,6 +5,8 @@ declare global {
   /** Injected by index.html; shows pre-UI failures instead of a white page. */
   interface Window {
     __showBootError?: (detail: unknown) => void;
+    /** Injected by index.html; removes the immediate boot overlay. */
+    __hideBootOverlay?: () => void;
   }
 }
 export {};

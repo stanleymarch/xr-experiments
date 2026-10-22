@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "generatorVersion": 2,
+  "buildId": "741ee571",
+  "charsetLength": 426,
+  "fontSize": 48,
+  "textureSize": [
+    1024,
+    1024
+  ],
+  "fieldRange": 4,
+  "padding": 4,
+  "fixOverlaps": true,
+  "fonts": [
+    {
+      "family": "Geologica",
+      "weight": "500",
+      "src": "fonts/Geologica-Medium.ttf",
+      "json": "fonts/msdf/Geologica-500-741ee571.json",
+      "page": "fonts/msdf/Geologica-500-741ee571.png"
+    },
+    {
+      "family": "Geologica",
+      "weight": "600",
+      "src": "fonts/Geologica-SemiBold.ttf",
+      "json": "fonts/msdf/Geologica-600-741ee571.json",
+      "page": "fonts/msdf/Geologica-600-741ee571.png"
+    },
+    {
+      "family": "Geologica",
+      "weight": "700",
+      "src": "fonts/Geologica-Bold.ttf",
+      "json": "fonts/msdf/Geologica-700-741ee571.json",
+      "page": "fonts/msdf/Geologica-700-741ee571.png"
+    },
+    {
+      "family": "Unbounded",
+      "weight": "700",
+      "src": "fonts/Unbounded-Bold.ttf",
+      "json": "fonts/msdf/Unbounded-700-741ee571.json",
+      "page": "fonts/msdf/Unbounded-700-741ee571.png"
+    }
+  ]
+}

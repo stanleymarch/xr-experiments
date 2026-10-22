@@ -20,60 +20,34 @@
  * node's `computedFont` effect so the fuller atlas is generated once and
  * then shared from UIKit's font cache.
  *
- * `weather.uikitml` keeps its six `.ttf` declarations untouched (they build
- * the family map this module overrides). If a face is added/renamed there,
- * update `SPATIAL_FONT_FILES` below to match.
+ * `weather.uikitml` keeps its four used `.ttf` declarations untouched (they
+ * build the family map this module overrides). If a face is added/renamed
+ * there, update `SPATIAL_FONT_FILES` below and regenerate the atlases. The
+ * pre-generated fast path (`font-atlas.ts`) serves the full charset directly;
+ * this module remains the fallback if those static assets are unavailable.
  */
 
 import { UIKit } from '@iwsdk/core';
 import type { UIKitMLAsset } from '@iwsdk/core';
+import {
+  SPATIAL_ATLAS_FONT_SIZE,
+  SPATIAL_ATLAS_TEXTURE_SIZE,
+  SPATIAL_FONT_CHARSET,
+} from './font-charset.js';
 
-/** Family → weight → TTF file, mirroring weather.uikitml exactly. */
+/** Family → weight → TTF file, mirroring the used faces in weather.uikitml. */
 const SPATIAL_FONT_FILES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   Geologica: {
-    '400': 'fonts/Geologica-Regular.ttf',
     '500': 'fonts/Geologica-Medium.ttf',
     '600': 'fonts/Geologica-SemiBold.ttf',
     '700': 'fonts/Geologica-Bold.ttf',
   },
   Unbounded: {
-    '500': 'fonts/Unbounded-Medium.ttf',
     '700': 'fonts/Unbounded-Bold.ttf',
   },
 };
 
-function rangeString(first: number, last: number): string {
-  let out = '';
-  for (let code = first; code <= last; code += 1) out += String.fromCodePoint(code);
-  return out;
-}
-
-/**
- * Every character the spatial panel can display:
- * - ASCII printables + tab (clocks, units `mm/h`, `km/h`, `C`, `%`, coords,
- *   compass `N/NE/…`, provider tokens, URLs in demo reasons).
- * - Latin-1 Supplement (U+00A0–U+00FF): `°` in `12.34°, …` location labels,
- *   diacritics in reverse-geocoded IP place names.
- * - Latin Extended-A (U+0100–U+017F): central/eastern-European city names
- *   from IP reverse-geocoding (any city worldwide can appear).
- * - Full Cyrillic (U+0400–U+045F, incl. `Ёё`) plus `Ґґ` (U+0490–U+0491) for
- *   Ukrainian place names, and `№` (U+2116).
- * - General punctuation used by the dictionary: en/em dash, curly quotes,
- *   ellipsis `…`.
- *
- * IP place names are unbounded, so coverage is by range, not by dictionary
- * enumeration. Runtime negatives use ASCII hyphen-minus (JS `toFixed`), which
- * is already in the ASCII range.
- */
-export const SPATIAL_FONT_CHARSET: string =
-  ` \t${rangeString(0x21, 0x7e)}` +
-  rangeString(0x00a0, 0x00ff) +
-  rangeString(0x0100, 0x017f) +
-  rangeString(0x0400, 0x045f) +
-  'Ґґ№–—‘’“”…';
-
-/** Atlas texture for ~430 glyphs at 48 px; bundled Inter fits 104 glyphs in 256×512. */
-const SPATIAL_ATLAS_TEXTURE_SIZE: [number, number] = [1024, 1024];
+export { SPATIAL_FONT_CHARSET };
 
 const absoluteFontUrl = (file: string): string =>
   new URL(`${import.meta.env.BASE_URL}${file.replace(/^\/+/u, '')}`, window.location.href).href;
@@ -102,7 +76,7 @@ function charsetLoader(url: string): FontLoaderFn {
         {
           url,
           charset: SPATIAL_FONT_CHARSET,
-          fontSize: 48,
+          fontSize: SPATIAL_ATLAS_FONT_SIZE,
           textureSize: SPATIAL_ATLAS_TEXTURE_SIZE,
           fieldRange: 4,
           padding: 4,
@@ -117,7 +91,7 @@ function charsetLoader(url: string): FontLoaderFn {
 /**
  * Replace the panel root's MSDF loaders with charset-aware ones covering
  * {@link SPATIAL_FONT_CHARSET}. Safe to call once the `weather-panel`
- * scene object exists; returns `false` (leaving the ASCII atlas in place)
+ * scene object exists; returns `false` (leaving the preloaded atlas in place)
  * when the panel or its UIKit root is not ready yet.
  */
 export function installSpatialFonts(panel: UIKitMLAsset | null | undefined): boolean {

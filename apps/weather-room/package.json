@@ -11,6 +11,7 @@
     "reference:status": "iwsdk reference status",
     "reference:warmup": "iwsdk reference warmup",
     "typecheck": "tsc --noEmit",
+    "fonts:generate": "node scripts/generate-font-atlases.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -27,6 +28,7 @@
     "@iwsdk/vite-plugin-dev": "1.1.0-rc.1",
     "@meta-quest/metavr": "^1.8.1",
     "@types/three": "^0.185.0",
+    "playwright": "1.63.0",
     "typescript": "^5.5.0",
     "vite": "^7.1.4"
   },

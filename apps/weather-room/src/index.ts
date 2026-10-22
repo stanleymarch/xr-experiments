@@ -7,6 +7,7 @@
 import { DepthSensingSystem, World } from '@iwsdk/core';
 import projectOptions from 'virtual:iwsdk-project';
 import { ensureAudioContextAvailable } from './weather/audio-stub.js';
+import { installPreGeneratedFonts } from './weather/font-atlas.js';
 import { BrowserPanelSystem } from './weather/systems/browser-panel.js';
 import { HandOccluderSystem } from './weather/systems/hand-occluder.js';
 import { HandFieldSystem } from './weather/systems/hand-field-system.js';
@@ -31,6 +32,12 @@ import { WindSystem } from './weather/systems/wind.js';
 // aborts the entire boot (a dead page on such phones). Install the silent
 // stub first — a no-op wherever real WebAudio exists.
 ensureAudioContextAvailable();
+
+// Serve the build-time MSDF atlases before World.create() runs the UIKitML
+// @font-face preload. Without this, the SDK generates ASCII atlases in a worker
+// (~19 s for the used faces) and spatial-fonts then regenerates full Cyrillic
+// atlases (~99 s). Falls back to that stock path if the static assets fail.
+installPreGeneratedFonts();
 
 const boot = (world: World): void => {
   // Flat browser HUD first: its init is pure DOM, and it must mount even when
@@ -86,6 +93,7 @@ const boot = (world: World): void => {
 const onBootError = (reason: unknown): void => {
   const err = reason instanceof Error ? (reason.stack ?? reason.message) : reason;
   window.__showBootError?.(err);
+  window.__hideBootOverlay?.();
   console.error('[weather-room] boot failed', reason);
 };
 
@@ -95,6 +103,12 @@ World.create(
 ).then((world) => {
   try {
     boot(world);
+    // Let the first rendered frame and the DOM HUD appear before lifting the
+    // overlay. The overlay also watches for #weather-browser-panel / #boot-error
+    // for the XR-only path where that HUD is not mounted.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => window.__hideBootOverlay?.());
+    });
   } catch (error) {
     onBootError(error);
   }

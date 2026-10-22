@@ -8,6 +8,116 @@
     />
     <link rel="icon" href="data:," />
     <title>WEATHER//ROOM</title>
+    <style>
+      /* Immediate, dependency-free boot surface. The module bundle, scene and
+         fonts can take a few seconds on a headset; without this the first paint
+         is an empty dark page. Hidden by index.ts once the world is ready, or
+         as soon as the DOM HUD / boot error appears. */
+      #boot-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 9998;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        color: #eef5ff;
+        background:
+          radial-gradient(1100px 760px at 50% 18%, #12263f 0%, #08111f 55%, #03060c 100%);
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        transition: opacity 0.45s ease, visibility 0.45s ease;
+      }
+      #boot-overlay[data-hidden='true'] {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .boot-card {
+        width: min(420px, 86vw);
+        text-align: center;
+      }
+      .boot-kicker {
+        margin: 0 0 14px;
+        color: #79d7f2;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+      }
+      .boot-title {
+        margin: 0;
+        font-size: clamp(27px, 7vw, 39px);
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        line-height: 1.05;
+      }
+      .boot-slash {
+        color: #79d7f2;
+      }
+      .boot-subtitle {
+        margin: 14px 0 0;
+        color: #a9c3df;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .boot-track {
+        position: relative;
+        height: 3px;
+        margin: 26px 0 14px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #12233d;
+      }
+      .boot-track::after {
+        content: '';
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 42%;
+        background: linear-gradient(90deg, transparent, #79d7f2, transparent);
+        animation: boot-slide 1.4s ease-in-out infinite;
+      }
+      .boot-status {
+        margin: 0;
+        color: #dce8f7;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .boot-elapsed {
+        margin: 6px 0 0;
+        color: #6f88a5;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.08em;
+      }
+      .boot-reload {
+        margin-top: 18px;
+        padding: 8px 16px;
+        border: 1px solid #2c4767;
+        border-radius: 999px;
+        background: #0d1930;
+        color: #dce8f7;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .boot-reload[hidden] {
+        display: none;
+      }
+      @keyframes boot-slide {
+        from {
+          transform: translateX(-110%);
+        }
+        to {
+          transform: translateX(260%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-track::after {
+          width: 100%;
+          animation: none;
+          opacity: 0.55;
+        }
+      }
+    </style>
     <script>
       // Boot error surface: without this any pre-UI failure is a bare white
       // page (Quest Browser has no devtools). Inline and dependency-free so
@@ -59,6 +169,69 @@
     </script>
   </head>
   <body style="margin: 0; background: #060b18">
+    <div id="boot-overlay" role="status" aria-live="polite">
+      <div class="boot-card">
+        <p class="boot-kicker">STANIVERSE</p>
+        <h1 class="boot-title">WEATHER<span class="boot-slash">//</span>ROOM</h1>
+        <p class="boot-subtitle">Local weather, made spatial.</p>
+        <div class="boot-track" aria-hidden="true"></div>
+        <p class="boot-status" id="boot-status">Preparing the room…</p>
+        <p class="boot-elapsed" id="boot-elapsed" aria-hidden="true">0s</p>
+        <button class="boot-reload" id="boot-reload" type="button" hidden>
+          Reload
+        </button>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var overlay = document.getElementById('boot-overlay');
+        var status = document.getElementById('boot-status');
+        var elapsed = document.getElementById('boot-elapsed');
+        var reload = document.getElementById('boot-reload');
+        if (!overlay || !status || !elapsed || !reload) return;
+
+        var started = Date.now();
+        var hidden = false;
+        var timer = setInterval(function () {
+          var seconds = Math.floor((Date.now() - started) / 1000);
+          elapsed.textContent = seconds + 's';
+          if (seconds >= 30) {
+            status.textContent =
+              'Still working. The first load can be slow on a headset; you can reload if it stays stuck.';
+            reload.hidden = false;
+          } else if (seconds >= 12) {
+            status.textContent = 'Still preparing the room…';
+          }
+        }, 1000);
+
+        function hide() {
+          if (hidden) return;
+          hidden = true;
+          clearInterval(timer);
+          overlay.setAttribute('data-hidden', 'true');
+          setTimeout(function () {
+            overlay.remove();
+          }, 500);
+        }
+        window.__hideBootOverlay = hide;
+        reload.addEventListener('click', function () {
+          window.location.reload();
+        });
+
+        function checkReady() {
+          if (
+            document.querySelector('#weather-browser-panel') ||
+            document.querySelector('#boot-error')
+          ) {
+            observer.disconnect();
+            hide();
+          }
+        }
+        var observer = new MutationObserver(checkReady);
+        observer.observe(document.body, { childList: true, subtree: true });
+        checkReady();
+      })();
+    </script>
     <div id="scene-container"></div>
     <script type="module" src="/src/index.ts"></script>
   </body>

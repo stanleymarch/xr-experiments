@@ -23,6 +23,7 @@ import {
   AdditiveBlending,
   BufferAttribute,
   BufferGeometry,
+  DepthOccludable,
   DoubleSide,
   DynamicDrawUsage,
   Mesh,
@@ -141,6 +142,7 @@ export class LightningBolt {
     this.mesh.visible = false;
     this.mesh.raycast = () => {};
     this.boltEntity = world.createTransformEntity(this.mesh);
+    this.boltEntity.addComponent(DepthOccludable, {});
   }
 
   /**

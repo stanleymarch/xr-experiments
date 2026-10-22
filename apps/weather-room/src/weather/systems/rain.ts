@@ -12,6 +12,7 @@
 import {
   NormalBlending,
   createSystem,
+  DepthOccludable,
   DoubleSide,
   DynamicDrawUsage,
   InstancedBufferAttribute,
@@ -194,6 +195,7 @@ export class RainSystem extends createSystem({}) {
     this.streaks.count = 0;
     this.streaks.name = 'Weather Rain Streaks';
     this.entity = this.world.createTransformEntity(this.streaks);
+    this.entity.addComponent(DepthOccludable, {});
     // F5/F6 legibility: 9.5 cm outer ring (was 6 cm) reads against fog at 2 m
     // without going white; representative contacts only (48-pool, see below).
     const splashGeo = new RingGeometry(0.045, 0.095, 24);
@@ -231,6 +233,7 @@ export class RainSystem extends createSystem({}) {
     this.splashMesh.instanceMatrix.needsUpdate = true;
     this.splashMesh.name = 'Weather Rain Contacts';
     this.splashEntity = this.world.createTransformEntity(this.splashMesh);
+    this.splashEntity.addComponent(DepthOccludable, {});
     this.cleanupFuncs.push(() => {
       this.entity.dispose();
       this.splashEntity.dispose();

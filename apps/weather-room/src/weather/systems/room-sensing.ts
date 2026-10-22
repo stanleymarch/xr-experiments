@@ -114,8 +114,22 @@ export class RoomSensingSystem extends createSystem({
   private lastSignatureScanAt = -REBUILD_DEBOUNCE_S;
   private pendingRebuild = false;
   private lastRebuildAt = -REBUILD_DEBOUNCE_S;
+  private reference: XRReferenceSpace | null = null;
+
+  private readonly resetKnowledge = (): void => {
+    roomModel.beginRebuild([]);
+    this.signatures.clear();
+    this.pendingRebuild = true;
+    this.lastRebuildAt = -REBUILD_DEBOUNCE_S;
+  };
 
   init(): void {
+    this.xrManager.addEventListener('sessionend', this.resetKnowledge);
+    this.cleanupFuncs.push(() => {
+      this.xrManager.removeEventListener('sessionend', this.resetKnowledge);
+      this.reference?.removeEventListener('reset', this.resetKnowledge);
+      this.reference = null;
+    });
     const remember = (entity: Entity): void => {
       if (entity.object3D != null && !this.tracked.has(entity)) {
         // Wall plates are never room-surface sources (see isWallPlane);
@@ -146,6 +160,13 @@ export class RoomSensingSystem extends createSystem({
   }
 
   update(_delta: number, time: number): void {
+    const reference = this.world.xrReferenceSpace ?? null;
+    if (reference !== this.reference) {
+      this.reference?.removeEventListener('reset', this.resetKnowledge);
+      this.reference = reference;
+      this.reference?.addEventListener('reset', this.resetKnowledge);
+      this.resetKnowledge();
+    }
     if (time - this.lastSignatureScanAt >= REBUILD_DEBOUNCE_S) {
       this.lastSignatureScanAt = time;
       for (const entity of this.tracked) {

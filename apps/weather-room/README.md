@@ -168,27 +168,23 @@ controller-ray trigger. Targets are built to hold >=3 deg of subtense out to
 controller haptics acknowledge the gesture, and haptics fire only into the
 holding hand.
 
-Carry keeps the platform's kinematic rule — exact 1:1 tracking, no physics —
-while the panel turns itself to face the viewer (yaw and pitch follow the
-view vector, roll pinned at 0) and keeps its apparent size constant by scaling
-the physical size with distance (eased, clamped 0.6x..2x). The rail faces the
-viewer the same way but keeps its authored 16 deg up-tilt. The pointing laser
-dims while a distance drag is active so it never obscures the carried surface.
-Release parks the control exactly where it was left; hovering or moving a hand
+Carry is translation only, driven entirely by the SDK grab handles — exact
+1:1 tracking, no physics, and no second transform controller running
+alongside the grab (the former auto-facing, angular-size scaling and
+thumbstick push/pull were removed with the Z-fight they caused). Release
+parks the control exactly where it was left; hovering or moving a hand
 afterwards never moves it, and moving the rail never scrubs time.
 
-Squeezing anywhere on a surface to move it is an app-specific extension, not a
-platform-parity claim: Meta documents moving a panel by grabbing an edge or the
-Control Bar. The app implements the shortcut by routing the squeeze into the ray
-pointer's distance-grab handle, which uses `MultiPointer` members outside the
-documented public surface (`getPointer('ray')`, `setIntersection`, `commit`,
-`routeDown`, `routeUp`; the documented surface is `toggleSubPointer`,
-`getSubPointerState`, `getActiveKind`, `getRayBusy`). Those reads are
-version-bound to IWSDK 1.0.1 and every call is guarded, so a missing member
-degrades to the standard paths — the Control Bar plaque and the ray trigger —
-instead of failing silently. Promotion is refused while that hand already owns a
-grab, so a trigger-held scrub is never hijacked, and the routing latch is
-cleared on source loss or session exit.
+Moving a window stays on the documented SDK paths only: the Control Bar plaque
+via ray trigger (`DistanceGrabbable`) and near squeeze/pinch
+(`OneHandGrabbable`, `useHandPinchForGrab`). The former squeeze-anywhere
+shortcut — built on `MultiPointer` members outside the documented public
+surface — was removed on 2026-10-18, as was the late-lock squeeze-edge
+routing in `ControlGrabIntentSystem`. No undocumented `MultiPointer` members
+are read anywhere now; that system only suppresses one hand's touch pointer
+around an explicit near-control grab via the documented
+`toggleSubPointer('touch', ...)` (the SDK gives poke hover priority over grab
+near panels, which could silently ignore a valid squeeze on the plaque).
 
 Released positions persist for the current XR session, including focus
 transitions. A new XR session places the panel 1.4 m forward / 0.18 m above
@@ -299,6 +295,71 @@ Cloud fragment work was reduced from seven layers of nine simplex-noise
 evaluations per pixel to three layers sharing one RG texture sample. The
 room-grid rebuild is bounded too.
 
+### 2026-10-18 — SDK 1.1.0-rc.1 + interaction fixes (IWER evidence)
+
+Upgraded `@iwsdk/{core,cli,reference,vite-plugin-dev}` 1.0.1 -> 1.1.0-rc.1
+(`next` channel; three r185). Typecheck passes with zero API breaks in the
+used surface (grab, depth-sensing, environment raycast, controllers,
+plane/mesh scene understanding; `DistanceGrabHandle` `MoveAtSource` still
+integrates pointer deltas onto the object's live pose).
+
+Two user-reported interaction defects were fixed and verified in IWER:
+
+- **Chest-level rain after turning**: `RoomModel.beginRebuild` now unions the
+  fresh surface box with the retained grid snapshot and seeds the new grid
+  from it, so plane-detection churn (floor plane momentarily dropping out of
+  the tracked set) can no longer raise the rain volume's floor or shrink its
+  footprint onto the last remaining plate. Repro: floor+table build, then a
+  table-only rebuild keeps `min.y` at the measured floor and still serves
+  floor heights outside the table footprint (`repro` run, PASS). Runtime:
+  London +14 h, `rain: status=mesh measured=yes contacts≈16-23k/5s` before
+  and after a 180 deg head turn (`artifacts/rain-after-turn.png`).
+- **Window grab**: `stepGripFollow` now re-baselines `previousWorld` AFTER the
+  pin, matching `MoveAtSource`'s integrate-onto-live-pose semantics. Carry is
+  translation only: the competing auto-facing, angular-size and thumbstick
+  push/pull transform was removed the same day because it fought the grab
+  handle (the Z-fight), and the undocumented squeeze-anywhere routing plus its
+  late-lock press routing in `ControlGrabIntentSystem` were removed with it.
+  Runtime: ray-trigger and near-squeeze grabs both capture and release cleanly;
+  the carried panel tracks the hand 1:1 with orientation and scale untouched
+  (`artifacts/panel-carried-final.png`).
+
+**Depth pipeline migration.** The 793-line app-owned `DepthOcclusionSystem` is
+gone. `DepthSensingSystem` now owns the depth texture and the occlusion pass
+(`enableOcclusion`, `enableDepthTexture`, `useFloat32`, `blurRadius: 20`), and
+every weather entity carries `DepthOccludable`; the custom weather
+`ShaderMaterial`s keep only the stock-anchor injection in
+`src/weather/depth-occlusion.ts`, so they join the same SDK pass instead of
+sampling a second depth texture. The panel and timeline rail remain excluded
+from `DepthOccludable` (Horizon's control-availability rule). IWER grants
+`depth-sensing` and the rebuilt scene renders with the stock system registered;
+no visual occlusion A/B was repeated in this pass. The Quest 3 `unsigned-short`
+path is **not re-verified** — the 2026-10-09 format investigation below explains
+why the app used to own its decode, and a headset run is still required before
+claiming device occlusion.
+
+**Room lifecycle.** Room knowledge resets on `sessionend` and on a reference
+space `reset`, and the grid lattice is world-locked across rebuilds so retained
+cells stay aligned with the measured surfaces.
+
+### 2026-10-21 — 1.1.0-rc.1 re-check (IWER)
+
+`npm run typecheck` and `npm run build` pass. The managed runtime entered
+`immersive-ar` on `sunlit_living_room`; the panel and timeline render, the
+session grants `depth-sensing`, and the console is clean apart from the
+expected IP-geolocation aborts (the network fallback) and the SDK's
+`THREE.Clock` deprecation warning. The visual occlusion A/B and the grab/rain
+repros were not repeated in this pass, so their 2026-10-18 evidence above still
+stands alone.
+
+The SDK dev plugin's process-identity probe gives `powershell.exe` 1.5 s;
+PowerShell starts in 1.8–2.6 s on this workstation, so the managed server
+initially refused to start. A local (uncommitted, `node_modules`) timeout
+increase was used only to run this check and was reverted afterwards. The app
+config still targets 8081; the check ran on 8091 because another IWSDK
+workspace owns 8081 on this machine. Physical Quest 3 depth (`unsigned-short`)
+and Android WebXR remain unverified.
+
 ### Physical Quest 3 check (2026-10-08, serial 2G0YC5ZG5203DD)
 
 Rain visibility was verified on the real headset in `immersive-ar` (Rome,
@@ -332,7 +393,12 @@ density ramp predicts). Device captures: `artifacts/device-rain-final-1..3.png`;
 the pre-fix layouts: `artifacts/device-panel-2d-new.png`,
 `artifacts/device-xr-new-ui-1..2.png`.
 
-### Real-world depth occlusion (2026-10-09, IWER only)
+### Real-world depth occlusion (2026-10-09, IWER only) — superseded 2026-10-18
+
+> **Historical.** The app-owned depth system described in this section was
+> replaced on 2026-10-18 by the SDK-native pipeline (see that entry above). The
+> measurements and the device-format investigation remain useful, but the
+> implementation notes below no longer describe the current code.
 
 `iwsdk.config.json` requests `depthSensing` (`usage: gpu-optimized`,
 `format: float32`) as an **optional** feature: a denied Spatial permission or a
@@ -443,7 +509,11 @@ the probe selects (the raw samples in the line decide it), the real
 `normDepthBufferFromNormView`, the readback's colour-renderability, and whether
 the per-eye layer/transform split holds on a non-multiview stereo renderer.
 
-#### Deviations from the depth-occlusion skill, and why
+#### Deviations from the depth-occlusion skill (historical, 2026-10-09)
+
+**No longer current:** the 2026-10-18 migration adopts the stock path; this
+subsection records the reasoning behind the now-removed custom system. The
+`required: false` request and the UI exclusion still apply.
 
 The skill (`iwsdk-depth-occlusion`) documents the framework path: request
 `"depthSensing": { "required": true, "usage": "gpu-optimized", "format":
@@ -841,12 +911,11 @@ prove those device-specific behaviors.
 
 The panel and the rail each expose one hover-revealed Control Bar plaque below
 their surface (no permanent bar, no edge handles, no move hint): rest draws
-nothing, hover draws it white, a grab turns it #001E78, and a grab also turns
-the control toward the viewer (yaw + pitch, roll 0), keeps its angular size
-across depth translation, and pushes/pulls it along the view ray from the
-holding hand's thumbstick (0.4 m to 3 m). A `Handle.inputState`-verified IWER
-run covers the bar grab, the carry and the pull; haptics and audio were not
-felt (the emulator has no actuators).
+nothing, hover draws it white, a grab turns it #001E78, and the grab moves
+the control 1:1 with the hand — orientation and scale stay untouched. A
+measured IWER run (2026-10-18) covers the plaque grab, the carry and the
+release for both the near squeeze and the ray trigger; haptics and audio were
+not felt (the emulator has no actuators).
 
 Depth order between the panel, the rail and the plaque is only verified in
 IWER: the panel's UIKit surface, the plaque and the opaque rail parts now write

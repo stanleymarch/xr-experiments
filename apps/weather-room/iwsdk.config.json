@@ -28,7 +28,7 @@
     "input": {
       "canvasPointerEvents": {
         "enabled": true,
-        "activeDuringXR": true
+        "activeDuringXR": false
       }
     },
     "render": {
@@ -53,7 +53,7 @@
   "dev": {
     "emulator": {
       "device": "metaQuest3",
-      "environment": "living_room"
+      "environment": "sunlit_living_room"
     }
   }
 }

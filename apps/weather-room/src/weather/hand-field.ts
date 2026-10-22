@@ -59,9 +59,8 @@ export const HAND_FIELD_LAYERS: Readonly<Record<'rain' | 'dust' | 'wind' | 'snow
 };
 
 /**
- * Single shared uniform block (module singleton, exactly like
- * `depthOcclusionUniforms` and `lightSharedUniforms`): `HandFieldSystem`
- * writes it once per frame and every wired material reads the same values.
+ * Single shared uniform block (module singleton, like `lightSharedUniforms`):
+ * `HandFieldSystem` writes it once per frame and every wired material reads the same values.
  *
  * Packing: capsule `i` occupies slots `2i` and `2i+1` — vec4 A = endpoint A
  * with `.w` = radius, vec4 B = endpoint B with `.w` = the same radius (kept

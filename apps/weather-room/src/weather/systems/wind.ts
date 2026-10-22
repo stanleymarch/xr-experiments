@@ -14,6 +14,7 @@
 import {
   NormalBlending,
   createSystem,
+  DepthOccludable,
   DoubleSide,
   DynamicDrawUsage,
   InstancedBufferAttribute,
@@ -212,6 +213,7 @@ export class WindSystem extends createSystem({}) {
     this.parkAll(this.streaks, STREAK_FULL);
     this.streaks.name = 'Weather Wind Streaks';
     this.streakEntity = this.world.createTransformEntity(this.streaks);
+    this.streakEntity.addComponent(DepthOccludable, {});
     const sparkGeo = new PlaneGeometry(1, 1);
     const sparkAlphaAttr = new InstancedBufferAttribute(this.sparkAlphas, 1);
     sparkAlphaAttr.setUsage(DynamicDrawUsage);
@@ -236,6 +238,7 @@ export class WindSystem extends createSystem({}) {
     this.parkAll(this.sparks, SPARK_FULL);
     this.sparks.name = 'Weather Wind Sparks';
     this.sparkEntity = this.world.createTransformEntity(this.sparks);
+    this.sparkEntity.addComponent(DepthOccludable, {});
     this.cleanupFuncs.push(() => {
       // InstancedMesh GPU buffers release only through their own dispose event.
       this.streaks.dispose();

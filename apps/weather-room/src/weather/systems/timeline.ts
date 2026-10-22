@@ -17,7 +17,6 @@ import {
   createSystem,
   DistanceGrabbable,
   Grabbed,
-  GrabSystem,
   Hovered,
   Mesh,
   MeshBasicMaterial,
@@ -39,22 +38,13 @@ import {
 } from '../../scene-assets/timeline-control.scene-asset.js';
 import { TimelineHandle, TimelineMoveGrip } from '../components/timeline-handle.js';
 import {
-  baselineAngularSize,
   buildAffordance,
-  collectHoverHands,
   ContactImpulse,
-  createAngularSizeState,
   createGripDriver,
-  createSurfaceGrab,
-  createViewPullState,
-  faceViewer,
   placeControlAtViewer,
-  stepAngularSize,
-  stepViewDistance,
-  thumbstickY,
   unlockGripAudio,
 } from '../control-placement.js';
-import type { Affordance, AngularSizeState, GripDriver, Handedness, SurfaceGrab, ViewPullState } from '../control-placement.js';
+import type { Affordance, GripDriver } from '../control-placement.js';
 import { usesSpatialControls } from '../capabilities.js';
 import { Haptics, pulseHaptics } from '../feedback.js';
 import { PLAYHEAD_MAX_H, PLAYHEAD_MIN_H, WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
@@ -119,12 +109,6 @@ export class TimelineSystem extends createSystem({
   private moveNearEntity: Entity | null = null;
   private moveFarEntity: Entity | null = null;
   private moveDriver: GripDriver | null = null;
-  private surfaceGrab: SurfaceGrab | null = null;
-  /** Aiming anywhere on the rail counts as aiming at the window. */
-  private readonly carrySurface: Object3D[] = [];
-  private wasCarried = false;
-  private readonly angularSize: AngularSizeState = createAngularSizeState();
-  private readonly viewPull: ViewPullState = createViewPullState();
   private needsPlacement = false;
   private placedInSession = false;
   /** Last computed rail visibility (usesSpatialControls gate). */
@@ -381,30 +365,7 @@ export class TimelineSystem extends createSystem({
       movementMode: MovementMode.MoveFromTarget,
       returnToOrigin: false,
     });
-    this.moveDriver = createGripDriver(this.world, this.moveNearEntity, this.moveFarEntity, moveAffordance, {
-      // Carry turns the rail about Y only: its authored 16 deg up-tilt stays,
-      // roll stays 0, angular size is kept across depth translation, and the
-      // thumbstick pushes/pulls it along the view ray.
-      onHeld: (root, dt, hand) => {
-        const head = this.world.player.head;
-        faceViewer(root, head, FACE_TILT_X);
-        stepViewDistance(root, head, thumbstickY(this.world, hand), this.viewPull, dt);
-        stepAngularSize(root, head, this.angularSize, dt);
-      },
-      // Aiming anywhere on the rail housing counts as aiming at the window,
-      // so the Control Bar reveals on housing hover like the panel's does.
-      probeHoverHands: (out) => { collectHoverHands(this.world, this.carrySurface, out); },
-    });
-    // Native window grab: pointing anywhere at the rail and squeezing moves it.
-    // A hand already scrubbing (knob, ray proxy, or strip) keeps its capture;
-    // promotion is skipped for that hand so a scrub never becomes a rail move.
-    // The bare-housing hit box is the surface the bridge and the hover probe
-    // test against: it is the only rail object the ray can intersect outside
-    // the knob, the ray proxy and the strip.
-    if (this.surfaceHit != null) this.carrySurface.push(this.surfaceHit);
-    this.surfaceGrab = createSurfaceGrab(this.world, this.carrySurface, moveAffordance.far, this.moveNearEntity, {
-      isHandBusy: (hand) => this.isHandBusy(hand),
-    });
+    this.moveDriver = createGripDriver(this.world, this.moveNearEntity, this.moveFarEntity, moveAffordance);
 
     this.cleanupFuncs.push(() => {
       this.moveNearEntity?.dispose();
@@ -423,21 +384,11 @@ export class TimelineSystem extends createSystem({
       this.moveGripEntity?.dispose();
       this.moveAffordance?.dispose();
       this.moveAffordance = null;
-      this.surfaceGrab = null;
       this.handleEntity?.dispose();
       this.railEntity?.dispose();
     });
   }
 
-  /** True while `hand` already holds a TimelineHandle (knob, ray proxy, or strip). */
-  private isHandBusy(hand: Handedness): boolean {
-    const grabSystem = this.world.getSystem(GrabSystem) ?? null;
-    if (grabSystem == null) return false;
-    for (const entity of this.queries.grabbed.entities) {
-      if (grabSystem.getHolderHand(entity) === hand) return true;
-    }
-    return false;
-  }
 
   update(delta: number): void {
     if (this.railEntity == null || this.handleEntity == null) return;
@@ -457,14 +408,6 @@ export class TimelineSystem extends createSystem({
     // handle inside the moved frame.
     const rail = this.railEntity.object3D;
     if (this.moveDriver != null && rail != null) {
-      const carried = this.moveNearEntity?.hasComponent(Grabbed) === true
-        || this.moveFarEntity?.hasComponent(Grabbed) === true;
-      if (carried && !this.wasCarried) {
-        baselineAngularSize(rail, this.world.player.head, this.angularSize);
-        this.viewPull.velocity = 0;
-      }
-      this.wasCarried = carried;
-      this.surfaceGrab?.update();
       this.moveDriver.update(rail, delta);
     }
 

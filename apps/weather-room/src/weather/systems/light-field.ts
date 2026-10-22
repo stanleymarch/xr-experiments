@@ -14,6 +14,7 @@ import {
   Color,
   ConeGeometry,
   createSystem,
+  DepthOccludable,
   DoubleSide,
   Mesh,
   ShaderMaterial,
@@ -95,6 +96,7 @@ export class LightFieldSystem extends createSystem({}) {
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 4;
     this.entity = this.world.createTransformEntity(this.mesh);
+    this.entity.addComponent(DepthOccludable, {});
     this.cleanupFuncs.push(() => {
       this.entity.dispose();
       geometry.dispose();

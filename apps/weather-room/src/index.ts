@@ -8,7 +8,6 @@ import { DepthSensingSystem, World } from '@iwsdk/core';
 import projectOptions from 'virtual:iwsdk-project';
 import { ensureAudioContextAvailable } from './weather/audio-stub.js';
 import { BrowserPanelSystem } from './weather/systems/browser-panel.js';
-import { DepthOcclusionSystem } from './weather/systems/depth-occlusion.js';
 import { HandOccluderSystem } from './weather/systems/hand-occluder.js';
 import { HandFieldSystem } from './weather/systems/hand-field-system.js';
 import { GestureSandboxSystem } from './weather/systems/gesture-sandbox.js';
@@ -40,25 +39,17 @@ const boot = (world: World): void => {
   // panel and never got to init.
   world.registerSystem(BrowserPanelSystem, { priority: 38 });
   world.registerSystem(ControlGrabIntentSystem, { priority: -3.9 });
-  // Real-world depth image -> occlusion. The framework system stays registered
-  // for the depth feature diagnostics only (its texture work is off: nothing
-  // samples it), while DepthOcclusionSystem drives the app's own copy of the
-  // depth texture for the custom weather shaders. No entity carries
-  // `DepthOccludable`: the weather layers are occluded by the app's shader
-  // injection, and the UI (panel, timeline rail) follows the Horizon OS rule of
-  // never being hidden by real geometry. Both are no-ops without a depth grant.
-  // Tracked hands are not in that depth image either, so HandOccluderSystem
-  // adds invisible depth-only proxy spheres bound to the hand/controller
-  // joints: they are virtual geometry, so they do cut the UI when a hand is in
-  // front of it (which is the physically correct reading in passthrough).
+  // One SDK-owned depth pipeline. Weather ShaderMaterials expose its stock
+  // shader anchors; DepthOccludable opts in only weather, never the controls.
+  // Depth remains optional on devices without a grant.
   world.registerSystem(DepthSensingSystem, {
     configData: {
-      enableOcclusion: false,
-      enableDepthTexture: false,
+      enableOcclusion: true,
+      enableDepthTexture: true,
+      useFloat32: true,
       blurRadius: 20,
     },
   });
-  world.registerSystem(DepthOcclusionSystem, { priority: 2.6 });
   // Depth-only hand/controller proxies: what the transparent weather layers can
   // fail their depth test against, since the room depth image never contains a
   // tracked hand. Runs after the input layer wrote this frame's joint

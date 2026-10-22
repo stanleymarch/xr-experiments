@@ -6,6 +6,7 @@
 import {
   NormalBlending,
   createSystem,
+  DepthOccludable,
   DoubleSide,
   DynamicDrawUsage,
   InstancedBufferAttribute,
@@ -128,6 +129,7 @@ export class SnowSystem extends createSystem({}) {
     this.flakes.count = 0;
     this.flakes.name = 'Weather Snow Flakes';
     this.entity = this.world.createTransformEntity(this.flakes);
+    this.entity.addComponent(DepthOccludable, {});
     this.cleanupFuncs.push(() => this.entity.dispose());
   }
 

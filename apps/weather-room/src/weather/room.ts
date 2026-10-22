@@ -252,6 +252,26 @@ class RoomModel {
         return;
       }
     }
+    // Keep the measured floor volume through transient plane churn. When the
+    // union exceeds the work cap, crop retained extents around the current
+    // viewer instead of recentering away from them.
+    if (this.snapHas && this.snapCols > 0) {
+      this.min.min(this.snapMin);
+      this.max.max(this.snapMax);
+      for (const axis of ['x', 'z'] as const) {
+        const span = this.max[axis] - this.min[axis];
+        if (span > MAX_SPAN_XZ) {
+          const center = this.hasAnchor ? this.anchorPos[axis] : (this.max[axis] + this.min[axis]) / 2;
+          this.min[axis] = Math.min(Math.max(center - MAX_SPAN_XZ / 2, this.min[axis]), this.max[axis] - MAX_SPAN_XZ);
+          this.max[axis] = this.min[axis] + MAX_SPAN_XZ;
+        }
+      }
+      if (this.max.y - this.min.y > MAX_SPAN_Y) {
+        const wantedMin = this.hasAnchor ? this.anchorPos.y + 1 - MAX_SPAN_Y : (this.max.y + this.min.y - MAX_SPAN_Y) / 2;
+        this.min.y = Math.min(Math.max(wantedMin, this.min.y), this.max.y - MAX_SPAN_Y);
+        this.max.y = this.min.y + MAX_SPAN_Y;
+      }
+    }
     this.hasSurfaces = true;
     this.allocateGrid();
 
@@ -401,12 +421,11 @@ class RoomModel {
 
   /** Allocate (or reuse) the layered height grid over the current min/max. */
   private allocateGrid(): void {
-    const spanX = Math.max(GRID_CELL, this.max.x - this.min.x);
-    const spanZ = Math.max(GRID_CELL, this.max.z - this.min.z);
-    this.gridCols = Math.max(1, Math.ceil(spanX / GRID_CELL));
-    this.gridRows = Math.max(1, Math.ceil(spanZ / GRID_CELL));
-    this.gridMinX = this.min.x;
-    this.gridMinZ = this.min.z;
+    // A fixed world lattice prevents retained cells drifting as bounds refine.
+    this.gridMinX = Math.floor(this.min.x / GRID_CELL) * GRID_CELL;
+    this.gridMinZ = Math.floor(this.min.z / GRID_CELL) * GRID_CELL;
+    this.gridCols = Math.max(1, Math.ceil((this.max.x - this.gridMinX) / GRID_CELL));
+    this.gridRows = Math.max(1, Math.ceil((this.max.z - this.gridMinZ) / GRID_CELL));
     const cells = this.gridCols * this.gridRows;
     if (this.layers.length !== cells * LAYERS_PER_CELL) {
       this.layers = new Float32Array(cells * LAYERS_PER_CELL);
@@ -445,6 +464,9 @@ class RoomModel {
         if (this.layerCounts[i] > 0) { mapped = true; break; }
       }
       if (mapped) {
+        // Only fresh horizontal geometry can claim mesh ownership. Merge old
+        // floor support afterwards; stale table/ceiling layers must disappear.
+        this.retainFloorBand();
         this.probing = false;
         this.clearProbeHits();
         this.hasSurfaces = true;
@@ -568,6 +590,27 @@ class RoomModel {
     this.layers[base + at] = y;
     this.layerCounts[cell] = count + 1;
     return true;
+  }
+
+  /** Preserve only the lowest measured support band, never old furniture. */
+  private retainFloorBand(): void {
+    if (!this.snapHas || this.snapCols === 0) return;
+    let floor = Number.POSITIVE_INFINITY;
+    const cells = this.snapCols * this.snapRows;
+    for (let cell = 0; cell < cells; cell += 1) {
+      if (this.snapCounts[cell] > 0) floor = Math.min(floor, this.snapLayers[cell * LAYERS_PER_CELL]);
+    }
+    for (let cell = 0; cell < cells; cell += 1) {
+      if (this.snapCounts[cell] === 0) continue;
+      const height = this.snapLayers[cell * LAYERS_PER_CELL];
+      if (height > floor + LAYER_MERGE_M) continue;
+      const x = this.snapMinX + (cell % this.snapCols + 0.5) * GRID_CELL;
+      const z = this.snapMinZ + (Math.floor(cell / this.snapCols) + 0.5) * GRID_CELL;
+      const fresh = this.floorLayerAt(x, z, this.layers, this.layerCounts, this.gridCols, this.gridRows, this.gridMinX, this.gridMinZ);
+      // A fresh downward correction wins over the old floor too.
+      if (fresh != null && fresh < height - LAYER_MERGE_M) continue;
+      this.record(x, height, z);
+    }
   }
 
   /** True when the placement volume contains the point (viewer tracking). */

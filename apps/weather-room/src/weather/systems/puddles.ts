@@ -9,6 +9,7 @@
 import {
   Color,
   createSystem,
+  DepthOccludable,
   DynamicDrawUsage,
   CircleGeometry,
   InstancedBufferAttribute,
@@ -171,6 +172,7 @@ export class PuddlesSystem extends createSystem({}) {
     this.patches.instanceMatrix.needsUpdate = true;
     this.patches.name = 'Weather Puddle Patches';
     this.entity = this.world.createTransformEntity(this.patches);
+    this.entity.addComponent(DepthOccludable, {});
     this.cleanupFuncs.push(() => this.entity.dispose());
   }
 

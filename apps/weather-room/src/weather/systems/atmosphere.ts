@@ -18,6 +18,7 @@ import {
   InstancedBufferAttribute,
   Color,
   createSystem,
+  DepthOccludable,
   DirectionalLightComponent,
   DynamicDrawUsage,
   DomeGradient,
@@ -333,7 +334,9 @@ export class AtmosphereSystem extends createSystem({}) {
       enableDepthOcclusion(mat);
       this.plates.push(plate);
       this.plateMats.push(mat);
-      this.plateEntities.push(this.world.createTransformEntity(plate));
+      const plateEntity = this.world.createTransformEntity(plate);
+      plateEntity.addComponent(DepthOccludable, {});
+      this.plateEntities.push(plateEntity);
     }
 
     // Dust: instanced soft round sprites (points render as squares on some GPUs).
@@ -379,6 +382,7 @@ export class AtmosphereSystem extends createSystem({}) {
     this.dust.instanceMatrix.needsUpdate = true;
     this.dust.name = 'Weather Dust Motes';
     this.dustEntity = this.world.createTransformEntity(this.dust);
+    this.dustEntity.addComponent(DepthOccludable, {});
     // Procedural lights are tuned with the current cloud cover and daylight.
     this.sunEntity = this.world.createTransformEntity();
     this.sunEntity.addComponent(DirectionalLightComponent, { intensity: SUN_BRIGHT });

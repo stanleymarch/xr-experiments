@@ -9,7 +9,6 @@ import {
   createSystem,
   DistanceGrabbable,
   Grabbed,
-  GrabSystem,
   Hovered,
   MovementMode,
   OneHandGrabbable,
@@ -49,23 +48,14 @@ import { LOCATION_PRESETS, setManualLocation } from '../weather-data.js';
 import { reloadWeather } from './weather-loader.js';
 import { PanelMoveGrip } from '../components/timeline-handle.js';
 import {
-  baselineAngularSize,
   buildAffordance,
-  collectHoverHands,
   ContactImpulse,
-  createAngularSizeState,
   createGripDriver,
-  createSurfaceGrab,
-  createViewPullState,
-  faceViewer,
   placeControlAtViewer,
   playSandboxCue,
-  stepAngularSize,
-  stepViewDistance,
-  thumbstickY,
   unlockGripAudio,
 } from '../control-placement.js';
-import type { Affordance, AngularSizeState, GripDriver, Handedness, SurfaceGrab, ViewPullState } from '../control-placement.js';
+import type { Affordance, GripDriver } from '../control-placement.js';
 import { installSpatialFonts } from '../spatial-fonts.js';
 
 /** Minimum seconds between panel text pushes (2 Hz ceiling). */
@@ -137,16 +127,11 @@ export class PanelSystem extends createSystem({
   private affordanceNearEntity: Entity | null = null;
   private affordanceFarEntity: Entity | null = null;
   private moveDriver: GripDriver | null = null;
-  private surfaceGrab: SurfaceGrab | null = null;
   private pickerLocationEl: TextLine | null = null;
   private needsAffordanceSeat = true;
   private affordanceBaseScale = 1;
   private panelObject: UIKitMLAsset | null = null;
-  private wasCarried = false;
-  private readonly angularSize: AngularSizeState = createAngularSizeState();
-  private readonly viewPull: ViewPullState = createViewPullState();
   private readonly gripWorldScale = new Vector3();
-  private readonly probeTargets: Object3D[] = [];
   /** Panel scene entity carrying PokeInteractable for touch input. */
   private pokeEntity: Entity | null = null;
   private pokeImpulse: ContactImpulse | null = null;
@@ -429,7 +414,6 @@ export class PanelSystem extends createSystem({
       this.affordanceNearEntity = null;
       this.affordanceFarEntity = null;
       this.moveDriver = null;
-      this.surfaceGrab = null;
     });
   }
 
@@ -481,7 +465,6 @@ export class PanelSystem extends createSystem({
     const affordance = buildAffordance({ name: 'Weather Panel Move Affordance', heightM });
     this.affordance = affordance;
     this.affordanceEntity = this.world.createTransformEntity(affordance.group);
-    this.probeTargets.push(panel);
     this.seatAffordance(panel);
     this.affordanceNearEntity = this.world.createTransformEntity(affordance.near, { parent: this.affordanceEntity });
     this.affordanceFarEntity = this.world.createTransformEntity(affordance.far, { parent: this.affordanceEntity });
@@ -497,44 +480,9 @@ export class PanelSystem extends createSystem({
       movementMode: MovementMode.MoveFromTarget,
       returnToOrigin: false,
     });
-    this.moveDriver = createGripDriver(this.world, this.affordanceNearEntity, this.affordanceFarEntity, affordance, {
-      // Carry keeps the panel facing the viewer (yaw + pitch track the head,
-      // roll stays 0) and keeps its angular size while translation stays a
-      // kinematic 1:1 - no spring, no inertia, no snap-to-hand.
-      onHeld: (root, dt, hand) => this.carryPanel(root, dt, hand),
-      // Anywhere on the panel surface counts as hover, not only the thin frame.
-      probeHoverHands: (out) => { collectHoverHands(this.world, this.probeTargets, out); },
-    });
-    // Native window grab: pointing anywhere at the panel and squeezing moves it.
-    // A hand already holding the trigger elsewhere (or a direct grab on this
-    // hand) keeps its capture; promotion is skipped for that hand.
-    this.surfaceGrab = createSurfaceGrab(this.world, this.probeTargets, affordance.far, this.affordanceNearEntity, {
-      isHandBusy: (hand) => this.isHandBusy(hand),
-    });
+    this.moveDriver = createGripDriver(this.world, this.affordanceNearEntity, this.affordanceFarEntity, affordance);
   }
 
-  /** True while `hand` already holds any grabbed entity (ray or direct grab). */
-  private isHandBusy(hand: Handedness): boolean {
-    const grabSystem = this.world.getSystem(GrabSystem) ?? null;
-    if (grabSystem == null) return false;
-    for (const entity of this.queries.grabbed.entities) {
-      if (grabSystem.getHolderHand(entity) === hand) return true;
-    }
-    return false;
-  }
-
-  /**
-   * Per-frame carry behaviour: face the viewer, pull/push along the view ray
-   * from the holding hand's thumbstick, keep angular size, re-seat the bar.
-   */
-  private carryPanel(root: Object3D, delta: number, hand: Handedness | null): void {
-    const head = this.world.player.head;
-    faceViewer(root, head, 'auto');
-    stepViewDistance(root, head, thumbstickY(this.world, hand), this.viewPull, delta);
-    stepAngularSize(root, head, this.angularSize, delta);
-    const panel = this.panelObject;
-    if (panel != null) this.seatAffordance(panel);
-  }
 
   /** Glue the frame to the panel's live world transform and scale. */
   private seatAffordance(panel: UIKitMLAsset): void {
@@ -571,20 +519,10 @@ export class PanelSystem extends createSystem({
       || this.affordanceFarEntity?.hasComponent(Grabbed) === true;
     if (panelObject != null) {
       if (this.affordance != null) this.affordance.group.visible = panelObject.visible;
-      // Angular size is preserved relative to the grab pose, so a fresh grab
-      // never jumps and a released size is the new reference. The push/pull
-      // velocity restarts from rest on every grab.
-      if (carried && !this.wasCarried) {
-        baselineAngularSize(panelObject, this.world.player.head, this.angularSize);
-        this.viewPull.velocity = 0;
-      }
-      this.wasCarried = carried;
       if (this.needsAffordanceSeat && !carried) this.seatAffordance(panelObject);
       if (this.moveDriver != null) {
-        this.surfaceGrab?.update();
         this.moveDriver.update(panelObject, dt);
-        // After a carry that re-oriented the panel the frame must follow the
-        // panel's new pose; `seatAffordance` re-derives it from the surface.
+        // Keep the scene-level handle aligned when the carry ends.
         if (this.moveDriver.consumeReleased()) this.seatAffordance(panelObject);
       }
     }

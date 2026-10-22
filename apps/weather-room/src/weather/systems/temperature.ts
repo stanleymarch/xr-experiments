@@ -21,6 +21,7 @@
 import {
   Color,
   createSystem,
+  DepthOccludable,
   DoubleSide,
   DynamicDrawUsage,
   InstancedBufferAttribute,
@@ -110,8 +111,7 @@ export class TemperatureSystem extends createSystem({}) {
       side: DoubleSide,
     });
     // Walls, tall furniture and the real floor cut the haze like every other
-    // weather layer; without this it was the one layer that drew straight
-    // through real geometry (and the only survivor of a broken depth pass).
+    // weather layer through the stock DepthOccludable path.
     enableDepthOcclusion(this.material);
     this.haze = new InstancedMesh(geometry, this.material, HAZE_COUNT);
     this.haze.frustumCulled = false;
@@ -124,6 +124,7 @@ export class TemperatureSystem extends createSystem({}) {
     this.haze.instanceMatrix.needsUpdate = true;
     this.haze.name = 'Weather Temperature Haze';
     this.entity = this.world.createTransformEntity(this.haze);
+    this.entity.addComponent(DepthOccludable, {});
     this.lampEntity = this.world.createTransformEntity();
     this.lampEntity.addComponent(PointLightComponent, { intensity: 0.4, distance: 6 });
     this.cleanupFuncs.push(() => {

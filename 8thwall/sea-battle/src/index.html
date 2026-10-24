@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 
   <title>Морской бой — перископный автомат</title>
-  <meta name="description" content="Советский автомат «Морской бой» в дополненной реальности: корабли идут по морю, бей их торпедами с упреждением.">
+  <meta name="description" content="Советский автомат «Морской бой» в дополненной реальности: корабли идут по морю, бей их торпедами с упреждением. WebXR для Quest 3 и камерный AR для телефона.">
 
   <script crossorigin="anonymous" src="./external/scripts/8frame-1.5.0.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@8thwall/xrextras@1/dist/xrextras.js" crossorigin="anonymous"></script>
@@ -17,21 +17,29 @@
 <body>
 <script src="bundle.js"></script>
 
-<!-- HUD: кассовый узел автомата — счётчики пусков и поражений -->
+<!-- HUD: кассовый узел автомата — счётчики пусков, поражений, счёта и волны -->
 <div class="hud">
   <div class="hud-top">
     <span id="torpsLabel" class="counter">ТОРПЕДЫ 10</span>
     <span id="hitsLabel" class="counter">ПОРАЖЕНО 0</span>
+    <span id="scoreLabel" class="counter">СЧЁТ 0</span>
+    <span id="waveLabel" class="counter">ВОЛНА 1</span>
     <button id="resetBtn" type="button" class="btn">ЗАНОВО</button>
   </div>
 
   <!-- Лампа «ТОРПЕДИРОВАНО» на панели автомата -->
   <div id="torpedoed" class="torpedoed hidden">ТОРПЕДИРОВАНО</div>
 
+  <!-- Серия точных попаданий без промаха -->
+  <div id="streakBadge" class="streak hidden">СЕРИЯ 2</div>
+
   <div id="hint" class="hint hidden">
     Корабли идут — бей <b>с упреждением</b>. Тап по морю = пуск
   </div>
   <div id="promptText" class="prompt">ТАПНИ ПО ПОЛУ ПЕРЕД СОБОЙ — РАЗВЕРНУТЬ ФЛОТ</div>
+
+  <!-- Баннер волны: пополнение боезапаса и разгон флота -->
+  <div id="banner" class="banner hidden"></div>
 
   <!-- Призовая игра: 10 попаданий из 10 -->
   <div id="prizeFlash" class="prize hidden">
@@ -46,31 +54,22 @@
   </div>
 </div>
 
-<a-scene
-  sea-battle
-  landing-page
-  xrextras-loading
-  xrextras-runtime-error
-  renderer="colorManagement: true; antialias: true"
-  xrweb="scale: absolute; allowedDevices: any;">
-
-  <a-camera id="camera" position="0 1.6 3"></a-camera>
-
-  <a-light type="ambient" intensity="0.75"></a-light>
-  <a-entity
-    light="type: directional; intensity: 1.0; castShadow: true; shadowMapHeight: 1024; shadowMapWidth: 1024; target: #camera"
-    xrextras-attach="target: camera; offset: 5 9 2"
-    shadow>
-  </a-entity>
-
-  <a-box
-    id="ground"
-    scale="1000 2 1000"
-    position="0 -1 0"
-    material="shader: shadow; transparent: true; opacity: 0.25"
-    shadow>
-  </a-box>
-</a-scene>
+<!-- Ворота в WebXR: «касса» автомата перед входом в иммерсивный AR.
+     Показывается только на устройствах с immersive-ar (Quest 3, Android WebXR). -->
+<div id="arGate" class="argate hidden">
+  <div class="argate-card">
+    <div class="argate-kicker">Перископный автомат &middot; 1974</div>
+    <h1 class="argate-title">МОРСКОЙ<br>БОЙ</h1>
+    <p class="argate-sub">
+      Корабли идут цепными ходами &mdash; бей торпедами с упреждением.
+      Волна за волной флот быстрее, точность продлевает боезапас.
+    </p>
+    <div id="arGateBest" class="argate-best hidden">РЕКОРД: 0</div>
+    <button id="arEnterBtn" type="button" class="argate-btn">ОПУСТИТЬ 15 КОП. &mdash; ВОЙТИ В AR</button>
+    <div id="arGateError" class="argate-err hidden"></div>
+    <div class="argate-hint">Смотри на пол и нажми курок &mdash; флот развернётся. Дальше курок по морю &mdash; пуск.</div>
+  </div>
+</div>
 
 </body>
 

@@ -23,6 +23,7 @@ body {
   overflow: hidden;
   overscroll-behavior: none;
   touch-action: none;
+  background: #0a0f1c;
   font-family: 'Russo One', 'Arial Black', 'Segoe UI', sans-serif;
 }
 
@@ -42,11 +43,11 @@ body {
   left: max(8px, env(safe-area-inset-left));
   right: max(8px, env(safe-area-inset-right));
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
   align-items: stretch;
   gap: clamp(4px, 1.6vw, 10px);
-  font-size: clamp(10px, 3vw, 15px);
-  letter-spacing: clamp(0, 0.5vw, 0.06em);
+  font-size: clamp(10px, 2.6vw, 15px);
+  letter-spacing: clamp(0, 0.4vw, 0.06em);
 }
 
 .counter {
@@ -207,9 +208,151 @@ body {
   border-radius: 999px;
 }
 
-.hidden { opacity: 0 !important; }
+.hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* В иммерсивной WebXR-сессии DOM не рендерится: HUD дублируется в 3D. */
+body.in-ar .hud { display: none; }
+
+/* Баннер волны: «ВЫХОД ФЛОТА N» — пополнение и разгон. */
+.banner {
+  position: absolute;
+  top: 30%;
+  left: 50%;
+  max-width: min(460px, calc(100vw - 28px));
+  padding: clamp(10px, 3vw, 16px) clamp(12px, 4vw, 24px);
+  overflow: hidden;
+  text-align: center;
+  color: var(--cream);
+  font-size: clamp(12px, 3.6vw, 20px);
+  line-height: 1.4;
+  letter-spacing: clamp(0.04em, 1vw, 0.1em);
+  background: rgba(18, 35, 61, 0.92);
+  border: 2px solid var(--amber);
+  border-radius: 8px;
+  transform: translateX(-50%) rotate(-1.2deg);
+}
+
+.banner b {
+  display: block;
+  color: var(--amber);
+  font-size: clamp(15px, 4.6vw, 26px);
+}
+
+/* Касса автомата перед входом в WebXR (Quest 3 / Android WebXR). */
+.argate {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(53, 162, 255, 0.10), transparent 60%),
+    linear-gradient(180deg, #0a1424 0%, #0e1626 55%, #0a0f1c 100%);
+}
+
+.argate-card {
+  width: min(430px, 100%);
+  padding: clamp(18px, 5vw, 30px);
+  text-align: center;
+  background: rgba(18, 35, 61, 0.92);
+  border: 3px solid rgba(255, 182, 76, 0.75);
+  border-radius: 14px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6), inset 0 0 40px rgba(127, 178, 217, 0.06);
+  transform: rotate(-1.2deg);
+}
+
+.argate-kicker {
+  color: var(--grid);
+  font-size: clamp(9px, 2.6vw, 12px);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.argate-title {
+  margin: 10px 0 12px;
+  color: var(--amber);
+  font-size: clamp(34px, 11vw, 56px);
+  line-height: 0.95;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 26px rgba(255, 182, 76, 0.45);
+}
+
+.argate-sub {
+  margin: 0 0 14px;
+  color: var(--cream);
+  font-size: clamp(11px, 3.2vw, 14px);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.argate-best {
+  margin: 0 0 12px;
+  color: var(--lamp);
+  font-size: clamp(11px, 3vw, 14px);
+  letter-spacing: 0.08em;
+}
+
+.argate-btn {
+  display: inline-block;
+  max-width: 100%;
+  padding: clamp(12px, 3.6vw, 16px) clamp(16px, 5vw, 26px);
+  cursor: pointer;
+  color: var(--cream);
+  font: inherit;
+  font-size: clamp(13px, 3.8vw, 17px);
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  background: var(--red);
+  border: 2px solid #8f2415;
+  border-radius: 10px;
+  box-shadow: 0 5px 0 #8f2415, 0 12px 30px rgba(232, 69, 44, 0.35);
+}
+
+.argate-btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 2px 0 #8f2415;
+}
+
+.argate-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.argate-err {
+  margin-top: 12px;
+  color: var(--red);
+  font-size: clamp(10px, 3vw, 13px);
+  line-height: 1.45;
+}
+
+.argate-hint {
+  margin-top: 14px;
+  color: var(--grid);
+  font-size: clamp(9px, 2.6vw, 12px);
+  line-height: 1.5;
+}
 
 /* Низкие телефоны и landscape: панели не закрывают центр прицела. */
+/* Серия точных попаданий: зелёная капсула под кассовой строкой. */
+.streak {
+  position: absolute;
+  top: clamp(64px, 13.5vh, 120px);
+  left: 50%;
+  padding: clamp(3px, 1vw, 5px) clamp(8px, 2.6vw, 14px);
+  color: var(--lamp);
+  font-size: clamp(10px, 2.8vw, 14px);
+  letter-spacing: clamp(0.04em, 1vw, 0.12em);
+  background: rgba(10, 30, 16, 0.85);
+  border: 2px solid rgba(125, 255, 154, 0.75);
+  border-radius: 999px;
+  transform: translateX(-50%);
+}
+
 @media (max-height: 620px) {
   .hud-top { top: max(5px, env(safe-area-inset-top)); }
 
@@ -225,6 +368,8 @@ body {
   }
 
   .torpedoed { top: 62px; }
+
+  .banner { top: 26%; }
 
   .prize,
   .gameover {

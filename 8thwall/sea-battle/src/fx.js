@@ -7,6 +7,7 @@ export const seaSurfaceComponent = {
   schema: {
     width: {type: 'number', default: 1.8},
     depth: {type: 'number', default: 2.4},
+    night: {type: 'number', default: 0},  // 0..1: сумерки, с волной море темнеет
   },
 
   init() {
@@ -17,9 +18,13 @@ export const seaSurfaceComponent = {
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
-      uniforms: {time: {value: 0}},
+      uniforms: {
+        time: {value: 0},
+        night: {value: this.data.night},
+      },
       vertexShader: `
         uniform float time;
+        uniform float night;
         varying vec2 vUv;
         varying float vWave;
 
@@ -36,6 +41,7 @@ export const seaSurfaceComponent = {
       `,
       fragmentShader: `
         uniform float time;
+        uniform float night;
         varying vec2 vUv;
         varying float vWave;
 
@@ -50,7 +56,9 @@ export const seaSurfaceComponent = {
           vec3 deep = vec3(0.025, 0.12, 0.19);
           vec3 teal = vec3(0.10, 0.34, 0.42);
           vec3 color = mix(deep, teal, 0.30 + vUv.y * 0.20 + foam * 0.28 + vWave * 0.05);
-          float alpha = edge * (0.40 + foam * 0.14);
+          // Сумерки поздних волн: море синее и темнее, барашки ярче.
+          color = mix(color, color * vec3(0.42, 0.52, 0.78) + vec3(0.0, 0.008, 0.03), night);
+          float alpha = edge * (0.40 + foam * (0.14 + night * 0.10));
           if (alpha < 0.015) discard;
           gl_FragColor = vec4(color, alpha);
         }
@@ -64,6 +72,10 @@ export const seaSurfaceComponent = {
 
   tick(time) {
     this.material.uniforms.time.value = time / 1000
+  },
+
+  update() {
+    this.material.uniforms.night.value = this.data.night
   },
 
   remove() {

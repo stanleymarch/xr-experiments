@@ -1,6 +1,6 @@
 {
   "title": "Sea Battle",
-  "description": "Classic naval battle laid out in your room — place ships on real planes and fire.",
-  "description_ru": "Классический морской бой, разложенный в твоей комнате.",
-  "tags": ["8th-wall", "game"]
+  "description": "Full Soviet-era Sea Battle arcade game in your room: immersive WebXR on Quest 3 and Android, flat desktop watch-grid mode, camera AR on iPhone.",
+  "description_ru": "Полноценный «Морской бой» 1974 года: иммерсивный WebXR на Quest 3 и Android, десктопный режим с вахтенной сеткой, камерный AR на iPhone. Волны, очки, серии, призовая игра.",
+  "tags": ["webxr", "quest", "a-frame", "game", "8th-wall"]
 }

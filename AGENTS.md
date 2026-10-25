@@ -5,7 +5,7 @@ This repository is migrating from the discontinued Google XR Blocks experiments 
 ## Architecture
 
 - `apps/` — new Meta IWSDK experiences for Quest 3 and supported Android WebXR.
-- `8thwall/` — active iPhone/iPad WebAR code. It is supported code, not legacy.
+- `8thwall/` — active A-Frame code, supported, not legacy. Camera 8th Wall (XR8) serves iPhone/iPad; `sea-battle` is capability-routed and also serves Quest 3/Android via pure A-Frame WebXR plus a flat desktop mode (see `docs/sea-battle.md`).
 - `docs/tasks/` — durable implementation briefs for autonomous coding-agent work.
 - `.omp/` and `.agents/` — ignored local coding-tool settings, sessions and generated skills; not published source.
 
@@ -37,7 +37,8 @@ Do not create a shared package just for architectural neatness. Extract framewor
 
 - Quest 3 MR: Meta IWSDK is the primary target.
 - Supported Android WebXR AR: Meta IWSDK with capability-based degradation.
-- iPhone/iPad WebAR: preserve/use the existing 8th Wall path where required.
+- iPhone/iPad WebAR: preserve/use the existing 8th Wall path where required. 8th Wall SLAM is the fallback of last resort (no WebXR at all); never route a WebXR-capable device to it.
+- `8thwall/sea-battle` routing is the reference pattern: capability detection in `src/boot.js` (immersive-ar → A-Frame WebXR, no navigator.xr → 8th Wall, otherwise → flat desktop A-Frame); no user-agent sniffing.
 - Desktop/IWER: development, automated verification and meaningful fallback; never claim it proves Quest-only sensing or performance.
 
 Use feature/capability detection, not user-agent guesses.

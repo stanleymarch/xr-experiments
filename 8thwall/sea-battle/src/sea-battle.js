@@ -306,6 +306,14 @@ export const seaBattleComponent = {
     this.prompt.classList.add('hidden')
     this.hint.classList.remove('hidden')
     this.message3d('БЕЙ С УПРЕЖДЕНИЕНИЕМ — КУРОК ПО МОРЮ', 3500)
+
+    // Приборная доска переезжает из «щитка у головы» в мир: табло над дальним
+    // краем акватории, разворачивается к игроку по yaw. До постановки доска
+    // ведёт себя по-старому (подсказки постановки у головы).
+    const hud = this.hud3d()
+    if (hud && hud.setWorldAnchor) {
+      hud.setWorldAnchor(this.root, new THREE.Vector3(0, 1.25, SEA.farZ - 0.4))
+    }
   },
 
   buildSea() {
@@ -384,6 +392,36 @@ export const seaBattleComponent = {
       born: performance.now(),
       lastTrail: 0,
     })
+  },
+
+  // --- Курс прицела ---------------------------------------------------------------
+  // Точка на воде, куда реально пойдёт торпеда при выстреле в targetWorld:
+  // тот же кламп «вперёд по Z», что и в launchTorpedo. Маркер прицела
+  // (xr-input) показывает именно её, поэтому прицел и выстрел совпадают
+  // по построению — в том числе когда сырой прицел «за спину» или «за море».
+  aimCoursePoint(targetWorld) {
+    if (!this.placed || !this.root) return null
+    const local = this.root.object3D.worldToLocal(targetWorld.clone())
+    const origin = new THREE.Vector3(0, 0.015, this.playerZ - SEA.launchInset)
+    const dir = new THREE.Vector3(local.x, 0, local.z).sub(
+      new THREE.Vector3(origin.x, 0, origin.z))
+    if (dir.z > -0.05) dir.z = -0.05
+    dir.normalize()
+    // Проекция сырой точки прицела на фактический курс: при валидном
+    // прицеле это сама точка, при курсе «мимо» — ближайшая точка курса
+    // (не ближе 0.35 м от пуска, чтобы маркер не лип к ногам).
+    const along = Math.max(
+      new THREE.Vector3(local.x, 0, local.z).sub(origin).dot(dir), 0.35)
+    const courseLocal = origin.clone().addScaledVector(dir, along)
+    courseLocal.y = 0.015
+    return this.root.object3D.localToWorld(courseLocal)
+  },
+
+  // Мировая точка пуска торпеды — начало линии курса в xr-input.
+  launchOriginWorld() {
+    if (!this.placed || !this.root) return null
+    return this.root.object3D.localToWorld(
+      new THREE.Vector3(0, 0.015, this.playerZ - SEA.launchInset))
   },
 
   // --- Эффекты -------------------------------------------------------------------

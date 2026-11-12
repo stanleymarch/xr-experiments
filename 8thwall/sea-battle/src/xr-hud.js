@@ -1,9 +1,11 @@
 // xr-hud.js — приборная доска автомата в иммерсивном WebXR.
 //
 // DOM-HUD не рендерится в immersive-сессии, поэтому панель дублируется
-// в 3D: plane с canvas-текстурой, подвешенный к камере (следует за
-// головой, как щиток перископа). Кириллица рисуется системным шрифтом
-// Russo One на canvas — без MSDF-атласов и внешних шрифтовых файлов.
+// в 3D: plane с canvas-текстурой. До постановки флота доска висит у
+// головы, как щиток перископа (подсказки «наведи на пол»); после
+// deploySea уходит в мир — табло над дальним краем акватории, каждый
+// кадр разворачивается к игроку только по yaw. Кириллица рисуется
+// системным шрифтом Russo One на canvas — без MSDF-атласов.
 
 const W = 1024
 const H = 512
@@ -59,6 +61,14 @@ export const xrHudComponent = {
     this.mesh.visible = false
     this.el.setObject3D('xr-hud', this.mesh)
 
+    // Мировой якорь: корень акватории + локальная точка табло над её дальним
+    // краем. До постановки флота якоря нет — доска ведёт себя как «щиток
+    // перископа» у головы (подсказки постановки).
+    this.anchorRoot = null
+    this.anchorLocal = null
+    this._v = new THREE.Vector3()
+    this._q = new THREE.Quaternion()
+
     // Панель видима только внутри иммерсивной сессии; вне её DOM-HUD достаточно.
     this.el.sceneEl.addEventListener('enter-ar', () => { this.mesh.visible = true; this.dirty = true })
     this.el.sceneEl.addEventListener('exit-ar', () => { this.mesh.visible = false })
@@ -75,6 +85,17 @@ export const xrHudComponent = {
   setState(patch) {
     Object.assign(this.state, patch)
     this.dirty = true
+  },
+
+  /**
+   * Перевод доски в «мировое табло»: rootEl — корень акватории (ставит
+   * deploySea), local — позиция табло в его системе координат. Каждый кадр
+   * tick держит доску в этой точке и разворачивает к игроку только по yaw:
+   * счёт стабилен в мире и не вращается вместе с головой.
+   */
+  setWorldAnchor(rootEl, local) {
+    this.anchorRoot = rootEl
+    this.anchorLocal = local.clone()
   },
 
   lamp(text, ms) {
@@ -167,8 +188,28 @@ export const xrHudComponent = {
     this.dirty = false
   },
 
+  // Позиция/ориентация доски на этот кадр.
+  updatePlacement() {
+    const cam = this.el.sceneEl.camera
+    if (!cam) return
+    if (this.anchorRoot && this.anchorRoot.object3D) {
+      // Табло в мире: якорь над дальним краем акватории, билборд по yaw
+      // (наклон головы больше не наклоняет и не двигает счёт).
+      this.anchorRoot.object3D.updateWorldMatrix(true, false)
+      this.mesh.position.copy(this.anchorLocal).applyMatrix4(this.anchorRoot.object3D.matrixWorld)
+      cam.getWorldPosition(this._v)
+      this.mesh.rotation.set(0, Math.atan2(this._v.x - this.mesh.position.x, this._v.z - this.mesh.position.z), 0)
+    } else {
+      // До постановки флота — прежний «щиток перископа»: камера-поза + офсет.
+      cam.getWorldQuaternion(this._q)
+      this.mesh.quaternion.copy(this._q)
+      this.mesh.position.set(0, -0.15, -0.48).applyQuaternion(this._q).add(cam.getWorldPosition(this._v))
+    }
+  },
+
   tick(time) {
     if (!this.mesh.visible) return
+    this.updatePlacement()
     const now = performance.now()
     let expire = false
     if (this.state.lamp && now > this.lampUntil) { this.state.lamp = null; expire = true }
@@ -186,6 +227,8 @@ export const xrHudComponent = {
 
   remove() {
     this.el.removeObject3D('xr-hud')
+    this.anchorRoot = null
+    this.anchorLocal = null
     this.mesh.geometry.dispose()
     this.material.dispose()
     this.texture.dispose()

@@ -91,11 +91,15 @@ function buildScene(mode) {
   const camera = el('a-camera', {id: 'camera'})
   if (mode === 'slam') camera.setAttribute('position', '0 1.6 3')
   if (mode === 'flat') camera.setAttribute('position', '0 1.6 0')
+  scene.appendChild(camera)
+
   if (mode !== 'slam') {
     // 3D-приборная доска: в webxr она единственный HUD, в flat включается в VR.
-    camera.appendChild(el('a-entity', {'xr-hud': '', position: '0 -0.15 -0.48'}))
+    // Висит на сцене, а не ребёнком камеры: до постановки флота компонент ведёт
+    // её у головы (подсказки), после постановки ставит табло в мир над дальним
+    // краем акватории — счёт больше не вращается вместе с головой.
+    scene.appendChild(el('a-entity', {'xr-hud': ''}))
   }
-  scene.appendChild(camera)
 
   scene.appendChild(el('a-light', {type: 'ambient', intensity: 0.75}))
 

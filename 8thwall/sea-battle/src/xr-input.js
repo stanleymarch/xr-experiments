@@ -39,14 +39,33 @@ export const xrInputComponent = {
     this.reticle.add(dot)
     this.el.setObject3D('xr-reticle', this.reticle)
 
-    // Маркер прицела — где торпеда пойдёт по воде.
-    this.aimMarker = ringMesh(0.016, 0.024, 0xffb64c, 0.95)
-    this.el.setObject3D('xr-aim', this.aimMarker)
+    // Маркеры прицела + линии курса — по комплекту на контроллер. Маркер
+    // стоит на фактическом курсе торпеды (после клампа launchTorpedo),
+    // линия ведёт от точки пуска к маркеру: траектория видна до выстрела.
+    this.aimGroup = new THREE.Group()
+    this.aimMarkers = [this.makeAimSet(), this.makeAimSet()]
+    this.el.setObject3D('xr-aim-group', this.aimGroup)
 
     this.sceneEl.addEventListener('enter-ar', () => this.onSession())
     this.sceneEl.addEventListener('enter-vr', () => this.onSession())
     this.sceneEl.addEventListener('exit-ar', () => this.teardown())
     this.sceneEl.addEventListener('exit-vr', () => this.teardown())
+  },
+
+  makeAimSet() {
+    const ring = ringMesh(0.016, 0.024, 0xffb64c, 0.95)
+    // Полоса курса лежит на воде: единичный квадрат растягивается по курсу.
+    const line = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({
+        color: 0xffb64c, transparent: true, opacity: 0.28,
+        side: THREE.DoubleSide, depthTest: false,
+      }))
+    line.renderOrder = 19
+    line.visible = false
+    this.aimGroup.add(line)
+    this.aimGroup.add(ring)
+    return {ring, line}
   },
 
   game() {
@@ -73,7 +92,10 @@ export const xrInputComponent = {
     this.hitTestSource = null
     this.placementPoint = null
     this.reticle.visible = false
-    this.aimMarker.visible = false
+    for (const set of this.aimMarkers) {
+      set.ring.visible = false
+      set.line.visible = false
+    }
   },
 
   // Луч источника ввода: контроллер (target-ray) или тап-куржок телефона.
@@ -136,20 +158,6 @@ export const xrInputComponent = {
     }
   },
 
-  // Активный контроллер: берем первый видимый лазер (правая рука приоритетнее).
-  activeLaser() {
-    const lasers = this.sceneEl.querySelectorAll('[laser-controls]')
-    let fallback = null
-    for (const el of lasers) {
-      if (!el.object3D) continue
-      fallback = fallback || el
-      if (el.object3D.visible) {
-        return el
-      }
-    }
-    return fallback
-  },
-
   tick() {
     if (!this.session) return
     const frame = this.sceneEl.frame
@@ -176,33 +184,70 @@ export const xrInputComponent = {
       this.reticle.visible = false
     }
 
-    // Маркер прицела: луч контроллера по плоскости воды.
+    // Маркеры прицела: по одному на каждый tracked-контроллер, из той же
+    // позы targetRaySpace, что берёт выстрел из select-события — маркер
+    // и выстрел совпадают по построению (а не по выбору «первого лазера»).
     const aiming = game && game.placed && !game.over
-    if (aiming) {
-      const laser = this.activeLaser()
-      if (laser && laser.object3D.visible) {
-        const origin = laser.object3D.getWorldPosition(new THREE.Vector3())
-        const q = laser.object3D.getWorldQuaternion(new THREE.Quaternion())
-        const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(q)
-        const point = this.rayPlaneHit({origin, dir}, WATER_Y)
-        this.aimMarker.visible = !!point
-        if (point) this.aimMarker.position.set(point.x, WATER_Y + 0.005, point.z)
-      } else {
-        this.aimMarker.visible = false
+    for (const set of this.aimMarkers) {
+      set.ring.visible = false
+      set.line.visible = false
+    }
+    if (aiming && frame && game.aimCoursePoint) {
+      const refSpace = this.sceneEl.renderer.xr.getReferenceSpace()
+      const sources = Array.from(this.session.inputSources || [])
+        .filter((s) => s.targetRayMode === 'tracked-pointer' && s.handedness !== 'none')
+        .slice(0, this.aimMarkers.length)
+      const originWorld = game.launchOriginWorld()
+      for (let i = 0; i < sources.length; i++) {
+        let pose = null
+        try {
+          pose = frame.getPose(sources[i].targetRaySpace, refSpace)
+        } catch {
+          pose = null
+        }
+        if (!pose) continue
+        const t = pose.transform
+        const q = new THREE.Quaternion(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w)
+        const ray = {
+          origin: new THREE.Vector3(t.position.x, t.position.y, t.position.z),
+          dir: new THREE.Vector3(0, 0, -1).applyQuaternion(q),
+        }
+        const raw = this.rayPlaneHit(ray, WATER_Y)
+        if (!raw) continue
+        const course = game.aimCoursePoint(raw)
+        if (!course) continue
+        const set = this.aimMarkers[i]
+        set.ring.visible = true
+        set.ring.position.set(course.x, WATER_Y + 0.005, course.z)
+        if (originWorld) {
+          const dx = course.x - originWorld.x
+          const dz = course.z - originWorld.z
+          const len = Math.hypot(dx, dz)
+          if (len > 0.05) {
+            set.line.visible = true
+            set.line.scale.set(len, 1, 0.012)
+            set.line.position.set(
+              (originWorld.x + course.x) / 2,
+              WATER_Y + 0.004,
+              (originWorld.z + course.z) / 2)
+            // Полоса лежит вдоль X; поворот — как у трассера торпеды.
+            set.line.rotation.set(0, -Math.atan2(dz, dx), 0)
+          }
+        }
       }
-    } else {
-      this.aimMarker.visible = false
     }
   },
 
   remove() {
     this.el.removeObject3D('xr-reticle')
-    this.el.removeObject3D('xr-aim')
+    this.el.removeObject3D('xr-aim-group')
     this.reticle.traverse((o) => {
       if (o.geometry) o.geometry.dispose()
       if (o.material) o.material.dispose()
     })
-    this.aimMarker.geometry.dispose()
-    this.aimMarker.material.dispose()
+    this.aimGroup.traverse((o) => {
+      if (o.geometry) o.geometry.dispose()
+      if (o.material) o.material.dispose()
+    })
   },
 }

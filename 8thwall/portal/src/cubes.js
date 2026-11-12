@@ -14,10 +14,10 @@ const RED = '#ff3b4d'
 export const cubesComponent = {
   schema: {
     interval: {default: 1300},   // ms between spawns
-    speedMin: {default: 5},      // units/sec
-    speedMax: {default: 8},
-    hitDist: {default: 2.2},     // red cube reaches this → hit
-    missDist: {default: 1.2},    // green cube reaches this untapped → missed
+    speedMin: {default: 1.5},    // meters/sec (room is 8 m deep now —
+    speedMax: {default: 2.5},    //   same crossing time as the old 5-8 in 26 m)
+    hitDist: {default: 0.65},    // red cube reaches this → hit (personal space)
+    missDist: {default: 0.35},   // green cube reaches this untapped → missed
     maxAge: {default: 6000},     // ms before a cube despawns
   },
 
@@ -67,7 +67,7 @@ export const cubesComponent = {
 
   doorwayWorld(out) {
     this.el.object3D.updateMatrixWorld(true)
-    out.set(0, PORTAL.doorY + PORTAL.doorH / 2, 0.6)
+    out.set(0, PORTAL.doorY + PORTAL.doorH / 2, 0.12)
     return out.applyMatrix4(this.el.object3D.matrixWorld)
   },
 
@@ -78,7 +78,7 @@ export const cubesComponent = {
     const type = Math.random() < 0.55 ? 'green' : 'red'
     el.setAttribute('geometry', {primitive: 'box'})
     el.setAttribute('material', {shader: 'flat', color: type === 'green' ? GREEN : RED})
-    el.setAttribute('scale', '1.4 1.4 1.4')
+    el.setAttribute('scale', '0.22 0.22 0.22')
 
     const pos = this.doorwayWorld(new THREE.Vector3())
     el.object3D.position.copy(pos)
@@ -89,7 +89,7 @@ export const cubesComponent = {
       Math.random() - 0.5,
       Math.random() - 0.5,
       Math.random() - 0.5,
-    ).normalize().multiplyScalar(1 + Math.random() * 2.5)
+    ).normalize().multiplyScalar(0.4 + Math.random() * 1.0)
     const target = cam.clone().add(offset)
 
     el.addEventListener('click', (event) => this.onCatch(event, type))

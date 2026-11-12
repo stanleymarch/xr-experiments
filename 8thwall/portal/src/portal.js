@@ -7,15 +7,20 @@
 //      the doorway rectangle on screen.
 //
 // The frame and the translucent "membrane" are cosmetic and draw on top.
+//
+// All constants are real meters (8th Wall SLAM scale). The earlier build
+// authored a 6×10.5 m door that only looked right from the oversized preview
+// camera — in actual AR it towered over the user. The preview camera in
+// index.html now matches this scale (0 1.6 3).
 
 export const PORTAL = {
-  doorW: 6,        // doorway width (units)
-  doorH: 10.5,     // doorway height
-  doorY: 0.1,      // doorway bottom above the ground
-  frameT: 0.7,     // frame thickness
-  roomW: 16,       // interior world size
-  roomH: 18,
-  roomD: 26,
+  doorW: 1.0,      // doorway width (meters): a real door
+  doorH: 2.1,      // doorway height
+  doorY: 0.02,     // doorway bottom above the ground
+  frameT: 0.08,    // frame thickness
+  roomW: 5,        // interior world size (meters)
+  roomH: 3.4,
+  roomD: 8,
   stencilRef: 1,
 }
 

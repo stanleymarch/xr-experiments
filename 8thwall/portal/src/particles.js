@@ -38,7 +38,7 @@ export const particlesComponent = {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
 
     const mat = new THREE.PointsMaterial({
-      size: 0.16,
+      size: 0.04,   // meters: 4 cm dust motes in the door-scale room
       vertexColors: true,
       transparent: true,
       opacity: 0.9,

@@ -38,7 +38,7 @@
   landing-page
   xrextras-loading
   xrextras-runtime-error
-  renderer="colorManagement:true; antialias:true"
+  renderer="colorManagement:true; antialias:true; logarithmicDepthBuffer:true"
   xrweb="
     allowedDevices: any;
     defaultEnvironmentFogIntensity: 0.25;
@@ -46,9 +46,19 @@
     defaultEnvironmentSkyBottomColor: #14142a;
     defaultEnvironmentSkyGradientStrength: 0.5;">
 
+  <!-- logarithmicDepthBuffer keeps the deliberately thin separations (floor
+       grid 3 cm above the room floor, membrane 2 cm in front of the mask)
+       from z-fighting on mobile depth buffers; xrweb may own the projection
+       matrix in AR, so the log buffer works even when near/far below do not. -->
+
+  <!-- Eye-height preview camera and a normal near plane: the scene is
+       authored in real SLAM meters, so the desktop preview must frame it the
+       way a phone camera will, not from 8 m up. -->
   <a-camera
     id="camera"
-    position="0 8 8"
+    position="0 1.6 3"
+    near="0.05"
+    far="100"
     raycaster="objects: .cantap"
     cursor="fuse: false; rayOrigin: mouse;">
   </a-camera>
@@ -56,7 +66,7 @@
   <a-light type="ambient" intensity="0.6"></a-light>
   <a-entity
     light="type: directional; intensity: 0.9; castShadow: true; shadowMapHeight: 1024; shadowMapWidth: 1024; target: #camera"
-    xrextras-attach="target: camera; offset: 6 10 3"
+    xrextras-attach="target: camera; offset: 1.5 2.5 1"
     shadow>
   </a-entity>
 
@@ -64,7 +74,7 @@
   <a-box
     id="ground"
     class="cantap"
-    scale="1000 2 1000"
+    scale="60 2 60"
     position="0 -0.99 0"
     material="shader: shadow; transparent: true; opacity: 0.25"
     shadow>

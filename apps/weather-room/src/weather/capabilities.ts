@@ -84,6 +84,19 @@ export function usesSpatialControls(world: World): boolean {
   return session.enabledFeatures?.includes('hand-tracking') === true;
 }
 
+/**
+ * Floor-anchored session: a headset, not a handheld screen. IWSDK always
+ * offers `local-floor` (init/xr.js defaultOffers) and floor-tracking runtimes
+ * grant it, while screen AR never does — so a granted local-floor is a session
+ * capability signal (never a user-agent guess). Used to give headset users a
+ * read-only panel when tracked input is late instead of an empty room.
+ */
+export function isFloorAnchoredSession(world: World): boolean {
+  const session = world.xrSession;
+  if (session == null) return false;
+  return session.enabledFeatures?.includes('local-floor') === true;
+}
+
 /** A rendered hand model can outlive its tracking; require poses this frame. */
 export function trackedInputKind(world: World, hand: 'left' | 'right'): 'hand' | 'controller' | null {
   const session = world.xrSession;

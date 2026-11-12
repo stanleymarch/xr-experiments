@@ -504,9 +504,15 @@ const DEVICE_ERROR_REASON: Record<number, string> = {
 
 const DEVICE_LOCATION_KEY = 'weather-room:device-location';
 
-/** A device fix is only reused while the permission stays granted. */
+/**
+ * A device fix is replayed on every later load unless the permission has since
+ * flipped to denied. The cache only exists because an earlier request actually
+ * succeeded, so reusing it is safe even when the Permissions API is unavailable
+ * or stuck reporting 'prompt' (Quest Browser) — trusting the API there means
+ * re-asking on every entry, which silently fails and drops to IP/fallback.
+ */
 function cachedDeviceResult(permission: GeolocationPermission): GeolocationResult | null {
-  if (permission !== 'granted') return null;
+  if (permission === 'denied') return null;
   try {
     const raw = localStorage.getItem(DEVICE_LOCATION_KEY);
     if (raw == null) return null;
@@ -551,6 +557,22 @@ export function forgetDeviceLocation(): void {
     localStorage.removeItem(DEVICE_LOCATION_KEY);
   } catch {
     // Best effort, same as remembering.
+  }
+}
+
+/**
+ * Whether a device fix is remembered from an earlier successful request.
+ * `resolveLocation` replays such a cache instantly (except under a denied
+ * permission), so callers can skip a redundant escalation when this is true.
+ */
+export function hasCachedDeviceFix(): boolean {
+  try {
+    const raw = localStorage.getItem(DEVICE_LOCATION_KEY);
+    if (raw == null) return false;
+    const parsed = JSON.parse(raw) as Partial<GeolocationResult>;
+    return validCoords(parsed.latitude, parsed.longitude);
+  } catch {
+    return false;
   }
 }
 

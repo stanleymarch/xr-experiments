@@ -214,6 +214,20 @@
           }, 500);
         }
         window.__hideBootOverlay = hide;
+        // Font pipeline reports from font-atlas.ts: when the baked MSDF
+        // atlases are unavailable the SDK falls back to runtime generation
+        // (up to a minute of blank text on a headset) — say so instead of
+        // leaving the user staring at an empty panel.
+        window.__weatherFontStatus = function (state, detail) {
+          if (hidden || !status) return;
+          if (state === 'fallback') {
+            status.textContent =
+              'Fonts are generating on device (baked atlases unavailable' +
+              (detail ? ': ' + detail : '') + '); text may take a minute to appear.';
+          } else if (state === 'ready') {
+            status.textContent = 'Fonts ready.';
+          }
+        };
         reload.addEventListener('click', function () {
           window.location.reload();
         });

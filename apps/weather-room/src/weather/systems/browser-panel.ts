@@ -28,6 +28,7 @@ import {
   forgetDeviceLocation,
   geolocationPermissionState,
   getManualLocation,
+  hasCachedDeviceFix,
   loadWeather,
   parseLatLon,
   requestDeviceLocation,
@@ -893,6 +894,7 @@ export class BrowserPanelSystem extends createSystem({}) {
     };
     const blockWorldSelect = (event: Event): void => event.preventDefault();
     this.root?.addEventListener('beforexrselect', blockWorldSelect);
+    this.armPreXrLocate();
 
     this.root?.querySelector('[data-testid="step-back"]')?.addEventListener('click', stepBack);
     this.root?.querySelector('[data-testid="go-live"]')?.addEventListener('click', goLive);
@@ -1819,6 +1821,40 @@ export class BrowserPanelSystem extends createSystem({}) {
     } finally {
       if (!this.disposed && this.locationClear != null) this.locationClear.disabled = false;
     }
+  }
+
+  /**
+   * Pre-XR device locate on the first flat-mode user gesture. A cold load's
+   * silent locate can hang unanswered (Quest Browser shows its geolocation
+   * prompt late or never), and once an immersive session starts there is no
+   * way to surface the prompt at all — so the first flat-mode gesture runs a
+   * short bounded escalation while the page can still ask. Fire-and-forget: a
+   * fix lands in the device cache (resolveLocation replays it instantly from
+   * then on), a failure keeps the silent IP/fallback chain untouched.
+   */
+  private armPreXrLocate(): void {
+    let armed = true;
+    const trigger = (): void => {
+      if (!armed || this.disposed) return;
+      armed = false;
+      this.root?.removeEventListener('click', trigger);
+      void (async () => {
+        const [permission, manual] = await Promise.all([
+          geolocationPermissionState(),
+          Promise.resolve(getManualLocation()),
+        ]);
+        if (this.disposed || manual != null || permission === 'denied') return;
+        // A remembered fix already answers every load instantly.
+        if (hasCachedDeviceFix()) return;
+        // Coarse is deliberate: a city-level default is the goal, and Quest
+        // Wi-Fi answers a low-accuracy watch far sooner than a GPS-grade one.
+        await requestDeviceLocation({ enableHighAccuracy: false, timeoutMs: 8_000 });
+      })();
+    };
+    this.root?.addEventListener('click', trigger);
+    this.cleanupFuncs.push(() => {
+      this.root?.removeEventListener('click', trigger);
+    });
   }
 
   /**

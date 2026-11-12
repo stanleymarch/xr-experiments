@@ -47,6 +47,14 @@ interface PatchableTTFLoader {
 const atlasManifest = manifest as FontAtlasManifest;
 const atlasBase = import.meta.env.BASE_URL;
 
+/**
+ * A stalled atlas fetch (headset network, cache miss) must fail fast into the
+ * stock loader instead of hanging the face promise forever: UIKit text nodes
+ * render nothing until their face resolves, which shows up on device as a
+ * panel with background but zero characters.
+ */
+const ATLAS_FETCH_TIMEOUT_MS = 5_000;
+
 function absoluteAssetUrl(file: string): string {
   return new URL(`${atlasBase}${file.replace(/^\/+/u, '')}`, window.location.href).href;
 }
@@ -59,13 +67,23 @@ for (const entry of atlasManifest.fonts) {
 
 const facePromises = new Map<string, Promise<UIKit.MSDFResult>>();
 
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function loadFace(entry: FontAtlasEntry): Promise<UIKit.MSDFResult> {
   const cached = facePromises.get(entry.json);
   if (cached != null) return cached;
 
   const jsonUrl = absoluteAssetUrl(entry.json);
   const promise = (async (): Promise<UIKit.MSDFResult> => {
-    const response = await fetch(jsonUrl);
+    const response = await fetchWithTimeout(jsonUrl, ATLAS_FETCH_TIMEOUT_MS);
     if (!response.ok) {
       throw new Error(`Font atlas ${jsonUrl} failed with HTTP ${response.status}.`);
     }
@@ -119,6 +137,47 @@ function mergeResults(results: UIKit.MSDFResult[]): UIKit.MSDFResult {
   return merged;
 }
 
+export type FontPipelineState = 'loading' | 'ready' | 'fallback';
+
+const pipelineListeners = new Set<(state: FontPipelineState, detail?: string) => void>();
+
+/**
+ * Module-level subscription for the baked-atlas pipeline state. The spatial
+ * panel is deliberately not wired: its status line is owned by the weather
+ * loader and would fight the 2 Hz text throttle.
+ */
+export function onFontPipelineStatus(
+  listener: (state: FontPipelineState, detail?: string) => void,
+): () => void {
+  pipelineListeners.add(listener);
+  return () => {
+    pipelineListeners.delete(listener);
+  };
+}
+
+function reportPipeline(state: FontPipelineState, detail?: string): void {
+  // The DOM boot overlay (inline script) is the primary channel: it exists
+  // before modules run, so even an early failure is reported.
+  try {
+    window.__weatherFontStatus?.(state, detail);
+  } catch {
+    // A broken overlay hook must never break the font path itself.
+  }
+  for (const listener of pipelineListeners) {
+    try {
+      listener(state, detail);
+    } catch {
+      // Same rule for module listeners.
+    }
+  }
+}
+
+declare global {
+  interface Window {
+    __weatherFontStatus?: (state: FontPipelineState, detail?: string) => void;
+  }
+}
+
 /**
  * Install the baked-atlas loader. Must run before `World.create()` so the
  * UIKitML `@font-face` preload already uses it.
@@ -158,10 +217,25 @@ export function installPreGeneratedFonts(): void {
   };
 
   // The SDK preload is sequential. Start every glyph JSON fetch now so each
-  // per-face preload resolves from an already-warm promise.
+  // per-face preload resolves from an already-warm promise, and track the
+  // batch so the boot overlay can say why text is late: any face falling
+  // back means the slow runtime MSDF generation path (minutes of blank text
+  // on a headset), so say so immediately rather than when everything settles.
+  const total = atlasManifest.fonts.length;
+  let settled = 0;
+  let failed = 0;
   for (const entry of atlasManifest.fonts) {
-    void loadFace(entry).catch(() => {
-      // The loadAsync wrapper above reports the failure and falls back.
-    });
+    void loadFace(entry)
+      .then(() => {
+        settled += 1;
+        if (failed === 0 && settled === total) reportPipeline('ready');
+      })
+      .catch(() => {
+        failed += 1;
+        settled += 1;
+        if (failed === 1) {
+          reportPipeline('fallback', `${failed} of ${total} baked faces unavailable`);
+        }
+      });
   }
 }

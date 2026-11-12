@@ -22,7 +22,7 @@ import {
 import type { Component as UIKitComponent } from '@pmndrs/uikit';
 import type { Entity, Object3D } from '@iwsdk/core';
 import { WeatherControlGrip } from './control-grab-intent.js';
-import { usesSpatialControls } from '../capabilities.js';
+import { isFloorAnchoredSession, usesSpatialControls } from '../capabilities.js';
 import { WeatherEvent, weatherEvents, weatherStore } from '../weather-state.js';
 import type { HourCrossedDetail, SandboxToggleDetail } from '../weather-state.js';
 import { playheadTime } from '../weather-state.js';
@@ -60,6 +60,14 @@ import { installSpatialFonts } from '../spatial-fonts.js';
 
 /** Minimum seconds between panel text pushes (2 Hz ceiling). */
 const PANEL_PUSH_INTERVAL_S = 0.5;
+
+/**
+ * Floor-anchored sessions reveal the panel read-only after this many seconds
+ * without tracked input (controllers asleep, hands declined) — an empty room
+ * reads as a broken app. Handheld screen AR never gets this reveal: its
+ * spatial panel cannot receive unhanded taps, native DOM touch stays in charge.
+ */
+const SPATIAL_REVEAL_GRACE_S = 5;
 
 const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const;
 
@@ -119,6 +127,11 @@ export class PanelSystem extends createSystem({
   private placedInSession = false;
   /** Last computed spatial-panel visibility (usesSpatialControls gate). */
   private spatialVisible = false;
+  /**
+   * World time when a floor-anchored session last had no tracked input
+   * (-1 otherwise). Drives the read-only reveal after SPATIAL_REVEAL_GRACE_S.
+   */
+  private noSpatialSince = -1;
   private snapFlashT = -1;
   private pillBase = PILL_BASE_LOADING;
   /** Whole-panel move affordance (Control Bar + edge handles). */
@@ -172,7 +185,10 @@ export class PanelSystem extends createSystem({
       const spatial = state !== VisibilityState.NonImmersive && usesSpatialControls(this.world);
       panel.visible = spatial;
       panelRoot.setProperties({ display: spatial ? 'flex' : 'none' });
-      if (state === VisibilityState.NonImmersive) this.placedInSession = false;
+      if (state === VisibilityState.NonImmersive) {
+        this.placedInSession = false;
+        this.noSpatialSince = -1;
+      }
       if (state === VisibilityState.Visible) unlockGripAudio();
       this.needsPlacement = state === VisibilityState.Visible && !this.placedInSession && spatial;
       this.spatialVisible = spatial;
@@ -506,9 +522,22 @@ export class PanelSystem extends createSystem({
     const panelObject = this.world.getSceneObject<UIKitMLAsset>('weather-panel') ?? this.panelObject;
     this.panelObject = panelObject;
     // Delayed input-source arrival (tracked hands appear after session
-    // start) must unhide the spatial panel without a visibility edge.
-    const wantSpatial =
-      this.world.visibilityState.peek() !== VisibilityState.NonImmersive && usesSpatialControls(this.world);
+    // start) must unhide the spatial panel without a visibility edge. A
+    // floor-anchored session (headset) additionally gets a read-only reveal
+    // when no tracked input shows up within the grace window — an empty room
+    // reads as a broken app. Handheld screen AR never reveals: the spatial
+    // panel cannot receive unhanded taps there.
+    const immersive = this.world.visibilityState.peek() !== VisibilityState.NonImmersive;
+    let wantSpatial = immersive && usesSpatialControls(this.world);
+    if (immersive && !wantSpatial && isFloorAnchoredSession(this.world)) {
+      if (this.noSpatialSince < 0) {
+        this.noSpatialSince = time;
+      } else if (time - this.noSpatialSince >= SPATIAL_REVEAL_GRACE_S) {
+        wantSpatial = true;
+      }
+    } else {
+      this.noSpatialSince = -1;
+    }
     if (wantSpatial !== this.spatialVisible && panelObject != null) {
       this.spatialVisible = wantSpatial;
       panelObject.visible = wantSpatial;

@@ -1452,3 +1452,38 @@ centered slabs (throwaway script, removed afterwards). 19/19 checks passed:
   ground answer;
 - occupied-cell sampling returns 64 mapped cells spread across the floor
   (3.88 m span) instead of clustering on one edge, all at the measured level.
+
+
+### Blank-XR-panel and geolocation round (2026-11-13)
+
+First physical Quest 3 report since the 1.1 migration: the spatial panel came
+up with roughly zero characters in XR, and the location was not determined on
+entry. Three defensive fixes plus one locate-escalation fix landed; all are
+verified in the production build and a managed IWER session (immersive-ar,
+panel text rendering from the baked atlases), none on physical hardware yet:
+
+- Depth occlusion is opt-in (`?occlusion=1`): the migration switched
+  `enableOcclusion`/`useFloat32` on unverified, and the Quest grant delivers
+  unsigned-short/gpu depth the float32 packing never saw in IWER. The default
+  keeps the depth texture (samplers keep working) but never discards weather
+  fragments and packs CPU depth as uint16. Occlusion rendering stays off until
+  a physical Quest session proves it.
+- Baked-atlas fetches now abort after 5 s and fall into the stock loader
+  instead of hanging forever (UIKit text renders nothing until its face
+  resolves — the exact "panel with background, zero characters" symptom), and
+  the boot overlay reports the fallback instead of leaving a stuck
+  "Preparing the room…".
+- A floor-anchored session (granted `local-floor`) reveals the panel read-only
+  after 5 s without tracked input — controllers asleep or hands declined no
+  longer leave an empty room. Handheld screen AR keeps the spatial panel
+  hidden: unhanded taps cannot reach it there.
+- `resolveLocation` replays a remembered device fix on every load unless the
+  permission has since flipped to denied (the Permissions API on Quest often
+  reports `prompt`/throws, so trusting `granted` alone re-asked every entry),
+  and the first flat-mode user gesture runs a short coarse locate while the
+  page can still show the prompt — an immersive session cannot.
+
+Still unverified on this round: the occlusion opt-in path on device, the
+grace reveal with late controllers, and end-to-end geolocation on Quest
+Wi-Fi (the silent IP chain still falls back honestly — the panel shows
+"Moscow (not determined)" when everything fails, as observed).

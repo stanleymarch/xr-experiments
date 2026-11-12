@@ -49,11 +49,20 @@ const boot = (world: World): void => {
   // One SDK-owned depth pipeline. Weather ShaderMaterials expose its stock
   // shader anchors; DepthOccludable opts in only weather, never the controls.
   // Depth remains optional on devices without a grant.
+  //
+  // Occlusion rendering is opt-in until it survives a physical Quest 3 session:
+  // the 1.1 migration switched it on unverified, and the first device test came
+  // back with a blank spatial panel. `?occlusion=1` restores the full pipeline
+  // (occlusion + float32 packing) for on-device experiments; the default keeps
+  // the depth texture itself (samplers keep working) but never discards weather
+  // fragments, and packs CPU depth as uint16 — the format Quest actually grants.
+  const occlusionOptIn =
+    new URLSearchParams(window.location.search).get('occlusion') === '1';
   world.registerSystem(DepthSensingSystem, {
     configData: {
-      enableOcclusion: true,
+      enableOcclusion: occlusionOptIn,
       enableDepthTexture: true,
-      useFloat32: true,
+      useFloat32: occlusionOptIn,
       blurRadius: 20,
     },
   });

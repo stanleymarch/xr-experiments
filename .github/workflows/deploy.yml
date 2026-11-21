@@ -35,6 +35,11 @@ jobs:
 
       - name: Build experiments
         run: npm run build
+        env:
+          # onnxruntime-node postinstall (transitive dep of IWSDK apps) downloads
+          # CUDA binaries that 404 on CUDA-less runners; browser builds use
+          # onnxruntime-web, so skip the CUDA EP everywhere.
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
 
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@v3

@@ -15,7 +15,7 @@ const siteDir = path.join(root, '_site')
 const isDir = (p) => fs.existsSync(p) && fs.statSync(p).isDirectory()
 
 // Files that stay in the repo but must not ship to the site.
-const SITE_FILTER = (src) => !/(?:^|[\\/])(?:README\.md|exp\.json|AGENTS\.md|\.omp|\.agents)(?:[\\/]|$)/.test(src)
+const SITE_FILTER = (src) => !/(?:^|[\\/])(?:README\.md|exp\.json|AGENTS\.md|\.omp|\.agents|\.github)(?:[\\/]|$)/.test(src)
 
 function listWall() {
   if (!isDir(wallDir)) return []

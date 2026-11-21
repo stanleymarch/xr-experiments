@@ -14,13 +14,14 @@
 
 GitHub Actions собирает активные 8th Wall и IWSDK-приложения в единый `_site/` и публикует каталог на GitHub Pages. Исходники и служебные настройки в `_site/` не копируются.
 
-Ниже — два законченных опыта: о чём они, как играются и как устроены. Художественные принципы, устройство эффектов и границы sensing разобраны в [«Комната как материал»](docs/room-as-medium.md).
+Ниже — три законченных опыта: о чём они, как играются и как устроены. Художественные принципы, устройство эффектов и границы sensing разобраны в [«Комната как материал»](docs/room-as-medium.md).
 
 ## Каталог
 
-Два MR-опыта на Meta Immersive Web SDK. Оба работают с одной идеей: измеренная
-комната — не подложка для 3D-объектов, а сама материя произведения. Но материал
-разный: в REALITY//FIELD это геометрия, в WEATHER//ROOM — погода.
+Три MR-опыта на Meta Immersive Web SDK. Первые два работают с одной идеей:
+измеренная комната — не подложка для 3D-объектов, а сама материя произведения.
+Но материал разный: в REALITY//FIELD это геометрия, в WEATHER//ROOM — погода.
+Третий, AGENT//BODY, населяет комнату собеседником — ИИ-компаньоном с телом.
 
 ### REALITY//FIELD — комната как упругое поле
 
@@ -93,6 +94,30 @@ runtime-приёмки — в [README WEATHER//ROOM](apps/weather-room/README.md
 оговорке, что выше.
 
 **Открыть:** <https://stanleymarch.github.io/xr-experiments/iwsdk/weather-room/>
+
+### AGENT//BODY — ИИ-компаньон с телом
+
+**О чём.** В комнату приходит не эффект, а собеседник: VRM-аватар Ава и одна
+Horizon-панель (UIKitML), общая для десктопа, MR и VR. Опыт переехал в этот
+каталог из отдельного репозитория `agent-body` целиком, одним деревом.
+
+**Как играется.** Вкладки **Dialogue** (диалог, микрофон, явный взгляд в
+камеру), **Character** (готовый пресет или свой VRM, промпт, масштаб, idle),
+**Connections** (независимые LLM/STT/TTS + зашифрованный QR-перенос настроек),
+**Memory** (заметки, факты, поиск). Голос: распознавание — Whisper на
+устройстве или Web Speech; озвучка — голоса системы или VITS.
+
+**Как устроено.** Одно IWSDK-приложение и одно общее состояние для всех
+режимов; сцена, ассеты и фичи выбираются `iwsdk.config.json`. LLM работает
+локально через WebGPU ([WebLLM](https://github.com/mlc-ai/web-llm)) или через
+OpenRouter; «читальный зал» — процедурная комната с grabbable-физикой,
+телепортом и хаптикой. Дев-сервером управляет IWSDK CLI: отдельный Vite не
+запускать — см. [README приложения](apps/agent-body/README.md).
+
+**Статус.** Интегрирован в общий каталог и сборку (`apps/agent-body`); его
+runtime-настройки (IWSDK rc.2, postinstall-патч) сохранены без изменений.
+
+**Открыть:** <https://stanleymarch.github.io/xr-experiments/iwsdk/agent-body/>
 
 ### Идеи, которые пока не в работе
 
@@ -207,4 +232,4 @@ with that serial as `headsetId`, exact `runtimeTarget` copied from
 
 ## English summary
 
-Adaptive WebXR art experiments, designed for Meta Quest 3 first and kept meaningful on phone AR and desktop. Two Meta IWSDK mixed-reality experiences live under `apps/`: **REALITY//FIELD** turns the measured room into an elastic membrane that answers a strike with a travelling wave, and **WEATHER//ROOM** manifests local weather around you on a −24h/NOW/+24h timeline. Three 8th Wall camera-AR experiments live under `8thwall/`. The room itself is the medium; unrealised concepts are archived in `docs/ideas/` rather than promised in the catalog.
+Adaptive WebXR art experiments, designed for Meta Quest 3 first and kept meaningful on phone AR and desktop. Three Meta IWSDK mixed-reality experiences live under `apps/`: **REALITY//FIELD** turns the measured room into an elastic membrane that answers a strike with a travelling wave, **WEATHER//ROOM** manifests local weather around you on a −24h/NOW/+24h timeline, and **AGENT//BODY** (migrated whole from the standalone `agent-body` repository) hosts an embodied AI companion — a VRM avatar with local WebGPU LLM and on-device speech. Three 8th Wall camera-AR experiments live under `8thwall/`. The room itself is the medium; unrealised concepts are archived in `docs/ideas/` rather than promised in the catalog.

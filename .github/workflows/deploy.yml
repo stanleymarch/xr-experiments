@@ -28,6 +28,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             apps/weather-room/package-lock.json
+            apps/agent-body/package-lock.json
 
       - name: Install dependencies
         run: npm ci

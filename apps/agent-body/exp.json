@@ -1,0 +1,6 @@
+{
+  "title": "AGENT//BODY",
+  "description": "An embodied AI companion: a VRM avatar with one shared Horizon panel across desktop, MR and VR — local WebGPU LLM (WebLLM) or OpenRouter, on-device Whisper STT, system/VITS TTS, and a reading room with grabbable props, teleport and haptics.",
+  "description_ru": "ИИ-компаньон с телом: VRM-аватар и единая Horizon-панель для десктопа, MR и VR — локальная LLM через WebGPU (WebLLM) или OpenRouter, Whisper-STT на устройстве, TTS голосами системы или VITS, читальный зал с предметами, телепортом и хаптикой.",
+  "tags": ["WebXR", "Meta IWSDK", "Quest 3", "AI companion", "WebLLM", "VRM"]
+}

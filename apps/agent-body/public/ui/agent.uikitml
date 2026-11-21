@@ -1,0 +1,123 @@
+<style>
+  @font-face { font-family: 'Unbounded'; src: url('../fonts/Unbounded-Bold.ttf'); font-weight: 700; }
+  @font-face { font-family: 'Geologica'; src: url('../fonts/Geologica-Light.ttf'); font-weight: 300; }
+  @font-face { font-family: 'JetBrains Mono'; src: url('../fonts/JetBrainsMono-Regular.ttf'); font-weight: 400; }
+  .workspace { width: 100; height: 150; flex-direction: column; padding-top: 4; padding-bottom: 4; padding-left: 4; padding-right: 4; gap: 1.5; overflow: scroll; font-family: 'Geologica'; font-weight: 300; color: #202124; border-radius: 12; }
+  .title { font-family: 'Unbounded'; height: 7; flex-shrink: 0; overflow: hidden; font-size: 4.2; font-weight: 700; letter-spacing: 0.2; text-align: center; align-items: center; color: #202124; }
+  .status { font-family: 'JetBrains Mono'; height: 6; overflow: hidden; font-size: 2.4; line-height: 1.25; color: #4d5156; flex-shrink: 0; }
+  .row { width: 92; flex-direction: row; gap: 1; flex-shrink: 0; }
+  .control { font-family: 'JetBrains Mono'; flex-grow: 1; flex-basis: 0; min-width: 0; height: 7; padding-left: 1; padding-right: 1; }
+  .label { font-family: 'JetBrains Mono'; font-weight: 400; font-size: 2.6; line-height: 1.2; height: 3.5; min-height: 0; pointer-events: none; white-space: pre; word-break: keep-all; }
+  .page { font-family: 'JetBrains Mono'; width: 16; height: 7; flex-shrink: 0; justify-content: center; font-size: 2.4; line-height: 1.25; color: #4d5156; overflow: hidden; }
+  .body-wrap { width: 92; height: 34; min-height: 18; padding-top: 2; padding-bottom: 2; padding-left: 2; padding-right: 2; overflow: scroll; background-color: #f0f2f5; border-radius: 2; flex-grow: 1; flex-shrink: 1; flex-direction: column; justify-content: flex-start; align-items: flex-start; }
+  .body { font-family: 'Geologica'; font-weight: 300; width: 88; font-size: 2.8; line-height: 1.35; color: #202124; white-space: pre-line; }
+  .mono { font-family: 'JetBrains Mono'; font-size: 2.6; line-height: 1.25; color: #202124; }
+  .fields { width: 92; max-height: 48; min-height: 7; flex-direction: column; gap: 1; flex-shrink: 0; overflow: scroll; }
+  .field { width: 92; height: 7; min-height: 7; padding-left: 2; padding-right: 2; flex-shrink: 0; justify-content: flex-start; overflow: hidden; }
+  .field-label { font-family: 'JetBrains Mono'; font-weight: 400; font-size: 2.6; line-height: 1.2; height: 3.5; min-height: 0; pointer-events: none; white-space: pre; word-break: keep-all; }
+  .qr { width: 35; height: 35; flex-shrink: 0; }
+  .feedback { font-family: 'Geologica'; font-weight: 300; width: 92; height: 9; font-size: 2.5; line-height: 1.2; color: #174ea6; overflow: hidden; flex-shrink: 0; }
+  .editor { width: 92; flex-direction: column; gap: 1; padding-top: 1; padding-bottom: 1; background-color: #e8f0fe; flex-shrink: 0; }
+  .narrow { flex-grow: 0; flex-shrink: 0; flex-basis: 26; }
+  .hint { font-family: 'JetBrains Mono'; font-weight: 400; font-size: 2.2; line-height: 1.2; color: #4d5156; flex-grow: 1; flex-shrink: 1; overflow: hidden; justify-content: center; }
+</style>
+<Panel id="workspace-root" class="workspace">
+  <div id="workspace-title" class="title">Ava / Dialogue</div>
+  <div id="workspace-status" class="status">Loading shared workspace...</div>
+  <div class="row">
+    <Button id="nav-chat" class="control"><ButtonLabel id="nav-chat-label" class="label">Dialogue</ButtonLabel></Button>
+    <Button id="nav-character" class="control"><ButtonLabel id="nav-character-label" class="label">Character</ButtonLabel></Button>
+    <Button id="nav-connections" class="control"><ButtonLabel id="nav-connections-label" class="label">Connect</ButtonLabel></Button>
+    <Button id="nav-memory" class="control"><ButtonLabel id="nav-memory-label" class="label">Memory</ButtonLabel></Button>
+  </div>
+  <div id="connection-tabs" class="row">
+    <Button id="sub-llm" class="control"><ButtonLabel id="sub-llm-label" class="label">LLM</ButtonLabel></Button>
+    <Button id="sub-stt" class="control"><ButtonLabel id="sub-stt-label" class="label">STT</ButtonLabel></Button>
+    <Button id="sub-tts" class="control"><ButtonLabel id="sub-tts-label" class="label">TTS</ButtonLabel></Button>
+    <Button id="sub-transfer" class="control"><ButtonLabel id="sub-transfer-label" class="label">Transfer</ButtonLabel></Button>
+  </div>
+  <div id="camera-status" class="status">Camera: no capture requested</div>
+  <div id="room-status" class="status">Room geometry: unavailable outside immersive MR</div>
+  <div class="body-wrap"><div id="workspace-body" class="body">Write a message or configure your independent providers.</div></div>
+  <div id="record-navigation" class="row">
+    <Button id="workspace-previous" class="control"><ButtonLabel class="label">Previous</ButtonLabel></Button>
+    <div id="workspace-page" class="page">1 / 1</div>
+    <Button id="workspace-next" class="control"><ButtonLabel class="label">Next</ButtonLabel></Button>
+  </div>
+  <div id="workspace-fields" class="fields">
+    <Button id="field-0" class="field"><ButtonLabel id="field-label-0" class="field-label">Field</ButtonLabel></Button>
+    <Button id="field-1" class="field"><ButtonLabel id="field-label-1" class="field-label">Field</ButtonLabel></Button>
+    <Button id="field-2" class="field"><ButtonLabel id="field-label-2" class="field-label">Field</ButtonLabel></Button>
+    <Button id="field-3" class="field"><ButtonLabel id="field-label-3" class="field-label">Field</ButtonLabel></Button>
+    <Button id="field-4" class="field"><ButtonLabel id="field-label-4" class="field-label">Field</ButtonLabel></Button>
+    <Button id="field-5" class="field"><ButtonLabel id="field-label-5" class="field-label">Field</ButtonLabel></Button>
+  </div>
+  <div id="transfer-image" class="row">
+    <img id="pairing-qr" class="qr" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" />
+    <div id="pairing-pin" class="mono">Generate an encrypted QR link. PIN appears here.</div>
+  </div>
+  <div id="chat-actions" class="row">
+    <Button id="workspace-edit-chat" class="control"><ButtonLabel class="label">Write message</ButtonLabel></Button>
+    <Button id="workspace-listen" class="control"><ButtonLabel id="workspace-listen-label" class="label">Microphone</ButtonLabel></Button>
+    <Button id="workspace-look" class="control"><ButtonLabel class="label">Look / camera</ButtonLabel></Button>
+  </div>
+  <div id="settings-actions" class="row">
+    <Button id="workspace-save" class="control"><ButtonLabel class="label">Save</ButtonLabel></Button>
+    <Button id="workspace-test" class="control"><ButtonLabel id="workspace-test-label" class="label">Test provider</ButtonLabel></Button>
+    <Button id="workspace-clear-key" class="control"><ButtonLabel class="label">Clear key</ButtonLabel></Button>
+    <Button id="workspace-preset" class="control"><ButtonLabel class="label">Preset</ButtonLabel></Button>
+  </div>
+  <div id="character-actions" class="row">
+    <Button id="workspace-export-card" class="control"><ButtonLabel class="label">Export card</ButtonLabel></Button>
+    <Button id="workspace-import-card" class="control"><ButtonLabel class="label">Import card</ButtonLabel></Button>
+  </div>
+  <div id="llm-presets" class="row">
+    <Button id="workspace-local-preset" class="control"><ButtonLabel class="label">Full local</ButtonLabel></Button>
+    <Button id="workspace-free-preset" class="control"><ButtonLabel class="label">Free APIs</ButtonLabel></Button>
+    <Button id="workspace-paid-preset" class="control"><ButtonLabel class="label">Paid APIs</ButtonLabel></Button>
+  </div>
+  <div id="llm-models" class="row">
+    <Button id="llm-model-auto" class="control"><ButtonLabel id="llm-model-auto-label" class="label">Auto</ButtonLabel></Button>
+    <Button id="llm-model-gemma" class="control"><ButtonLabel id="llm-model-gemma-label" class="label">Gemma 1B</ButtonLabel></Button>
+    <Button id="llm-model-smollm" class="control"><ButtonLabel id="llm-model-smollm-label" class="label">SmolLM 360M</ButtonLabel></Button>
+    <Button id="llm-model-qwen" class="control"><ButtonLabel id="llm-model-qwen-label" class="label">Qwen 0.5B</ButtonLabel></Button>
+  </div>
+  <div id="connection-actions" class="row">
+    <Button id="workspace-copy-key" class="control"><ButtonLabel class="label">Copy LLM key to TTS</ButtonLabel></Button>
+    <Button id="workspace-browser-voice" class="control"><ButtonLabel class="label">Next browser voice</ButtonLabel></Button>
+  </div>
+  <div id="memory-actions" class="row">
+    <Button id="workspace-memory-add" class="control"><ButtonLabel class="label">Add note</ButtonLabel></Button>
+    <Button id="workspace-memory-search" class="control"><ButtonLabel class="label">Search</ButtonLabel></Button>
+    <Button id="workspace-memory-reset" class="control"><ButtonLabel class="label">Show all</ButtonLabel></Button>
+    <Button id="workspace-memory-clear" class="control"><ButtonLabel id="workspace-clear-label" class="label">Clear all</ButtonLabel></Button>
+  </div>
+  <div id="transfer-actions" class="row">
+    <Button id="workspace-transfer" class="control"><ButtonLabel class="label">Generate settings QR</ButtonLabel></Button>
+    <Button id="workspace-copy-link" class="control"><ButtonLabel class="label">Copy pairing link</ButtonLabel></Button>
+  </div>
+  <div id="receiver-actions" class="row">
+    <Button id="workspace-receiver-pin" class="control"><ButtonLabel id="workspace-receiver-pin-label" class="label">Enter receiver PIN</ButtonLabel></Button>
+    <Button id="workspace-receiver-apply" class="control"><ButtonLabel class="label">Apply settings</ButtonLabel></Button>
+    <Button id="workspace-receiver-skip" class="control"><ButtonLabel class="label">Skip pairing</ButtonLabel></Button>
+  </div>
+  <div id="workspace-editor" class="editor">
+    <div id="workspace-editor-label" class="status">Text editor</div>
+    <div id="workspace-editor-value" class="status">Type with your keyboard. Enter = Done; Shift+Enter = newline.</div>
+    <div class="row">
+      <Button id="workspace-editor-focus" class="control"><ButtonLabel class="label">Keyboard</ButtonLabel></Button>
+      <Button id="workspace-editor-done" class="control"><ButtonLabel class="label">Done / send</ButtonLabel></Button>
+      <Button id="workspace-editor-cancel" class="control"><ButtonLabel class="label">Cancel</ButtonLabel></Button>
+    </div>
+  </div>
+  <div id="workspace-feedback" class="feedback">Ready.</div>
+  <div id="immersive-actions" class="row">
+    <Button id="workspace-panel-home" class="control narrow"><ButtonLabel class="label">Panel home</ButtonLabel></Button>
+    <div id="immersive-hint" class="hint">Hold the trigger to move it.</div>
+  </div>
+  <div class="row">
+    <Button id="workspace-enter-mr" class="control"><ButtonLabel class="label">Enter MR</ButtonLabel></Button>
+    <Button id="workspace-enter-vr" class="control"><ButtonLabel class="label">Enter VR</ButtonLabel></Button>
+    <Button id="workspace-exit" class="control"><ButtonLabel class="label">Exit XR</ButtonLabel></Button>
+  </div>
+</Panel>

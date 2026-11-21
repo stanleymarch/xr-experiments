@@ -1,0 +1,53 @@
+/**
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+import { iwsdkDev } from '@iwsdk/vite-plugin-dev';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  plugins: [iwsdkDev()],
+  server: { host: '0.0.0.0', port: 8081, open: false },
+  // Public assets (the panel document, the scene) are served by GitHub Pages
+  // with a 10 minute max-age. A cached panel document next to a fresh bundle is
+  // how the interface disappears: the new code asks for element ids the old
+  // document does not have. Stamping the build lets the asset URL change with
+  // the code while staying cacheable between deploys.
+  define: {
+    __BUILD_ID__: JSON.stringify(Date.now().toString(36)),
+  },
+  build: {
+    outDir: 'dist',
+    sourcemap: process.env.NODE_ENV !== 'production',
+    target: 'esnext',
+    rollupOptions: { input: './index.html' },
+  },
+  esbuild: { target: 'esnext' },
+  // @drawcall/uikitml otherwise pulls a second three/@pmndrs/uikit graph
+  // (three@0.185 vs app super-three@0.181). Duplicate Component classes break
+  // instanceof checks → "Only pmndrs/uikit components can be added as children".
+  resolve: {
+    dedupe: [
+      'three',
+      '@pmndrs/uikit',
+      '@pmndrs/uikit-horizon',
+      '@pmndrs/uikit-lucide',
+    ],
+  },
+  optimizeDeps: {
+    exclude: ['@babylonjs/havok'],
+    include: [
+      'three',
+      '@pmndrs/uikit',
+      '@pmndrs/uikit-horizon',
+      '@pmndrs/uikit-lucide',
+      '@drawcall/uikitml',
+    ],
+    esbuildOptions: { target: 'esnext' },
+  },
+  publicDir: 'public',
+  base: './',
+});

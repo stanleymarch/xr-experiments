@@ -1,0 +1,13 @@
+:root { font-family: ui-sans-serif, system-ui, sans-serif; background: #141d2c; color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+#scene-container { position: fixed; inset: 0; }
+[hidden] { display: none !important; }
+/* The only DOM workspace surface is a temporary native text/IME bridge.
+   All actions, navigation, state, settings and feedback are Horizon UIKitML. */
+#workspace-keyboard-bridge { position: fixed; left: 12px; bottom: 12px; width: min(420px, calc(100vw - 24px)); padding: 12px; z-index: 20; background: #fff; color: #202124; border: 1px solid #dadce0; border-radius: 12px; }
+#workspace-keyboard-label { display: block; margin-bottom: 6px; font: 500 14px/1.4 system-ui, sans-serif; }
+#workspace-keyboard-bridge textarea, #workspace-keyboard-bridge input { display: block; width: 100%; padding: 10px; resize: vertical; border: 1px solid #8a9099; border-radius: 6px; background: #fff; color: #202124; font: 16px/1.4 system-ui, sans-serif; }
+/* Focusable, not display:none, so Quest Browser can invoke its native keyboard. */
+.workspace-immersive #workspace-keyboard-bridge { left: 1px; bottom: 1px; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0.01; overflow: hidden; }
+.workspace-immersive #workspace-keyboard-bridge textarea, .workspace-immersive #workspace-keyboard-bridge input { width: 1px; height: 1px; min-height: 0; padding: 0; border: 0; }

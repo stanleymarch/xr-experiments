@@ -1,0 +1,59 @@
+{
+  "name": "agent-body",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "iwsdk dev restart --open --foreground --timeout 180000",
+    "dev:runtime": "vite",
+    "dev:down": "iwsdk dev down",
+    "dev:status": "iwsdk dev status",
+    "reference:status": "iwsdk reference status",
+    "reference:warmup": "iwsdk reference warmup",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "preview": "vite preview",
+    "postinstall": "node scripts/patch-iwsdk-powershell.mjs",
+    "test": "vitest run",
+    "predev": "node scripts/copy-ort-wasm.mjs",
+    "prebuild": "node scripts/copy-ort-wasm.mjs"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.71",
+    "@huggingface/jinja": "^0.5.12",
+    "@huggingface/tokenizers": "^0.2.0",
+    "@huggingface/transformers": "^4.3.1",
+    "@iwsdk/core": "1.1.0-rc.2",
+    "@mlc-ai/web-llm": "^0.2.86",
+    "@pixiv/three-vrm": "^3.5.5",
+    "@pixiv/three-vrm-animation": "^3.5.5",
+    "@pmndrs/uikit": "1.0.78",
+    "@pmndrs/uikit-horizon": "1.0.78",
+    "@pmndrs/uikit-lucide": "1.0.78",
+    "ai": "^7.0.142",
+    "dexie": "^4.4.6",
+    "minisearch": "^7.2.0",
+    "onnxruntime-web": "^1.31.1",
+    "qrcode-generator": "^2.0.4",
+    "three": "npm:super-three@0.185.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@iwsdk/cli": "1.1.0-rc.2",
+    "@iwsdk/reference": "1.1.0-rc.2",
+    "@iwsdk/vite-plugin-dev": "1.1.0-rc.2",
+    "@meta-quest/metavr": "^1.10.0",
+    "@types/three": "^0.185.0",
+    "fake-indexeddb": "^6.2.8",
+    "typescript": "^5.5.0",
+    "vite": "^7.1.4",
+    "vitest": "^5.1.0"
+  },
+  "overrides": {
+    "sharp": "0.35.4",
+    "three": "npm:super-three@0.185.0"
+  },
+  "engines": {
+    "node": ">=20.19.0 <21.0.0-0 || >=22.12.0 <23.0.0-0 || >=24.0.0"
+  }
+}

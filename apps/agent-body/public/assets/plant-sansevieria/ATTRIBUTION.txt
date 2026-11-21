@@ -1,0 +1,15 @@
+Plant Sansevieria (plantSansevieria.gltf and its three PNG textures)
+from @iwsdk/example-assets 0.4.2, assets/plant-sansevieria/.
+
+Author / owner: Meta Platforms, Inc. and affiliates.
+License: MIT (the package LICENSE, https://github.com/facebook/immersive-web-sdk).
+Provenance: https://cdn.jsdelivr.net/npm/@iwsdk/example-assets@0.4.2/PROVENANCE.md
+The model is first-party; no attribution beyond the MIT copyright and
+permission notice is required. It is bundled here so a third-party CDN
+failure cannot abort the IWSDK level and leave the app blank.
+
+Files and bytes:
+  74534    plantSansevieria.gltf
+  1121015  74dfc45d02dc82b12e5f78f746595698.png
+  904353   d4978425948a18d0f8e31f98232b81c1.png
+  648915   f1569237527b16131ce98cd7bc94c74e.png

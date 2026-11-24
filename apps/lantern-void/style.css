@@ -1,0 +1,250 @@
+/*
+ * LANTERN // VOID — оформление экранной части. В шлеме DOM не виден: интерфейс VR/AR
+ * рисуется в mySketch.js на canvas. Порядок разделов: переменные → основа → шапка →
+ * пролог → живой вид → окно правил → выход в XR → адаптив → позднейшие уточнения
+ * (с пометкой версии; они переопределяют правила выше).
+ */
+
+/* ── Переменные: цвета и шрифты. ── */
+:root{
+  --ink:#f0ece5;--muted:#a8aebb;--dim:#737d91;--amber:#f4ca87;--sky:#b3e7ee;--bg:#070b17;
+  --glass:rgba(12,18,33,.78);--outline:rgba(185,205,230,.17);
+  --display:'Unbounded','Trebuchet MS',system-ui,sans-serif;
+  --body:'Geologica','Arial',system-ui,sans-serif;
+}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--ink)}
+body{font-family:var(--body);-webkit-font-smoothing:antialiased}button{font-family:inherit;color:inherit;cursor:pointer}button:focus-visible{outline:2px solid var(--amber);outline-offset:4px}button:disabled{opacity:.5;cursor:not-allowed}.is-hidden{display:none!important}
+/* ── Основа: сцена опыта, холст p5, виньетка и зерно поверх. ── */
+.experience{position:relative;width:100%;height:100dvh;isolation:isolate;overflow:hidden;background:radial-gradient(ellipse at 73% 42%,#1b263a 0,#0b1020 45%,#050712 95%)}
+.p5-stage,.p5-stage canvas{position:absolute;inset:0;width:100%!important;height:100%!important;display:block}
+.p5-stage{z-index:0}.vignette{position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(90deg,rgba(4,7,16,.78),rgba(5,8,18,.25) 42%,transparent 78%),linear-gradient(0deg,rgba(4,7,16,.64),transparent 28%,transparent 81%,rgba(3,6,15,.34)),radial-gradient(ellipse at 50% 50%,transparent 25%,rgba(4,7,14,.35) 100%)}
+.noise-overlay{position:absolute;inset:0;z-index:2;pointer-events:none;opacity:.10;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 130 130' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.3'/%3E%3C/svg%3E")}
+/* ── Шапка: знак, статус, переключатель языка. ── */
+.masthead{height:90px;position:absolute;inset:0 0 auto 0;z-index:15;display:flex;align-items:center;justify-content:space-between;padding:0 clamp(22px,4.5vw,72px);pointer-events:none}
+.brand-lockup{display:flex;align-items:center;gap:14px}.brand-mark{height:30px;width:30px;position:relative;display:block}.brand-mark i{position:absolute;display:block;border:1px solid rgba(243,202,143,.8);width:15px;height:15px;border-radius:50%;box-shadow:0 0 12px rgba(255,201,116,.16)}.brand-mark i:nth-child(1){left:0;top:1px}.brand-mark i:nth-child(2){right:0;bottom:1px}.brand-mark i:nth-child(3){left:0;bottom:1px;border-color:#8fcfda}
+.brand-text{display:flex;flex-direction:column;gap:4px}.brand-text b{font:500 12px/1.2 var(--display);letter-spacing:.045em}.brand-text b span{color:var(--amber)}.brand-text small{font-size:8px;letter-spacing:.22em;color:var(--muted)}
+.masthead-right{display:flex;align-items:center;gap:11px;font:500 10px var(--body);letter-spacing:.13em;color:#b7bdc9}.system-dot{display:block;width:5px;height:5px;border-radius:50%;background:#b9e9d4;box-shadow:0 0 9px #b8f2df}.masthead-divider{width:1px;height:17px;margin:0 12px;background:#737c8d65}
+/* ── Пролог: экран «до входа» с кнопками входа. ── */
+.intro-screen{position:absolute;inset:0;z-index:10;display:flex;align-items:center;padding:110px clamp(24px,7.6vw,126px) 54px;overflow:auto}.intro-content{position:relative;width:min(600px,100%);max-width:600px;padding-bottom:30px;animation:reveal .95s ease both}
+.eyebrow{font-size:10px;font-weight:500;letter-spacing:.18em;display:flex;align-items:center;gap:13px;color:#b2bccc}.eyebrow-line{display:inline-block;width:27px;height:1px;background:#e7c18a}
+.intro-heading-wrap{margin-top:28px}.pretitle{font-size:9px;letter-spacing:.2em;color:var(--amber);font-weight:600;margin-bottom:16px}.intro-screen h1{font:500 clamp(46px,5.8vw,92px)/1.12 var(--display);letter-spacing:-.07em;margin:0;white-space:nowrap;text-shadow:0 12px 75px #050910b0}.intro-screen h1 span{color:#e6ba84}.intro-screen h1 em{font-style:normal;color:#d6eef0;background:linear-gradient(110deg,#f4e8d0,#99d8e6 80%);background-clip:text;-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.intro-lead{font-size:clamp(20px,2.2vw,30px);font-weight:300;line-height:1.42;letter-spacing:-.025em;margin:22px 0 20px;color:#eee9df}.intro-copy{max-width:505px;line-height:1.79;color:#aeb9c6;font-size:13px;font-weight:300}.intro-copy i{font-style:normal;color:#e8d3ae}
+.intro-principles{display:grid;gap:13px;margin:26px 0 30px;padding:22px 0;border-top:1px solid var(--outline);border-bottom:1px solid var(--outline)}.intro-principles div{display:flex;gap:19px;align-items:center;color:#d8dae1;font-size:11px;line-height:1.3}.number{font:500 11px var(--display);color:#c6a16a;letter-spacing:0}
+.intro-actions{display:flex;gap:17px;align-items:center;flex-wrap:wrap}.button-primary{padding:0 23px;min-height:54px;display:inline-flex;align-items:center;justify-content:space-between;min-width:215px;gap:30px;background:linear-gradient(118deg,#f6dcb4,#e7b979);border:1px solid #f4ddba;border-radius:3px;color:#1d1c25;font-size:12px;font-weight:600;box-shadow:0 9px 44px rgba(230,173,113,.19);transition:transform .2s ease,box-shadow .2s ease}.button-primary:hover{transform:translateY(-2px);box-shadow:0 11px 55px rgba(230,173,113,.32)}.button-arrow{font-size:19px;font-weight:300}.button-ghost{border:0;background:none;padding:16px 6px;color:#ddd5d0;font-size:11px}.button-ghost span{color:var(--amber);font-size:17px;margin-left:8px}.button-ghost:hover{color:var(--amber)}
+.intro-footnote{color:#7f8b9c;font-size:10px;letter-spacing:.04em;margin-top:26px}.rule-glyph{color:#e8c283;margin-right:8px}.intro-side-note{position:absolute;bottom:47px;right:52px;display:flex;align-items:center;gap:13px;color:#aab8c6;font-size:9px;letter-spacing:.18em;writing-mode:vertical-rl}.intro-side-note .side-rule{width:1px;height:45px;background:#8ea7bb60}
+/* ── Живой вид: строка повествования. ── */
+.live-ui{position:absolute;inset:0;z-index:10;pointer-events:none}.live-ui button,.live-ui aside{pointer-events:auto}.live-caption{position:absolute;top:110px;left:clamp(22px,4.5vw,72px);max-width:300px}.live-kicker,.tiny-label,.inspector-top,.inspector-subheading{font-size:9px;letter-spacing:.17em;color:var(--amber);font-weight:600}.live-caption p{margin:15px 0 0;font-size:15px;font-weight:300;line-height:1.55;color:#dfdfdf;text-shadow:0 1px 20px #02040c}
+/* ── Инспектор выбранного тела. ── */
+.inspector{position:absolute;right:clamp(20px,4vw,68px);top:50%;transform:translateY(-42%);width:284px;padding:24px 23px;background:linear-gradient(150deg,rgba(13,22,38,.89),rgba(10,14,27,.81));border:1px solid rgba(179,214,221,.24);box-shadow:0 18px 65px #0008;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-radius:4px}.inspector-top{display:flex;justify-content:space-between;color:#abb4c2}.inspector-top span:last-child{color:var(--amber)}.inspector-name{font:500 19px/1.3 var(--display);margin-top:20px}.inspector-desc,.inspector-note{font-size:10px;line-height:1.7;color:#97a4b3}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:23px 0 24px;padding-bottom:19px;border-bottom:1px solid var(--outline)}.metrics div{display:flex;flex-direction:column;gap:8px}.metrics span{font-size:8px;letter-spacing:.12em;color:#929dac}.metrics strong{font:500 17px var(--display);color:#c4dce2}.inspector-subheading{color:#c7ac81;margin-bottom:14px}.operator-chain{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.operator-chain span{padding:7px 6px;border:1px solid #8d9fa244;border-radius:2px;font-size:8px;color:#dce5e8;letter-spacing:.05em}.operator-chain i{font-style:normal;font-size:10px;color:#8b9eae}.inspector-note{margin-top:19px}.text-button{background:none;border:0;border-top:1px solid var(--outline);padding:15px 0 0;margin-top:10px;width:100%;display:flex;justify-content:space-between;text-align:left;font-size:10px;color:#c5b8ad}
+/* ── Нижняя панель: режимы наблюдения, инструменты, показания. ── */
+.live-bottom{position:absolute;bottom:29px;left:clamp(22px,4.5vw,72px);right:clamp(22px,4.5vw,72px);display:flex;align-items:end;gap:30px;justify-content:space-between}.observatory{width:220px}.observatory .tiny-label{color:#99abb9}.mode-buttons{display:flex;gap:5px;margin-top:12px}.mode-button{border:1px solid #8192a856;padding:11px 15px;background:rgba(10,17,30,.6);color:#b9c1cf;font-size:10px;backdrop-filter:blur(9px);border-radius:3px}.mode-button.active{border-color:#edc488;background:rgba(244,204,144,.15);color:#f5dcaa}.observatory p{font-size:10px;color:#9aabb7;margin-top:12px;line-height:1.4}
+.control-tray{display:flex;gap:4px;padding:6px;background:rgba(8,14,26,.72);border:1px solid #8298aa38;border-radius:7px;backdrop-filter:blur(17px)}.tool-button{display:flex;flex-direction:column;gap:7px;align-items:center;justify-content:center;background:transparent;border:0;border-radius:4px;padding:10px 14px;min-width:67px;transition:background .2s}.tool-button:hover{background:rgba(189,216,236,.09)}.tool-button span{font-size:20px;line-height:1;color:#dfddda}.tool-button small{font-size:8px;letter-spacing:.07em;color:#a1afbd;white-space:nowrap}.tool-button-accent{background:rgba(236,190,125,.10)}.tool-button-accent span,.tool-button-accent small{color:#ecc58e}.live-readout{display:flex;flex-direction:column;gap:8px;min-width:124px;text-align:right;line-height:1.3}.live-readout span{font-size:9px;letter-spacing:.13em;color:#94a7b5}.live-readout b{font-weight:600;color:#c9d9df}.touch-hint{display:none;position:absolute;top:93px;left:24px;color:#aebac4;font-size:11px}
+/* ── Окно «Как это устроено»: основания и правила. ── */
+.modal-screen{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;padding:24px}.modal-backdrop{position:absolute;inset:0;background:rgba(3,6,13,.8);backdrop-filter:blur(10px)}.modal-panel{z-index:1;position:relative;overflow:auto;max-height:min(94vh,850px);width:min(760px,100%);padding:42px 45px;background:linear-gradient(140deg,#152131,#0c1221);border:1px solid #a8c8cc4b;box-shadow:0 25px 110px #000c;border-radius:5px}.modal-panel h2{font:500 clamp(25px,3.5vw,41px)/1.33 var(--display);letter-spacing:-.04em;margin:25px 0 18px}.modal-panel h2 em{font-style:normal;color:var(--amber)}.modal-panel>p{font-size:13px;line-height:1.75;color:#bdc7d1;max-width:640px}.modal-close{position:absolute;top:20px;right:24px;background:none;border:0;font-size:32px;font-weight:300;color:#adbcc6}.rule-card-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:26px 0}.rule-card-grid div{border-top:1px solid #819eab5e;padding-top:16px}.rule-card-grid b{font:500 10px var(--display);color:#e9c68f}.rule-card-grid p{color:#aab7c5;line-height:1.65;font-size:11px}.modal-conclusion{border-left:2px solid #e8c084;padding-left:15px;margin:23px 0 28px;font-size:12px;line-height:1.5;color:#e7dfd8}.modal-conclusion span{display:block;margin-top:5px;font-size:10px;color:#8b9aaa}.toast{position:fixed;z-index:50;left:50%;bottom:114px;transform:translate(-50%,10px);padding:12px 17px;background:#142232ee;border:1px solid #a2b9c750;border-radius:4px;font-size:11px;color:#e0e5e5;opacity:0;pointer-events:none;transition:opacity .3s,transform .3s;text-align:center;min-width:200px;box-shadow:0 8px 40px #0009}.toast.visible{opacity:1;transform:translate(-50%,0)}
+/* ── Выход в VR/AR: сцена A-Frame и накладка для десктоп-превью. ── */
+.xr-stage{position:fixed;inset:0;z-index:25;background:#050914}.xr-stage a-scene{width:100%!important;height:100%!important;position:absolute!important;inset:0!important}.xr-stage canvas{display:block}.xr-overlay{position:fixed;top:0;left:0;right:0;z-index:28;display:flex;align-items:center;justify-content:space-between;padding:20px clamp(20px,4vw,54px);pointer-events:none;background:linear-gradient(180deg,#050914c9,transparent)}.xr-overlay-text{display:flex;flex-direction:column;gap:6px}.xr-overlay-text b{font:500 13px var(--display)}.xr-overlay-text small{font-size:9px;letter-spacing:.1em;color:#acbbca}.xr-overlay button{pointer-events:auto;background:#121c30c9;border:1px solid #bdd7db57;border-radius:3px;padding:11px 15px;color:#e6ded3;font-size:11px}.xr-overlay button:hover{background:#273348}
+/* ── Анимация появления пролога. ── */
+@keyframes reveal{from{opacity:0;transform:translateY(15px)}to{opacity:1;transform:translateY(0)}}
+/* ── Адаптив: планшет и телефон. ── */
+@media(max-width:1000px){.intro-screen{padding:105px 6vw 35px}.intro-screen h1{font-size:clamp(43px,7vw,76px)}.intro-content{max-width:540px}.intro-copy{max-width:480px}.live-bottom{gap:12px}.observatory{width:190px}.live-readout{display:none}.tool-button{min-width:58px;padding:10px 8px}}
+@media(max-width:700px){.masthead{height:67px;padding:0 21px}.brand-text small{font-size:7px}.masthead-right{font-size:8px}.masthead-divider{display:none}.intro-screen{align-items:flex-start;padding:104px 22px 32px;background:linear-gradient(90deg,rgba(4,7,16,.5),rgba(4,7,16,.18))}.intro-heading-wrap{margin-top:22px}.intro-screen h1{font-size:clamp(38px,9vw,66px)}.intro-lead{font-size:21px}.intro-copy{font-size:12px}.intro-principles{margin:18px 0 20px;padding:16px 0}.intro-principles div{font-size:10px}.intro-actions{gap:6px}.button-primary{min-height:48px;min-width:180px}.intro-side-note{display:none}.live-caption{top:90px;left:23px;max-width:230px}.live-caption p{font-size:12px}.inspector{right:15px;left:15px;top:auto;bottom:102px;width:auto;transform:none;padding:17px;max-height:44vh;overflow:auto}.inspector-name{font-size:16px;margin-top:10px}.inspector-desc{display:none}.metrics{margin:13px 0}.live-bottom{left:12px;right:12px;bottom:14px;flex-direction:column;align-items:stretch;gap:10px}.observatory{width:auto;display:flex;align-items:center;gap:10px}.observatory .tiny-label,.observatory p{display:none}.mode-buttons{margin:0}.control-tray{justify-content:center}.tool-button{flex:1;min-width:0;padding:7px 5px}.tool-button span{font-size:18px}.tool-button small{font-size:7px}.modal-panel{padding:30px 21px}.rule-card-grid{grid-template-columns:1fr;gap:5px}.rule-card-grid div{padding-top:11px}.rule-card-grid p{margin:8px 0}.xr-overlay{padding:13px;gap:10px}.xr-overlay-text small{display:none}.xr-overlay button{padding:9px;font-size:9px}}
+@media(max-height:730px) and (min-width:701px){.intro-screen{align-items:flex-start;padding-top:106px}.intro-heading-wrap{margin-top:17px}.intro-screen h1{font-size:clamp(42px,4.2vw,70px)}.intro-lead{margin:12px 0}.intro-copy{font-size:12px;line-height:1.65}.intro-principles{margin:14px 0;padding:12px 0}.intro-principles div{font-size:10px}.intro-principles{gap:9px}.intro-footnote{margin-top:12px}.live-bottom{bottom:12px}}
+@media(prefers-reduced-motion:reduce){.intro-content{animation:none}.button-primary,.toast{transition:none}}
+/* Mobile refinement: keep scientific narration legible over the live field. */
+@media(max-width:700px){
+  .masthead-right #system-status,.masthead-divider{display:none}
+  .masthead-right{gap:7px}
+  .intro-screen{background:linear-gradient(90deg,rgba(4,7,16,.84),rgba(4,7,16,.66) 67%,rgba(4,7,16,.34))}
+  .intro-copy{color:#c8d0d9}
+}
+@media(max-width:700px){
+  .inspector{bottom:132px;max-height:42vh}
+  .toast{top:73px;bottom:auto;max-width:calc(100vw - 34px)}
+}
+
+/* Practice 01: the source quote is presented without an attribution line. */
+.intro-quote{margin:8px 0 24px;padding:0 0 0 20px;border-left:1px solid rgba(244,197,137,.75);font:500 clamp(12px,1.1vw,15px)/1.5 var(--display);letter-spacing:-.015em;color:#f0d9b5;max-width:520px}
+.intro-quote span{display:block;margin-top:8px;font:400 10px/1.5 var(--body);letter-spacing:.02em;color:#9aa7b6}
+@media(max-width:700px){.intro-quote{font-size:11px;margin:8px 0 14px;padding-left:11px}.intro-quote span{font-size:9px}.intro-screen{overflow-y:auto;align-items:flex-start}}
+
+/* Практика 01 — теоретические основания как часть художественного опыта */
+.modal-panel{scrollbar-width:thin;scrollbar-color:#8298a46a transparent;max-height:min(92vh,900px)}
+.modal-introduction strong,.modal-bridge strong{font-weight:500;color:#f0e4ce}
+.modal-section-label{display:flex;align-items:center;gap:12px;margin:30px 0 16px;font:500 10px/1.45 var(--display);letter-spacing:.09em;color:#d9bc92}
+.modal-section-label::after{content:'';height:1px;flex:1;background:#7c92a04a}
+.modal-section-label span{font:500 12px var(--display);color:#8fbfc5}
+.concept-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.concept-card{background:rgba(149,188,203,.055);border:1px solid #92b5bd2a;border-radius:4px;padding:17px 17px 15px;min-width:0}
+.concept-card-wide{grid-column:1/-1;background:rgba(230,188,126,.05);border-color:#d5b58e40}
+.concept-source{font:500 9px/1.5 var(--body);letter-spacing:.09em;color:#d7b987}
+.concept-card h3{font:500 13px/1.48 var(--display);letter-spacing:-.02em;color:#f0e8dd;margin:10px 0}
+.concept-card p{font:400 11px/1.75 var(--body);color:#b3c3ce;margin:0}
+.concept-card em{font-style:normal;color:#e0d5c7}
+.modal-bridge{font:400 12px/1.8 var(--body);color:#b8c5d0;margin:0}
+.rule-card-grid code{font:500 10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#e9cd9a}
+@media(max-width:700px){.modal-panel{max-height:91dvh}.modal-section-label{margin-top:25px}.concept-grid{grid-template-columns:1fr;gap:8px}.concept-card-wide{grid-column:auto}.concept-card{padding:14px}.concept-card h3{font-size:12px}.concept-card p{font-size:11px}.modal-bridge{font-size:11px}.modal-panel .eyebrow{font-size:8px;line-height:1.6}}
+
+/* Language switch: active on both intro and live views */
+.lang-switch{display:inline-flex;align-items:center;gap:2px;border:1px solid rgba(169,196,211,.34);border-radius:5px;padding:3px;background:rgba(7,14,27,.58);pointer-events:auto;flex-shrink:0}
+.lang-button{font:600 10px/1 var(--body);letter-spacing:.09em;border:0;border-radius:3px;padding:8px 9px;color:#a4b2c4;background:transparent;min-width:37px;cursor:pointer}
+.lang-button[aria-pressed="true"]{background:#e3c295;color:#11192a;box-shadow:0 0 12px #e9c18023}
+.lang-button:hover:not([aria-pressed="true"]){color:#fff;background:#52617666}
+.boot-error{position:fixed;z-index:100;left:18px;right:18px;bottom:18px;background:#481b26;color:white;border:1px solid #e3acb1;padding:16px;font-size:12px}
+@media(max-width:700px){.lang-button{font-size:9px;padding:7px 6px;min-width:30px}.lang-switch{padding:2px}.masthead-right{gap:6px}.brand-lockup{gap:8px}.brand-text b{font-size:10px}.masthead{padding:0 14px}}
+
+/* XR has a direct entry path; no need to pass through observation first. */
+#direct-xr-button{border-color:rgba(238,199,141,.55);color:#f4d8a9}
+#direct-xr-button:hover{background:rgba(228,188,124,.13)}
+@media(max-width:700px){.intro-actions{flex-wrap:wrap}.intro-actions button{flex-grow:1}}
+
+/* Practice 01 v5: three equal entry paths; flat p5 remains primary everywhere. */
+.intro-actions{flex-wrap:wrap;max-width:850px}
+.intro-actions .button-ghost{min-height:47px}
+.control-tray .tool-button{min-width:60px}
+@media(max-width:700px){.intro-actions{flex-wrap:wrap}.intro-actions .button-ghost{flex:1 1 38%;min-width:0;padding:11px 7px;font-size:10px}.control-tray{gap:1px}.tool-button small{font-size:6.5px}}
+
+/* ── Practice 01 / v6 · stable bilingual layout ──────────────────────────
+   Anchor the two languages to the same columns and baselines. Different
+   translations may wrap, but must not reposition the navigation or world. */
+.masthead{isolation:isolate}
+.masthead-right{padding-right:112px;gap:12px;white-space:nowrap}
+.masthead-right #system-status{display:inline-block;inline-size:148px;white-space:nowrap}
+.masthead-right [data-i18n="headPractice"]{display:inline-block;inline-size:104px;white-space:nowrap}
+.lang-switch{position:absolute;right:clamp(22px,4.5vw,72px);top:28px;z-index:3;width:100px;justify-content:center}
+.lang-button{flex:1 1 0;min-width:0;min-height:30px;text-align:center;font-variant-numeric:tabular-nums}
+.intro-screen{align-items:flex-start;padding-top:clamp(116px,14vh,154px)}
+.intro-content{width:min(600px,100%);max-width:600px;flex:0 0 auto}
+.intro-heading-wrap{margin-top:26px}
+.intro-lead{min-height:2.85em;max-width:540px}
+.intro-copy{max-width:525px;min-height:6.15em}
+.intro-principles{margin:24px 0 25px;min-height:139px;grid-template-rows:repeat(3,minmax(24px,auto))}
+.intro-principles div{display:grid;grid-template-columns:32px minmax(0,1fr);gap:12px;align-items:start}
+.intro-quote{min-height:23px}
+.intro-actions{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"start rules" "vr ar";align-items:stretch;gap:8px 14px;max-width:540px;width:100%}
+.intro-actions #start-button{grid-area:start;width:100%;min-width:0;min-height:48px}
+.intro-actions #read-rules-button{grid-area:rules}
+.intro-actions #direct-xr-button{grid-area:vr}
+.intro-actions #intro-ar-button{grid-area:ar}
+.intro-actions .button-ghost{width:100%;min-height:48px;text-align:center;display:flex;align-items:center;justify-content:center;gap:6px;border:1px solid rgba(172,202,213,.18);border-radius:3px;background:rgba(12,22,36,.32);padding:8px 12px;line-height:1.3;white-space:normal}
+.intro-actions .button-ghost:hover{background:rgba(92,130,148,.18);border-color:rgba(203,220,226,.40)}
+.intro-actions .button-ghost span{margin:0}
+.live-bottom .control-tray .tool-button{width:72px;min-width:72px;min-height:58px}
+.live-bottom .tool-button small{min-height:2.1em;display:flex;align-items:center;justify-content:center;text-align:center;white-space:normal;line-height:1.12}
+.mode-buttons .mode-button{min-width:100px}
+@media(max-width:1000px){
+  .masthead-right #system-status,.masthead-right .system-dot,.masthead-right .masthead-divider{display:none}
+  .masthead-right{padding-right:108px}
+}
+@media(max-width:700px){
+  .masthead{height:68px;padding-left:17px;padding-right:17px}
+  .lang-switch{right:15px;top:17px;width:82px}
+  .masthead-right{display:none}
+  .intro-screen{padding:98px 20px 24px;align-items:flex-start}
+  .intro-content{width:100%;max-width:none}
+  .intro-heading-wrap{margin-top:19px}
+  .intro-lead{min-height:2.8em;margin:16px 0 14px}
+  .intro-copy{min-height:8em;line-height:1.65}
+  .intro-principles{min-height:126px;margin:18px 0 19px;padding:15px 0;gap:9px}
+  .intro-principles div{min-height:26px}
+  .intro-actions{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+  .intro-actions #start-button,.intro-actions .button-ghost{min-height:48px;font-size:10px;flex-grow:unset}
+  .intro-actions .button-ghost{padding:8px 7px}
+  .control-tray .tool-button{width:auto!important;min-width:0!important;flex:1}
+  .live-bottom .control-tray .tool-button small{min-height:25px;font-size:6.8px}
+  .mode-buttons .mode-button{min-width:0}
+}
+@media(min-width:701px) and (max-height:740px){
+ .intro-screen{padding-top:98px}
+ .intro-lead{min-height:2.6em}
+ .intro-copy{min-height:5.3em}
+ .intro-principles{min-height:115px;margin:14px 0 12px;padding:10px 0}
+}
+
+/* v6.1 — predictable bilingual hero rhythm, including short laptop viewports.
+   Navigation positions are invariant; translations only reflow inside their slots. */
+@keyframes intro-fade-only{from{opacity:.28}to{opacity:1}}
+.intro-content{animation:intro-fade-only .6s ease both}
+@media (min-width:701px){
+  .intro-screen{padding-top:102px;padding-bottom:22px}
+  .intro-heading-wrap{margin-top:17px}
+  .intro-screen h1{font-size:clamp(46px,5.45vw,82px);line-height:1.10}
+  .pretitle{margin-bottom:10px}
+  .intro-lead{margin:14px 0 11px;min-height:2.8em}
+  .intro-copy{margin:0;min-height:5.4em;line-height:1.72}
+  .intro-principles{margin:13px 0 14px;padding:13px 0;min-height:115px;gap:8px}
+  .intro-quote{margin:4px 0 13px}
+  .intro-footnote{margin-top:10px}
+}
+@media (max-width:700px){
+  .intro-content{padding-bottom:25px}
+  .intro-screen{padding-top:93px}
+  .intro-lead{min-height:2.9em}
+  .intro-copy{min-height:8.4em}
+  .intro-principles{min-height:124px}
+  .intro-quote{margin:8px 0 15px}
+}
+@media (max-width:700px){
+ .intro-screen .eyebrow{min-height:22px;align-items:flex-start}
+ .intro-screen .pretitle{min-height:20px}
+}
+.mode-buttons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%}
+.mode-button{width:100%;min-width:0;padding-inline:6px;white-space:normal}
+
+/* v6.3: identical optical type size for all flat entry modes. */
+.intro-actions .button-ghost > span[data-i18n]{font:inherit!important;letter-spacing:inherit;color:inherit!important;margin:0!important}
+.intro-actions .button-ghost > span[aria-hidden]{font-size:14px!important;line-height:1;color:var(--amber);margin:0 0 0 5px!important}
+.intro-actions .button-ghost{font-size:12px;font-weight:500;letter-spacing:.005em}
+.intro-actions .button-ghost.xr-not-supported,
+.live-bottom .tool-button.xr-not-supported{display:none!important}
+.intro-actions:has(#direct-xr-button.xr-not-supported) #start-button{grid-column:auto}
+
+/* ── v6.3.1 · adaptive intro for short viewports ───────────────────────────
+   Fix: when a headset emulator (IWER / Quest) makes the VR and AR entry
+   visible, the second row of the entry menu lands below the fold on laptop
+   and embedded viewports — the whole entry menu drifts far down. All fixed
+   vertical slots of the intro become height-adaptive; the menu stays in view
+   from ~640px of viewport height upward. */
+@media (min-width:701px) and (max-height:820px){
+  .intro-screen{padding-top:84px;padding-bottom:14px}
+  .intro-heading-wrap{margin-top:10px}
+  .intro-screen h1{font-size:clamp(36px,4.4vw,58px);line-height:1.08}
+  .pretitle{margin-bottom:8px}
+  .intro-lead{margin:10px 0 8px;min-height:0;font-size:clamp(17px,1.8vw,23px)}
+  .intro-copy{min-height:0;line-height:1.62;font-size:12px}
+  .intro-principles{margin:10px 0 11px;min-height:0;padding:10px 0}
+  .intro-principles div{font-size:10px}
+  .intro-quote{margin:4px 0 10px;min-height:0}
+  .intro-actions .button-ghost,.intro-actions #start-button{min-height:40px}
+  .intro-actions{gap:7px 12px}
+  .intro-footnote{margin-top:8px}
+  .intro-content{padding-bottom:8px}
+}
+@media (min-width:701px) and (max-height:680px){
+  .intro-screen{padding-top:60px}
+  .intro-screen h1{font-size:clamp(30px,3.8vw,44px)}
+  .intro-copy{font-size:11px;line-height:1.55}
+  /* Principles collapse into one compact row instead of a tall stack. */
+  .intro-principles{display:grid;grid-template-columns:repeat(3,auto);justify-content:start;gap:4px 18px;padding:8px 0}
+  .intro-principles div{grid-template-columns:20px minmax(0,1fr);gap:7px}
+  .intro-actions .button-ghost,.intro-actions #start-button{min-height:36px}
+}
+@media (max-width:700px) and (max-height:740px){
+  .intro-screen{padding-top:76px;padding-bottom:16px}
+  .intro-heading-wrap{margin-top:12px}
+  .intro-screen h1{font-size:clamp(30px,8vw,50px)}
+  .intro-lead{margin:10px 0 8px;min-height:0;font-size:18px}
+  .intro-copy{min-height:0;line-height:1.55}
+  .intro-principles{min-height:0;margin:12px 0;padding:10px 0}
+  .intro-actions .button-ghost,.intro-actions #start-button{min-height:40px}
+  .intro-quote{margin:6px 0 10px;min-height:0}
+}
+
+/* ── v6.3.2 · единое выравнивание и типографика текстов кнопок входа ──────
+   Все четыре кнопки сетки пролога: текст по центру, одинаковый вес/трекинг,
+   символы-акценты одного кегля рядом с текстом. */
+.intro-actions #start-button{justify-content:center;gap:8px;line-height:1.2}
+.intro-actions #start-button .button-arrow{font-size:14px!important;line-height:1;color:var(--amber);margin:0!important;font-weight:400}
+.intro-actions .button-ghost{justify-content:center;gap:8px;line-height:1.2;text-align:center;font-weight:500;letter-spacing:.005em}
+.intro-actions .button-ghost > span:not([data-i18n]){font-size:14px!important;line-height:1;color:var(--amber);margin:0!important;font-weight:400}
+.intro-actions .button-ghost > span[data-i18n]{font-weight:inherit;letter-spacing:inherit}
+.intro-actions #start-button{font-weight:500;letter-spacing:.005em}

@@ -7,14 +7,13 @@
 **Живой каталог:** <https://stanleymarch.github.io/xr-experiments/>  
 **Автор:** <https://staniverse.xyz>
 
-- **[`apps/`](apps/)** — MR-опыты на Meta Immersive Web SDK (IWSDK): Quest 3 и Android WebXR. Собираются независимо.
-- **[`8thwall/`](8thwall/)** — самостоятельные 8th Wall / A-Frame camera-AR опыты со своей webpack-сборкой.
+- **[`apps/`](apps/)** — все опыты каталога, по папке на каждый: MR-опыты на Meta Immersive Web SDK (Quest 3 и Android WebXR), 8th Wall / A-Frame camera-AR со своей webpack-сборкой и статические опыты без сборки (p5.js + A-Frame).
 - **[`docs/ideas/`](docs/ideas/)** — замыслы, которые не входят в текущий каталог и не имеют кода.
-- Следующий движок можно добавить соседней папкой, не смешивая его зависимости и жизненный цикл с остальными.
+- Новый опыт — новая папка в `apps/`; его зависимости и жизненный цикл не смешиваются с соседними.
 
-GitHub Actions собирает активные 8th Wall и IWSDK-приложения в единый `_site/` и публикует каталог на GitHub Pages. Исходники и служебные настройки в `_site/` не копируются.
+GitHub Actions собирает все опыты из `apps/` в единый `_site/` и публикует каталог на GitHub Pages. Исходники и служебные настройки в `_site/` не копируются.
 
-Ниже — три законченных опыта: о чём они, как играются и как устроены. Художественные принципы, устройство эффектов и границы sensing разобраны в [«Комната как материал»](docs/room-as-medium.md).
+Ниже — законченные опыты: о чём они, как играются и как устроены. Художественные принципы, устройство эффектов и границы sensing разобраны в [«Комната как материал»](docs/room-as-medium.md).
 
 ## Каталог
 
@@ -126,13 +125,23 @@ runtime-настройки (IWSDK rc.2, postinstall-патч) сохранены
 
 ---
 
-## 8th Wall / A-Frame: отдельные AR-опыты
+## 8th Wall / A-Frame: камерные AR-опыты
 
-- **[Knockdown](8thwall/knockdown/)** — физическая диорама на реальной поверхности: снарядами разбиваешь архитектурную башню.
-- **[Portal](8thwall/portal/)** — ставишь на стену портал и смотришь сквозь него в другой объём.
-- **[Sea Battle](8thwall/sea-battle/)** — полноценная игра по мотивам советского перископного автомата 1974 года. Флот выходит волнами (каждая быстрее, море темнеет к ночи), очки за типы корпусов, серия точных попаданий, рекорд на прилавке, 10/10 без промаха — призовая игра. Три режима, без единой user-agent-строки: immersive WebXR (Quest 3, Android — hit-test постановка, курок-пуск, 3D-приборная доска на canvas-текстуре), flat-десктоп (вахтенная сетка, мышь) и камерный 8th Wall SLAM — вынужденная мера только для iOS, где WebXR нет. Подробности — в [docs/sea-battle.md](docs/sea-battle.md).
+- **[Knockdown](apps/knockdown/)** — физическая диорама на реальной поверхности: снарядами разбиваешь архитектурную башню.
+- **[Portal](apps/portal/)** — ставишь на стену портал и смотришь сквозь него в другой объём.
+- **[Sea Battle](apps/sea-battle/)** — полноценная игра по мотивам советского перископного автомата 1974 года. Флот выходит волнами (каждая быстрее, море темнеет к ночи), очки за типы корпусов, серия точных попаданий, рекорд на прилавке, 10/10 без промаха — призовая игра. Три режима, без единой user-agent-строки: immersive WebXR (Quest 3, Android — hit-test постановка, курок-пуск, 3D-приборная доска на canvas-текстуре), flat-десктоп (вахтенная сетка, мышь) и камерный 8th Wall SLAM — вынужденная мера только для iOS, где WebXR нет. Подробности — в [docs/sea-battle.md](docs/sea-battle.md).
 
 У этой полки свой визуальный язык, но тот же принцип: AR не закрывает комнату, а аккуратно занимает найденную поверхность; HUD учитывает safe-area, узкие и горизонтальные экраны, а в иммерсивных сессиях дублируется в 3D.
+
+## LANTERN // VOID — генеративная экология вычислительных тел
+
+**О чём.** Практическая работа семинара «Проектирование (не)человеческих систем»: среда из десяти вычислительных тел, которые слышат, помнят и излучают импульсы без адресата. Что читается как зов или ответ — интерпретация наблюдателя, а не свойство системы.
+
+**Как играется.** На экране — наблюдение и возмущение указателем, разбор выбранного тела. На Quest 3 — VR-мир с контекстным меню и AR-размещение миниатюры на реальной поверхности; присутствие меняет условия передачи сигнала.
+
+**Как устроено.** Три файла (p5.js 2.4 + A-Frame 1.8): одна симуляция с фиксированным шагом, два рендера — плоский на p5 и объёмный на A-Frame. Без сборки и зависимостей. Правила и статус проверок — в [docs/lantern-void.md](docs/lantern-void.md), концепция — в [docs/ideas/lantern-void.md](docs/ideas/lantern-void.md).
+
+**Открыть:** <https://stanleymarch.github.io/xr-experiments/p5/lantern-void/>
 
 ## Локальный запуск каталога
 
@@ -145,19 +154,22 @@ npx http-server _site -c-1 -p 8090
 ## Структура репозитория
 
 ```text
-apps/                     MR-опыты на Meta IWSDK (Quest 3 / Android WebXR)
-8thwall/                  8th Wall / A-Frame приложения
+apps/                     все опыты каталога, по папке на опыт:
+  weather-room/           Meta IWSDK — как reality-field/, agent-body/
+  sea-battle/             8th Wall / A-Frame с webpack-сборкой — как knockdown/, portal/
+  lantern-void/           статический опыт без сборки (p5.js + A-Frame)
 docs/room-as-medium.md    творческая и техническая механика опытов
 docs/ideas/               замыслы вне текущего каталога
-scripts/build-all.js      сборка активных 8th Wall и IWSDK в _site/
+scripts/build-all.js      сборка всех опытов из apps/ в _site/
 index.html                двуязычный каталог
 _site/                    генерируемый Pages artifact
 ```
 
 ### Добавить новый опыт
 
-- **8th Wall:** создай `8thwall/<name>/` с `config/webpack.config.js`, который выпускает `dist/`, и добавь npm scripts по образцу существующих приложений.
-- **Другой движок:** создай `apps/<name>/` и собери его независимо; не складывай его зависимости в `8thwall/`.
+- **IWSDK:** `apps/<name>/` с `package.json` — сборщик сам выполнит `npm ci` и `npm run build`, результат в `dist/`.
+- **8th Wall / A-Frame:** `apps/<name>/` с `config/webpack.config.js`, который выпускает `dist/`; npm scripts — по образцу `sea-battle`.
+- **Без сборки** (p5.js и т. п.): `apps/<name>/` с `index.html` — папка публикуется как есть. В `exp.json` укажи `"stack"`: это раздел каталога и первая часть адреса (у LANTERN — `p5/lantern-void/`).
 
 Локальные `.omp/` и `.agents/` (включая копии внутри приложений) исключены из
 Git: настройки моделей, сессии, промпты и генерируемые skills не являются
@@ -232,4 +244,4 @@ with that serial as `headsetId`, exact `runtimeTarget` copied from
 
 ## English summary
 
-Adaptive WebXR art experiments, designed for Meta Quest 3 first and kept meaningful on phone AR and desktop. Three Meta IWSDK mixed-reality experiences live under `apps/`: **REALITY//FIELD** turns the measured room into an elastic membrane that answers a strike with a travelling wave, **WEATHER//ROOM** manifests local weather around you on a −24h/NOW/+24h timeline, and **AGENT//BODY** (migrated whole from the standalone `agent-body` repository) hosts an embodied AI companion — a VRM avatar with local WebGPU LLM and on-device speech. Three 8th Wall camera-AR experiments live under `8thwall/`. The room itself is the medium; unrealised concepts are archived in `docs/ideas/` rather than promised in the catalog.
+Adaptive WebXR art experiments, designed for Meta Quest 3 first and kept meaningful on phone AR and desktop. Three Meta IWSDK mixed-reality experiences live under `apps/`: **REALITY//FIELD** turns the measured room into an elastic membrane that answers a strike with a travelling wave, **WEATHER//ROOM** manifests local weather around you on a −24h/NOW/+24h timeline, and **AGENT//BODY** (migrated whole from the standalone `agent-body` repository) hosts an embodied AI companion — a VRM avatar with local WebGPU LLM and on-device speech. Three 8th Wall camera-AR experiments live under `apps/` as well, next to the static p5.js + A-Frame piece **LANTERN // VOID**, a generative ecology of computational bodies. The room itself is the medium; unrealised concepts are archived in `docs/ideas/` rather than promised in the catalog.

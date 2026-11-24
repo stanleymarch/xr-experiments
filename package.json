@@ -7,9 +7,9 @@
     "skills:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-iwsdk-skills.ps1",
     "adb": "tools/platform-tools/adb.exe",
     "build": "node scripts/build-all.js",
-    "serve:knockdown": "cd 8thwall/knockdown && webpack-dev-server --mode=development --config config/webpack.config.js --port 8091",
-    "build:sea-battle": "cd 8thwall/sea-battle && webpack --config config/webpack.config.js",
-    "serve:sea-battle": "cd 8thwall/sea-battle && webpack-dev-server --mode=development --config config/webpack.config.js --port 8093"
+    "serve:knockdown": "cd apps/knockdown && webpack-dev-server --mode=development --config config/webpack.config.js --port 8091",
+    "build:sea-battle": "cd apps/sea-battle && webpack --config config/webpack.config.js",
+    "serve:sea-battle": "cd apps/sea-battle && webpack-dev-server --mode=development --config config/webpack.config.js --port 8093"
   },
   "devDependencies": {
     "@babel/parser": "^7.23.9",

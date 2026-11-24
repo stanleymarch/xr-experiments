@@ -4,8 +4,8 @@ This repository is migrating from the discontinued Google XR Blocks experiments 
 
 ## Architecture
 
-- `apps/` — new Meta IWSDK experiences for Quest 3 and supported Android WebXR.
-- `8thwall/` — active A-Frame code, supported, not legacy. Camera 8th Wall (XR8) serves iPhone/iPad; `sea-battle` is capability-routed and also serves Quest 3/Android via pure A-Frame WebXR plus a flat desktop mode (see `docs/sea-battle.md`).
+- `apps/` — every experience, one folder each, filed by how it is built: npm projects (Meta IWSDK), webpack projects (8th Wall / A-Frame) and static no-build experiments.
+- 8th Wall / A-Frame code (`apps/knockdown`, `apps/portal`, `apps/sea-battle`) is active and supported, not legacy. Camera 8th Wall (XR8) serves iPhone/iPad; `sea-battle` is capability-routed and also serves Quest 3/Android via pure A-Frame WebXR plus a flat desktop mode (see `docs/sea-battle.md`).
 - `docs/tasks/` — durable implementation briefs for autonomous coding-agent work.
 - `.omp/` and `.agents/` — ignored local coding-tool settings, sessions and generated skills; not published source.
 
@@ -29,7 +29,7 @@ Google XR Blocks implementation is dead. During the migration task:
 
 Do **not** inspect Git history to recover old XR Blocks code unless the user explicitly asks for historical recovery. The new IWSDK apps are greenfield implementations.
 
-Do **not** delete, rename, bulk-migrate or casually rewrite `8thwall/`. Existing experiences there must continue to build and work. In particular, the existing 8th Wall sea-battle/Battleship implementation stays intact; a future IWSDK counterpart is a separate task.
+Do **not** delete, bulk-migrate or casually rewrite the 8th Wall experiences in `apps/knockdown`, `apps/portal` and `apps/sea-battle`. They must continue to build and work at their published `8thwall/<name>/` addresses. In particular, the existing 8th Wall sea-battle/Battleship implementation stays intact; a future IWSDK counterpart is a separate task.
 
 Do not create a shared package just for architectural neatness. Extract framework-neutral TypeScript only after at least two real consumers need the same code.
 
@@ -38,7 +38,7 @@ Do not create a shared package just for architectural neatness. Extract framewor
 - Quest 3 MR: Meta IWSDK is the primary target.
 - Supported Android WebXR AR: Meta IWSDK with capability-based degradation.
 - iPhone/iPad WebAR: preserve/use the existing 8th Wall path where required. 8th Wall SLAM is the fallback of last resort (no WebXR at all); never route a WebXR-capable device to it.
-- `8thwall/sea-battle` routing is the reference pattern: capability detection in `src/boot.js` (immersive-ar → A-Frame WebXR, no navigator.xr → 8th Wall, otherwise → flat desktop A-Frame); no user-agent sniffing.
+- `apps/sea-battle` routing is the reference pattern: capability detection in `src/boot.js` (immersive-ar → A-Frame WebXR, no navigator.xr → 8th Wall, otherwise → flat desktop A-Frame); no user-agent sniffing.
 - Desktop/IWER: development, automated verification and meaningful fallback; never claim it proves Quest-only sensing or performance.
 
 Use feature/capability detection, not user-agent guesses.
@@ -47,7 +47,7 @@ Use feature/capability detection, not user-agent guesses.
 
 Do not guess IWSDK APIs from memory.
 
-For every new app:
+For every new IWSDK app:
 
 1. inspect the currently installed/current `@iwsdk/create` CLI rather than relying on stale flags;
 2. scaffold with the current official Meta creator;
@@ -73,6 +73,8 @@ Before edits, inspect `git status` and the relevant build/deploy files.
 ## Build/deploy
 
 The root build/deploy must continue to support active 8th Wall apps. New IWSDK apps build independently unless the existing Pages pipeline needs an explicit additive integration.
+
+A static experiment needs no build step: give it a folder in `apps/` with an `index.html` and name its catalog section (`"stack"`) in `exp.json`; `scripts/build-all.js` publishes the folder as is.
 
 When integrating an IWSDK app into GitHub Pages:
 

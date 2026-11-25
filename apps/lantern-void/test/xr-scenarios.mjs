@@ -249,14 +249,19 @@ await page.screenshot({path: join(shots, '04-look-down.png')})
 await page.evaluate(() => { document.querySelector('#xr-scene').camera.rotation.set(0, 0, 0) })
 
 // --- Сценарий 9: референс без пола (голова ≈ 0) — риг поднимается на 1.65. ---
+// Требуется 60 кадров подряд с низкой головой; на софтверном рендере это десятки
+// секунд — поэтому ждём флаг rebased, а не фиксированное время.
 const noFloor = await page.evaluate(() => {
   const s = document.querySelector('#xr-scene')
   const rig = s.querySelector('#xr-rig').object3D
   const comp = s.components['lantern-simulation']
   s.camera.position.set(0, 0.05, 0)
   comp.rebased = false
-  comp.ticks = 200
-  return new Promise((res) => setTimeout(() => res({rigY: +rig.position.y.toFixed(2), headY: +s.camera.getWorldPosition(new window.AFRAME.THREE.Vector3()).y.toFixed(2)}), 2500))
+  return new Promise((res) => {
+    const done = () => res({rigY: +rig.position.y.toFixed(2), headY: +s.camera.getWorldPosition(new window.AFRAME.THREE.Vector3()).y.toFixed(2)})
+    const poll = setInterval(() => { if (comp.rebased) { clearInterval(poll); setTimeout(done, 200) } }, 500)
+    setTimeout(() => { clearInterval(poll); done() }, 120000)
+  })
 })
 check('референс-спейс без пола: риг поднят, голова на 1.65–1.7 м', noFloor.rigY > 1.5 && noFloor.headY > 1.6 && noFloor.headY < 1.75, JSON.stringify(noFloor))
 

@@ -264,7 +264,14 @@ await page.waitForTimeout(200)
 check('P переключает режим', await page.evaluate(() => document.querySelector('.mode-button.active').textContent === 'Возмущать'))
 await page.keyboard.press('p')
 
-check('нет неожиданных ошибок страницы', errors.length === 0, errors.slice(0, 3).join(' | '))
+// Ожидаемые для этой среды сообщения отбрасываются: отказ AR-рантайма в headless
+// (проверяется сам путь деградации) и журналирование fallback-входа.
+const expectedEnv = (e) =>
+  e.includes('No runtimes supported the requested configuration') || // headless: нет AR-рантайма
+  e.includes('[lantern] вход в XR не удался')                        // журналирование fallback-входа
+const realErrors = errors.filter((e) => !expectedEnv(e))
+check('нет неожиданных ошибок страницы', realErrors.length === 0, realErrors.slice(0, 3).join(' | '))
+check('путь деградации AR залогирован (headless без AR-рантайма)', errors.some((e) => e.includes('No runtimes supported')))
 
 await browser.close()
 console.log(failed ? `\n${failed} проверок провалено` : '\nE2E v6.3 пройден полностью')

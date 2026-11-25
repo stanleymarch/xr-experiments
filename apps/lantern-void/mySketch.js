@@ -1346,7 +1346,6 @@
   function drawXRField(ctx,w,h){
     const t=app.world.time;
     ctx.clearRect(0,0,w,h);
-    ctx.fillStyle='#0b1521';ctx.fillRect(0,0,w,h);
     const at=(x,z)=>({x:w/2+x*w/18,y:h/2+z*h/18});
     ctx.lineWidth=.65;
     for(let i=0;i<25;i++){
@@ -2048,7 +2047,7 @@
     // сессии, tick выполняется каждый кадр: ввод → ходьба → мир → анимация тел → подписи.
     AFRAME.registerComponent('lantern-simulation',{
       init(){
-        this.elapsed=0;this.hudClock=0;this.rebased=false;this.ticks=0;this.guideAt=0;
+        this.elapsed=0;this.hudClock=0;this.rebased=false;this.ticks=0;this.guideAt=0;this.lowHeadTicks=0;
         this.camera=null;this.tmp=new THREE.Vector3();
         this.input=[{hand:'left',id:'xr-left-hand',ctrl:'xr-left-controller',prev:null},
                     {hand:'right',id:'xr-right-hand',ctrl:'xr-right-controller',prev:null}];
@@ -2071,14 +2070,14 @@
           app.xrTex&&(app.xrTex.floor.visible=false);
           app.xrStars&&(app.xrStars.visible=false);
           closeXRInspector();
-          if(!app.xrGuidedModes.ar)this.guideAt=90;
+          if(!app.xrGuidedModes.ar)this.guideAt=this.ticks+90;
         };
         this.el.addEventListener('enter-vr',()=>{
           if(this.el.is('ar-mode'))prepareAR();
           else {app.xrMode='vr';app.xrWorld&&(app.xrWorld.object3D.visible=true);
             // Подсказка при входе — не сразу, а через 90 кадров: поза гарнитуры
             // должна успеть примениться, иначе меню встанет по устаревшей позе.
-            if(!app.xrGuidedModes.vr)this.guideAt=90;}
+            if(!app.xrGuidedModes.vr)this.guideAt=this.ticks+90;}
         });
         // В AR-сессии A-Frame посылает и enter-vr (с состоянием ar-mode), и enter-ar.
         this.el.addEventListener('enter-ar',prepareAR);
@@ -2093,7 +2092,7 @@
         });
         this.el.addEventListener('exit-vr',()=>{
           // Риг — обратно на нейтральную высоту для десктоп-превью.
-          this.rebased=false;this.ticks=0;
+          this.rebased=false;this.lowHeadTicks=0;this.ticks=0;
           const rig=this.el.querySelector('#xr-rig');
           if(rig)rig.object3D.position.y=0;
           if(app.isXR)closeXR();
@@ -2108,24 +2107,34 @@
         // Пойманное сохраняется в app.tickErrors (lanternDebug.xrState().tickErrors()).
         try{
         this.ticks++;
-        // 1. Подсказка при входе — после того как поза гарнитуры устоялась.
-        if(this.guideAt>0&&this.ticks>=this.guideAt){
-          this.guideAt=0;
-          if(app.xrMode==='ar'?!app.xrGuidedModes.ar:!app.xrGuidedModes.vr){
-            (app.xrMode==='ar'?app.xrGuidedModes.ar=true:app.xrGuidedModes.vr=true);
-            toggleXRHelp(true);
+        // 1. Подсказка при входе: ждём устойчивую позу гарнитуры. На первых кадрах
+        // сессии three.js ещё не применял позу — голова в нуле, и меню, поставленное
+        // сейчас, окажется у пола. Открываем, когда голова выше 0.5 м (в AR поза не
+        // важна), либо не позже +270 кадров — если поза так и не пришла.
+        if(this.guideAt>0){
+          const head=xrHeadPosition();
+          const headReady=app.xrMode==='ar'||(head&&head.y>.5);
+          if(this.ticks>=this.guideAt+270||(this.ticks>=this.guideAt&&headReady)){
+            this.guideAt=0;
+            if(app.xrMode==='ar'?!app.xrGuidedModes.ar:!app.xrGuidedModes.vr){
+              (app.xrMode==='ar'?app.xrGuidedModes.ar=true:app.xrGuidedModes.vr=true);
+              toggleXRHelp(true);
+            }
           }
         }
-        // 2. Если у системы нет пола (голова около нуля), поднять риг: мир рассчитан
-        // на пол в 1.65 м ниже головы. На Quest с local-floor голова на 1.6–1.9 м —
-        // здесь ничего не меняется.
-        if(!this.rebased&&this.ticks>=45&&this.el.is('vr-mode')&&app.xrMode!=='ar'){
+        // 2. Если у системы нет пола, поднять риг: мир рассчитан на пол в 1.65 м ниже
+        // головы. Признак «без пола» — голова УСТОЙЧИВО ниже 0.8 м (60 кадров подряд):
+        // одиночные нулевые кадры в начале сессии — это ещё не пришедшая поза, а не
+        // система без пола; на Quest с local-floor голова на 1.6–1.9 м и ничего
+        // не меняется. Высота берётся у РЕАЛЬНОЙ камеры: сущность в сессии равна нулю.
+        if(!this.rebased&&this.el.is('vr-mode')&&app.xrMode!=='ar'){
           const head=xrHeadPosition();
-          if(head&&head.y<.8){
+          if(head&&head.y<.8){this.lowHeadTicks++;}else{this.lowHeadTicks=0;}
+          if(this.lowHeadTicks>=60){
             const rig=this.el.querySelector('#xr-rig');
             if(rig)rig.object3D.position.y+=1.65-head.y;
+            this.rebased=true;
           }
-          this.rebased=true;
         }
         // 3. Ходьба и наведение.
         if(app.xrMode!=='ar'){xrPollGamepads();xrMoveRig(delta);}
@@ -2346,6 +2355,9 @@
       const floor=new THREE.Mesh(new THREE.PlaneGeometry(18,18),
         new THREE.MeshBasicMaterial({map:texture,transparent:true,opacity:.57,depthWrite:false,side:THREE.DoubleSide}));
       floor.rotation.x=-Math.PI/2;floor.position.set(0,.02,0);
+      // Рисуем поле РАНЬШЕ тел: иначе прозрачная плоскость с тёмной текстурой
+      // смешивалась с аддитивными телами и гасила их (тёмная «стена» в кадре).
+      floor.renderOrder=-1;
       app.xrTex={texture,canvas,floor};
       app.xrScene.object3D.add(floor);
     }
@@ -2424,7 +2436,7 @@
       $('xr-stage').innerHTML=`<a-scene id="xr-scene" embedded lantern-simulation
         webxr="optionalFeatures: hit-test,local-floor,hand-tracking" ar-hit-test="target:#xr-world;enabled:${mode==='ar'};type:map;mapSize:.14 .14"
         renderer="antialias:true; colorManagement:true;alpha:true"
-        xr-mode-ui="XRMode:xr" loading-screen="enabled:false">
+        xr-mode-ui="XRMode:${mode==='ar'?'ar':'vr'}" loading-screen="enabled:false">
         <a-sky color="#050a16" hide-on-enter-ar></a-sky>
         <a-entity id="xr-world">
           <a-entity id="xr-bodies"></a-entity><a-entity id="xr-links"></a-entity>
@@ -2484,18 +2496,28 @@
       else app.xrScene.addEventListener('loaded',onLoaded,{once:true});
     }else{
       app.xrScene.play();
+      // Режим интерфейса входа — по выбранному пути: одна системная кнопка вместо двух.
+      app.xrScene.setAttribute('vr-mode-ui','XRMode',mode==='ar'?'ar':'vr');
       app.xrScene.setAttribute('ar-hit-test','target',app.xrScene.querySelector('#xr-world'));
       app.xrScene.setAttribute('ar-hit-test','enabled',mode==='ar');
       const root=app.xrScene.querySelector('#xr-world');
       if(root){root.object3D.scale.setScalar(mode==='ar'?.125:1);root.object3D.position.set(0,0,0);root.object3D.visible=mode!=='ar';}
       if(app.xrTex)app.xrTex.floor.visible=mode!=='ar';
       if(app.xrStars)app.xrStars.visible=mode!=='ar';
+      // Кнопка чужого режима (созданная при предыдущем входе) — спрятать.
+      const wantAr=mode==='ar';
+      app.xrScene.querySelectorAll('.a-enter-vr-button,.a-enter-ar-button').forEach((b)=>{
+        b.style.display=(b.classList.contains('a-enter-ar-button')===wantAr)?'':'none';
+      });
     }
-    // В AR сессию вводит системная кнопка A-Frame «Enter AR»: сцена могла загрузиться
-    // после действия пользователя и не может запросить AR сама. В VR — запрашиваем сразу.
-    if(mode==='vr' && app.xrScene?.hasLoaded){
-      const enter=app.xrScene.enterVR;
-      if(typeof enter==='function'){try{const p=enter.call(app.xrScene);if(p?.catch)p.catch(()=>{});}catch(_){}}
+    // Сессию запрашиваем сами: enterAR()/enterVR() в A-Frame 1.8 есть, и запрос идёт
+    // внутри клика, пока жива активация пользователя. Если сцена ещё грузится — вызов
+    // уйдёт в onLoaded; системная кнопка (одна, нужного режима) остаётся запасным путём.
+    if(app.xrScene&&app.xrScene.hasLoaded){
+      const enter=mode==='ar'?app.xrScene.enterAR:app.xrScene.enterVR;
+      if(typeof enter==='function'){
+        try{const p=enter.call(app.xrScene);if(p?.catch)p.catch(()=>{});}catch(_){}
+      }
     }
     if(app.audioActive)ensureSpatialVoices();
   }
@@ -2503,8 +2525,16 @@
   // вернуть плоский холст и сбросить ввод.
   function closeXR(){
     if(!app.isXR)return;
-    if(app.xrScene&&app.xrScene.is('vr-mode'))app.xrScene.exitVR();
-    if(app.xrScene)app.xrScene.pause();
+    if(app.xrScene){
+      // exitVR — только при живом сеансе: без сеанса A-Frame падает на снятии
+      // слушателей. Состояние vr-mode может стоять и без настоящего сеанса.
+      const xr=app.xrScene.renderer&&app.xrScene.renderer.xr;
+      const session=xr&&xr.getSession&&xr.getSession();
+      if(app.xrScene.is('vr-mode')&&session)app.xrScene.exitVR();
+    }
+    // Пауза — только если сцена реально играет: pause() на неиграющей сцене роняет
+    // снятие слушателей внутри A-Frame.
+    if(app.xrScene&&app.xrScene.isPlaying)app.xrScene.pause();
     app.xrMove={x:0,y:0};app.xrGrip={left:false,right:false};app.xrHoverBySide={left:-1,right:-1};
     for(const dot of Object.values(app.xrReticles))dot.visible=false;
     for(const state of Object.values(app.xrHandReticles)){

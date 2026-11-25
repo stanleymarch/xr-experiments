@@ -2,24 +2,34 @@
  * LANTERN // VOID — практическая работа № 1 / «Крик без адресата»
  * p5.js 2.4.0 + A-Frame 1.8.0. Вся работа — три файла: index.html, mySketch.js, style.css.
  *
- * ЧТО ЭТО. Маленькая генеративная экология: десять «вычислительных тел» обмениваются
+ * ЧТО ЭТО. Маленькая генеративная экология: «вычислительные тела» обмениваются
  * импульсами, у которых нет адресата. Правила предложены языковой моделью заранее;
  * во время работы опыта обращений к ней нет — последствия правил исполняет этот код.
  *
  * КАК УСТРОЕН ФАЙЛ. Разделы идут от правил к картинке:
  *   01 ПРАВИЛА        числа и операторы, по которым живёт мир
- *   02 МИР            создание мира по seed, шаг симуляции, импульсы
+ *   02 МИР            создание мира по seed, шаг симуляции, импульсы, захваты и встряски
  *   03 СОСТОЯНИЕ      общее состояние опыта и отладка из консоли
  *   04 ЯЗЫК           словарь интерфейса RU/EN
- *   05 ХОЛСТ          холст p5, такт и запасной режим без p5
+ *   05 ХОЛСТ          холст p5, такт, ОБЩЕЕ ПОЛЕ СРЕДЫ и запасной режим без p5
  *   06 ПЛОСКИЙ ВИД    2D-рисование тел, связей и поля на экране
- *   07 ИНТЕРФЕЙС      пролог, режимы наблюдения, инспектор, правила, звук
- *   08 ПРОСТРАНСТВО   A-Frame: та же симуляция в VR и AR (Quest 3)
+ *   07 ИНТЕРФЕЙС      пролог, режимы наблюдения, инспектор, правила, звук, курсор-захват
+ *   08 ПРОСТРАНСТВО   A-Frame: та же симуляция в VR/AR (Quest 3); grip берёт тело
  *   09 ЗАПУСК
  *
  * ГЛАВНАЯ ИДЕЯ: один мир — два рендера. Симуляция (02) не знает ни про p5,
  * ни про A-Frame. На экране её рисует p5 (06), в шлеме — A-Frame (08).
  * Это не две симуляции: в каждый момент тела одни и те же.
+ *
+ * ПОЛЕ СРЕДЫ: одна функция app.field.at(x,y,z,t) — шум p5, посеянный seed'ом мира
+ * (рождается в 05, заменитель на hash() в запасном режиме). Её читают: приток энергии
+ * тел (02), свечения фона и кольца (06) и шейдер оболочек A-Frame через текстуру
+ * 32×32 (08). Один источник — три потребителя, второй симуляции шума нет.
+ *
+ * ГДЕ SEED МЕНЯЕТ МИР: число тел (6–12), состав программ (2–5 видов), «разговорчивость»
+ * (порог связей 2.6–4.1 м), расстановка (слоты, отражение, сила сдвига), форма каждого
+ * тела (лепестки/орбиты поверх программы) — всё в createWorld (02); плюс шум поля (05).
+ * Один seed — один мир: детерминизм держат seeded(seedMix(seed)) и фиксированный шаг.
  *
  * Весь код обёрнут в (() => { … })(), чтобы не засорять глобальную область.
  * p5 работает в режиме instance — new p5(…) вместо глобальных функций.
@@ -38,7 +48,8 @@
     spontaneousInput: 0.105, // собственный приток энергии, независимо от соседей
     pulseCost: 0.32,         // какая доля энергии уходит на один импульс
     pulseStrength: 0.21,     // сила импульса, который тело посылает соседу
-    presenceGain: 0.28       // насколько присутствие человека подпитывает тела в режиме «Возмущать»
+    presenceGain: 0.28,      // насколько присутствие человека подпитывает тела в режиме «Возмущать»
+    fieldGain: 0.11          // сила «погоды»: вклад общего поля среды (шум p5) в приток каждого тела
   });
 
   // Пять программ тел. Это не «виды существ» и не характеры, а стартовые наборы
@@ -68,6 +79,12 @@
   // seeded(seed) — генератор случайных чисел для конкретного seed: два запуска с одним
   // seed создают одинаковый мир. Так опыт можно воспроизвести и сравнить результаты.
   const seeded = seed => {let n=seed>>>0;return () => ((n=(Math.imul(n,1664525)+1013904223)>>>0)/4294967296);};
+  // seedMix(seed) — перемешать seed ПЕРЕД генератором. У соседних seed первое число
+  // seeded() почти одно и то же (шаг ≈0.0004): без перемешивания seed 140821…141190
+  // получили бы одно и то же число тел. Финализер murmur3 — пять операций, и соседние
+  // seed становятся независимыми (проверено: совпадение числа тел у соседей 14.3%, как
+  // у честного случайного источника). Всегда подавать в seeded(seedMix(seed)).
+  const seedMix=s=>{let h=s>>>0;h^=h>>>16;h=Math.imul(h,0x85ebca6b);h^=h>>>13;h=Math.imul(h,0xc2b2ae35);h^=h>>>16;return h>>>0;};
   // rgba('#f0bd77',.5) → 'rgba(240,189,119,0.5)': цвет палитры с прозрачностью.
   const rgba = (hex,opacity) => {
     const c=hex.replace('#',''); return `rgba(${parseInt(c.slice(0,2),16)},${parseInt(c.slice(2,4),16)},${parseInt(c.slice(4,6),16)},${opacity})`;
@@ -80,10 +97,23 @@
   // z — назад (тела перед посетителем имеют отрицательный z).
 
   // createWorld(seed) строит мир с нуля: тела, их состояние и связи между ними.
+  // ГДЕ РЕШАЕТ SEED (структура, а не только параметры):
+  //   сколько тел (6–12), какие программы вообще встречаются (2–5 видов из пяти),
+  //   сколько тел делит одну программу, «разговорчивость» мира (порог связи 2.6–4.1 м),
+  //   расстановка (слоты выбираются и отражаются по seed, сила сдвига своя),
+  //   и форма каждого тела (лепестки/орбиты = программа + собственный seed тела).
+  // СлойComposition при этом сохранён: первое тело — у руки, средний и дальний планы,
+  // и хотя бы одно тело за спиной посетителя есть в каждом мире.
   function createWorld(seed){
-    const rng=seeded(seed);
-    // Расстановка: ближний, средний и дальний слои; два тела — ЗА спиной посетителя.
-    // Формат: x, y, z, радиус тела.
+    const rng=seeded(seedMix(seed));
+    // Число тел: 6–12. Стартовый seed 140821 подобран так, что даёт 10.
+    const count=6+Math.floor(rng()*7);
+    // «Разговорчивость»: порог связи этого мира, 2.6–4.1 м вместо прежних фиксированных 3.45.
+    const reach=RULES.range*(.75+rng()*.45);
+    // Расстановка: ближний, средний и дальний слои; два слота — ЗА спиной посетителя.
+    // Формат: x, y, z, радиус тела. Слоты 0 (у руки), 1 (средний план), 4 (дальний)
+    // и 8 (за спиной) обязательны — на них держится композиция; остальные 8 добираются
+    // случайно, вплоть до двух добавочных дальних слотов (10, 11).
     const layouts=[
       [ .54, -.08, -1.14, .50], // на расстоянии вытянутой руки, справа
       [-1.32,  .30, -2.35, .70], // ближний план, слева
@@ -94,15 +124,41 @@
       [-3.45, 1.12, -6.10, .81],
       [ .40,  2.00, -7.15, .73],
       [-2.05, -.14,  2.65, .57], // за спиной
-      [ 2.65,  .43,  2.45, .56]  // за спиной
+      [ 2.65,  .43,  2.45, .56], // за спиной
+      [-1.10, -.55, -5.95, .62], // дальний, добавочный
+      [ 1.75, 1.55, -6.70, .66]  // дальний, добавочный
     ];
-    const bodies=layouts.slice(0,RULES.bodies).map((layout,i)=>{
-      // Первое тело всегда «Резонатор», остальные получают случайную программу.
-      const variant=OPERATOR_PROGRAMS[(i===0?0:Math.floor(rng()*OPERATOR_PROGRAMS.length))];
+    const rest=[2,3,5,6,7,9,10,11];
+    for(let i=rest.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[rest[i],rest[j]]=[rest[j],rest[i]];}
+    const slots=[0,1,4,8,...rest].slice(0,count);
+    const flip=rng()<.5?-1:1;          // половина миров отражена слева направо
+    const spread=.13+rng()*.55;        // сила случайного сдвига каждого тела
+    // Какие программы вообще живут в этом мире: 2–5 видов из пяти, решает seed.
+    const pool=[...OPERATOR_PROGRAMS];
+    for(let i=pool.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}
+    pool.length=2+Math.floor(rng()*4);
+    const layerOf=z=>z>0?'behind':(z>-2.05?'near':(z>-4.2?'middle':'far'));
+    const bodies=slots.map((slot,i)=>{
+      const layout=layouts[slot];
+      // Первое тело всегда «Резонатор»; остальные берут программы из пула мира по кругу —
+      // поэтому «сколько тел делит одну программу» тоже решает seed.
+      const base=i===0?OPERATOR_PROGRAMS[0]:pool[i%pool.length];
+      // Тело у руки сдвигается слабее: оно должно остаться в пределах вытянутой руки.
+      const sp=i===0?.13:spread;
+      const jx=layout[0]*flip+(rng()-.5)*sp*2,jy=layout[1]+(rng()-.5)*sp*1.4,jz=layout[2];
+      const size=layout[3]*(.9+rng()*.2);
+      // morphology — seed узора тела; из него же выводится форма (лепестки ±2, орбиты ±1)
+      // поверх номинала программы: тело узнаётся по программе, но между мирами отличается.
+      const morphology=Math.floor(rng()*100000);
+      const variant={...base,
+        lobes:clamp(base.lobes+Math.floor(hash(morphology*3.7)*5)-2,3,9),
+        rings:clamp(base.rings+Math.floor(hash(morphology*7.9)*3)-1,1,5)};
       return {
-        // Имя, номер, положение в метрах (с небольшим случайным сдвигом) и радиус size.
-        id:`L-${String(i+1).padStart(2,'0')}`, index:i,
-        x:layout[0]+(rng()-.5)*.26,y:layout[1]+(rng()-.5)*.26,z:layout[2],size:layout[3]*(.9+rng()*.2),
+        // Имя, номер, положение в метрах (со случайным сдвигом своего seed) и радиус size.
+        id:`L-${String(i+1).padStart(2,'0')}`,index:i,
+        x:jx,y:jy,z:jz,size,
+        // home — куда тело возвращается, когда его отпустили (см. grab/agitation, раздел 08).
+        home:{x:jx,y:jy,z:jz},agitation:0,grab:null,layer:layerOf(jz),
         // Состояние. energy (0…1) — запас энергии; signal и received — сила последнего
         // отправленного и последнего принятого импульса (обе затухают).
         program:variant,energy:.30+rng()*.34,signal:0,received:0,
@@ -113,20 +169,20 @@
         tint:i%3===0?'warm':(i%3===1?'cool':'violet'),
         // Внутренняя память операторов FILTER, DELAY и MEMORY.
         filtered:0,delayed:0,delayQueue:[],memoryState:0,
-        // morphology — seed узора; links — число связей; visitorInfluence — насколько
-        // тело сейчас чувствует посетителя. last… — время и источник последних событий
-        // (по ним рисуются волны и заполняется карточка тела).
-        morphology:Math.floor(rng()*100000),links:0,visitorInfluence:0,
+        // links — число связей; visitorInfluence — насколько тело сейчас чувствует
+        // посетителя. last… — время и источник последних событий (по ним рисуются волны
+        // и заполняется карточка тела).
+        morphology,links:0,visitorInfluence:0,
         lastReceivedAt:-100,lastReceivedFrom:-1,lastReceivedInfluenced:false,lastTouchAt:-100
       };
     });
-    // Связи — пары тел ближе RULES.range. Первое тело, самое близкое к посетителю,
-    // получает запас в 1.8 м, чтобы обмениваться импульсами чаще других.
+    // Связи — пары тел ближе reach этого мира (2.6–4.1 м, от seed). Первое тело, самое
+    // близкое к посетителю, получает запас в 1.8 м, чтобы обмениваться импульсами чаще других.
     const links=[];
     for(let i=0;i<bodies.length;i++){
       for(let j=i+1;j<bodies.length;j++){
         const d=distance3(bodies[i],bodies[j]);
-        if(d<RULES.range+((i===0||j===0)?1.8:0)) links.push({a:i,b:j,dist:d,phase:rng()*6.28});
+        if(d<reach+((i===0||j===0)?1.8:0)) links.push({a:i,b:j,dist:d,phase:rng()*6.28});
       }
     }
     // Ни одно тело не остаётся без единственной связи, но и полной «сети знакомств» нет:
@@ -140,7 +196,7 @@
     }
     for(const link of links){bodies[link.a].links++;bodies[link.b].links++;}
     return {
-      seed,bodies,links,
+      seed,bodies,links,reach,   // reach — порог связей этого мира (для отладки и тестов)
       pulses:[],             // импульсы в полёте
       time:0,accumulator:0,  // время мира и накопитель фиксированного шага (см. advanceWorld)
       emissions:0,           // сколько импульсов испущено за всё время
@@ -202,11 +258,21 @@
       b.received*=Math.exp(-dt*(.8+b.program.memory*.3));
       b.signal*=Math.exp(-dt*2.55);
       b.cooldown=Math.max(0,b.cooldown-dt);
+      // Рука/курсор тянет тело (grab ставит tick в 08 или указатель в 07); отпущенное
+      // упруго плывёт домой. Встряска (agitation 0…1) гаснет сама: взятому в руку телу
+      // «громче» — больше приток и короче пауза между импульсами, и оба рендера это видят.
+      if(b.grab){b.x=lerp(b.x,b.grab.x,.18);b.y=lerp(b.y,b.grab.y,.18);b.z=lerp(b.z,b.grab.z,.18);}
+      else{b.x=lerp(b.x,b.home.x,.045);b.y=lerp(b.y,b.home.y,.045);b.z=lerp(b.z,b.home.z,.045);}
+      b.agitation=Math.max(0,b.agitation-dt*.3);   // отпущенное тело успокаивается за ~3 с
       // Исполнитель операторов. Программа тела — список операторов, и каждый из них
       // здесь ДЕЙСТВУЕТ, а не просто подписан в инспекторе.
       const oscillator=.5+.5*Math.sin(world.time*b.freq*1.8+b.phase);   // собственный ритм тела
       const ops=b.program.ops;
       let input=RULES.spontaneousInput*(.55+oscillator*.7);
+      // «Погода»: общее поле среды app.field — ОДНА функция шума p5 (сеется seed'ом мира
+      // в разделе 05), её читают симуляция, фон плоского вида и шейдеры A-Frame.
+      // RULES.fieldGain задаёт силу правила; lanternDebug.fieldGain(0) выключает вклад.
+      if(app.field&&RULES.fieldGain>0&&app.fieldScale>0)input+=(app.field.at(b.x,b.y,b.z,world.time)-.47)*RULES.fieldGain*app.fieldScale;
       if(ops.includes('NOISE')) input+=.022*Math.sin(world.time*1.7+b.phase*3.0);       // собственные колебания
       if(ops.includes('SENSE')) input+=b.received*.18;                                   // принимает импульсы соседей
       if(ops.includes('FILTER')){b.filtered=lerp(b.filtered,input,.045);input=b.filtered;} // сглаживает вход: реагирует на тенденцию, а не на каждый сигнал
@@ -222,6 +288,7 @@
         input+=b.memoryState*.13;
       }
       if(ops.includes('FEEDBACK'))input+=b.signal*.055+b.energy*.015;                    // собственный импульс и запас энергии возвращаются на вход
+      if(b.agitation>0)input+=b.agitation*.16;                                           // встряска питает тело
       // Присутствие посетителя — слабое поле вокруг головы и более сильное вокруг рук.
       // В режиме наблюдения (observe) оно не влияет на симуляцию.
       let disturbance=0;
@@ -242,7 +309,7 @@
       const threshold=b.threshold*(ops.includes('GATE')?1:.92);
       if(ops.includes('EMIT')&&gating>threshold && b.cooldown<=0){
         b.energy*=1-RULES.pulseCost;
-        b.cooldown=.66+(1-b.program.memory)*.75;
+        b.cooldown=(.66+(1-b.program.memory)*.75)*(1-b.agitation*.45);   // встревоженное тело импульсит чаще
         emitSignal(world,b);
       }
     }
@@ -278,11 +345,15 @@
     selected:0,inspectorOpen:false,          // какое тело открыто в инспекторе на экране
     // Плоский холст: элемент canvas, его 2D-контекст, экземпляр p5, размер окна.
     canvas:null,ctx:null,p5Instance:null,canvasFallback:false,
+    // Поле среды: app.field ставит p5 (раздел 05) или запасной hash-режим; fieldScale —
+    // множитель RULES.fieldGain (lanternDebug.fieldGain(0) выключает «погоду» в симуляции).
+    field:null,fieldScale:1,
     width:window.innerWidth,height:window.innerHeight,
     hovered:-1,                               // тело под курсором на экране (-1 — никакого)
+    dragBody:-1,                              // тело, которое тянет курсор (захват в 07)
     pointer:{x:-1000,y:-1000,inside:false},  // координаты курсора и находится ли он на сцене
     // Объекты A-Frame: сцена, корень мира, тела, связи, текстура поля, звёзды и карточки.
-    xrScene:null,xrWorld:null,xrBodies:[],xrLinks:[],xrTex:null,xrStars:null,xrLabel:null,xrHoverCard:null,
+    xrScene:null,xrWorld:null,xrBodies:[],xrLinks:[],xrTex:null,xrStars:null,xrLabel:null,xrHoverCard:null,xrFieldTex:null,
     // Звук (WebAudio) и таймер обновления строки повествования.
     audio:null,audioActive:false,elapsedNarration:0,
     // Выбор и подсказки в шлеме: выбранное тело; тело под лучом каждого контроллера;
@@ -304,11 +375,28 @@
   //   lanternDebug.injectPresence(точки,'perturb')  подставить точки присутствия и включить возмущение
   //   lanternDebug.reset(42)                   заменить мир новым с заданным seed
   //   lanternDebug.audioStats()                включён ли звук, сколько сигналов прозвучало
+  //   lanternDebug.structure()                 состав мира при рождении: тела, программы, связи
+  //   lanternDebug.field()                     общее поле среды ({kind, at, reseed})
+  //   lanternDebug.fieldGain(v)                множитель поля (0 — мир без «погоды»)
+  //   lanternDebug.fieldTexture()              байты текстуры поля для шейдеров (32×32 RGBA)
+  //   lanternDebug.agitate(i,v)                встряска тела i вручную (для сравнения кадров)
   //   lanternDebug.xrState()                   что выбрано в шлеме; .tickErrors() — ошибки кадров
   //   lanternDebug.xrMenuAudit()               из чего собрано меню в шлеме
   window.lanternDebug={
-    getState:()=>({time:app.world.time,seed:app.world.seed,bodies:app.world.bodies.map(b=>({id:b.id,energy:b.energy,emitted:b.emitted})),emissions:app.world.emissions,arrivalHistory:app.world.arrivalHistory.slice(-5),visitor:app.world.visitor,bodiesNear:app.world.bodies.map(b=>({id:b.id,field:+b.visitorInfluence.toFixed(3)})),started:app.started,xr:app.isXR}),
-    reset:seed=>{app.world=createWorld(seed);return app.world.seed;},
+    getState:()=>({time:app.world.time,seed:app.world.seed,bodies:app.world.bodies.map(b=>({id:b.id,energy:b.energy,emitted:b.emitted,agitation:+b.agitation.toFixed(3)})),emissions:app.world.emissions,arrivalHistory:app.world.arrivalHistory.slice(-5),visitor:app.world.visitor,bodiesNear:app.world.bodies.map(b=>({id:b.id,field:+b.visitorInfluence.toFixed(3)})),started:app.started,xr:app.isXR}),
+    reset:seed=>{app.world=createWorld(seed);app.field&&app.field.reseed(seed);return app.world.seed;},
+    // structure() — состав мира НА МОМЕНТ РОЖДЕНИЯ: тела (программа, форма, слой), связи
+    // и порог связей. По нему видно, где seed меняет структуру, а не только параметры.
+    structure:()=>({bodies:app.world.bodies.map(b=>({id:b.id,program:b.program.name,lobes:b.program.lobes,
+        rings:b.program.rings,links:b.links,layer:b.layer,x:+b.x.toFixed(3),y:+b.y.toFixed(3),z:+b.z.toFixed(3)})),
+      links:app.world.links.map(l=>`${app.world.bodies[l.a].id}–${app.world.bodies[l.b].id}`),reach:+app.world.reach.toFixed(4)}),
+    // field() — общее поле среды ({kind:'p5'|'hash', at(x,y,z,t), reseed(seed)}); fieldGain —
+    // множитель RULES.fieldGain; fieldTexture() — байты текстуры поля для шейдеров A-Frame.
+    field:()=>app.field,
+    fieldGain:v=>{if(v!==undefined)app.fieldScale=v;return app.fieldScale;},
+    fieldTexture:()=>{if(app.xrFieldTex)app.xrFieldTex.refresh();
+      return app.xrFieldTex?{data:Array.from(app.xrFieldTex.data),n:app.xrFieldTex.N,time:+app.world.time.toFixed(3)}:null;},
+    agitate:(i,v)=>{const b=app.world.bodies[i];if(!b)return null;b.agitation=clamp(v,0,1);return b.agitation;},
     injectPresence:(points,mode='perturb')=>{app.world.mode=mode;app.world.visitor={active:mode==='perturb',points};},
     simulate:steps=>{for(let i=0;i<steps;i++)updateOneStep(app.world,SIMULATION_STEP);return{
       emissions:app.world.emissions,arrivals:app.world.arrivalHistory.length,
@@ -317,7 +405,7 @@
     spatialLayout:()=>app.world.bodies.map(b=>({id:b.id,x:b.x,y:b.y+1.7,z:b.z,size:b.size})),
     audioStats:()=>({active:app.audioActive,spatialVoices:app.audio?.spatial?.length||0,
       packetSounds:app.audio?.signalPings||0,filter:app.audio?.filter?.frequency?.value||0}),
-    xrState:()=>({selected:app.xrSelection,visitorMode:app.world.mode,contacts:app.world.contactHistory.length,tickErrors:()=>app.tickErrors.slice()}),
+    xrState:()=>({selected:app.xrSelection,visitorMode:app.world.mode,contacts:app.world.contactHistory.length,grip:{...app.xrGrip},tickErrors:()=>app.tickErrors.slice()}),
     xrMenuAudit:()=>({buttons:app.xrMenuButtons.map(b=>({action:b.action,canvas:[b.label.canvas.width,b.label.canvas.height],hasMesh:!!b.entity.getObject3D('mesh')}))})
   };
 
@@ -445,10 +533,11 @@
     return tr(event.type,event.params||{});
   }
   // Условное имя тела на текущем языке («Резонатор», «Threshold»…). У тела в его
-  // собственной среде имени нет — название нужно только наблюдателю.
+  // собственной среде имени нет — название нужно только наблюдателю. Программа тела
+  // — свой экземпляр (форма выводится из seed тела), поэтому ищем по имени, не по ссылке.
   function programName(body){
-    const i=OPERATOR_PROGRAMS.indexOf(body.program);
-    return (LANG[app.lang].names[i]||body.program.name);
+    const i=OPERATOR_PROGRAMS.findIndex(p=>p.name===body.program.name);
+    return (i>=0?(LANG[app.lang].names[i]||body.program.name):body.program.name);
   }
   // refreshLanguage — перевести весь интерфейс на app.lang: статические надписи,
   // заголовок страницы, подписи кнопок, инспектор, карточки и меню в шлеме.
@@ -498,9 +587,14 @@
   }
 
   // ═══ 05 / ХОЛСТ ════════════════════════════════════════════════════════════
-  // Плоский вид рисуется обычным Canvas 2D. p5 даёт три вещи: холст нужного размера
-  // и чёткости, такт (p.draw вызывается каждый кадр) и пересоздание при изменении окна.
-  // Внутри draw два действия: продвинуть мир и нарисовать его.
+  // Плоский вид рисуется обычным Canvas 2D. p5 даёт четыре вещи: холст нужного размера
+  // и чёткости, такт (p.draw вызывается каждый кадр), пересоздание при изменении окна
+  // и ОБЩЕЕ ПОЛЕ СРЕДЫ — здесь p.noiseSeed сеется seed'ом мира и рождается app.field,
+  // одна функция at(x,y,z,t), которую читают симуляция (02), фон плоского вида (06)
+  // и шейдеры тел A-Frame (08). Аргументы p.noise сдвинуты в положительную область:
+  // шум зеркалит отрицательные координаты, и без сдвига «погода» была бы симметрична
+  // относительно посетителя. Время идёт по второй оси решётки (период её развёртки
+  // мал у p5: 16 узлов — заметно быстрее, чем у первой оси).
 
   function viewportSize(){
     app.width=Math.max(300,window.innerWidth);app.height=Math.max(300,window.innerHeight);
@@ -510,12 +604,18 @@
     try{
       app.p5Instance=new window.p5(p=>{
         p.setup=()=>{
+          if(app.canvasFallback)return;   // запасной режим уже вступил — холст p5 не добавляем
           viewportSize();
           // Чёткость не выше 1.6× плотности пикселей: иначе тяжёлые тела замедляют кадр.
           p.pixelDensity(Math.min(window.devicePixelRatio||1,1.6));
           const canvas=p.createCanvas(app.width,app.height);
           canvas.parent('p5-stage');
           p.frameRate(35);
+          // Общее поле среды (см. шапку раздела): шум p5, посеянный seed'ом мира.
+          // reseed вызывает lanternDebug.reset — поле и мир всегда согласованы.
+          p.noiseSeed(app.world.seed);
+          app.field={kind:'p5',reseed:s=>p.noiseSeed(s),
+            at:(x,y,z,t)=>p.noise(2.2+x*.31,.6+t*.21+y*.17,2.2+z*.31)};
           app.canvas=canvas.elt;app.ctx=p.drawingContext;   // рисуем напрямую через 2D-контекст
           app.canvas.style.touchAction='none';
         };
@@ -531,10 +631,30 @@
           viewportSize();p.resizeCanvas(app.width,app.height);
         };
       });
-      // p5.js 2.x может запустить setup с задержкой. Если через 1.2 с холста нет —
-      // включаем запасной режим, чтобы опыт не остался пустым экраном.
-      setTimeout(()=>{if(!app.canvas&&!app.canvasFallback){console.warn('p5 setup did not complete; activating canvas fallback');try{app.p5Instance?.remove();}catch(_){ }app.p5Instance=null;setupFallback();}},1200);
+      // p5.js 2.x может запустить setup с задержкой (медленная сеть, занятый поток).
+      // Если скрипт p5 вообще не пришёл — через 3 с включаем запасной режим. Если p5
+      // есть, но setup ещё не успел — ждём его: убивать экземпляр нельзя, иначе поле
+      // среды навсегда останется на hash-заменителе вместо шума p5.
+      setTimeout(()=>{if(!app.canvas&&!app.canvasFallback&&typeof window.p5!=='function'){console.warn('p5 did not load; activating canvas fallback');setupFallback();}},3000);
+      // Совсем зависший setup (p5 есть, холста нет): запасной режим ещё не бесконечность.
+      setTimeout(()=>{if(!app.canvas&&!app.canvasFallback){console.warn('p5 setup hung; activating canvas fallback');try{app.p5Instance?.remove();}catch(_){ }app.p5Instance=null;setupFallback();}},8000);
     }catch(e){console.error('p5 initialization failed, using canvas fallback:',e);app.p5Instance=null;setupFallback();}
+  }
+  // hashField(seed) — заменитель общего поля без p5: та же решётка, но значения в узлах
+  // берутся из hash(), а между узлами значения сглажены. Детерминированный, сеется тем
+  // же seed; интерфейс тот же ({kind, at, reseed}), поэтому мир живёт одинаково.
+  function hashField(seed){
+    let s=seed>>>0;
+    const node=(X,Y,Z)=>hash((Math.imul(X,374761393)^Math.imul(Y,668265263)^Math.imul(Z,1274126177)^Math.imul(s,974634617))>>>0);
+    const smooth=v=>v*v*(3-2*v);
+    return {kind:'hash',reseed:v=>{s=v>>>0;},
+      at:(x,y,z,t)=>{
+        const gx=x*.31,gy=y*.17+t*.21,gz=z*.31;
+        const X=Math.floor(gx),Y=Math.floor(gy),Z=Math.floor(gz);
+        const fx=smooth(gx-X),fy=smooth(gy-Y),fz=smooth(gz-Z);let v=0;
+        for(let dz=0;dz<2;dz++)for(let dy=0;dy<2;dy++)for(let dx=0;dx<2;dx++)
+          v+=node(X+dx,Y+dy,Z+dz)*(dx?fx:1-fx)*(dy?fy:1-fy)*(dz?fz:1-fz);
+        return v;}};
   }
   // Запасной режим: p5 не загрузился — тот же холст и тот же цикл на голом Canvas 2D.
   function setupFallback(){
@@ -543,6 +663,8 @@
     app.canvas=document.createElement('canvas');
     $('p5-stage').append(app.canvas);
     app.ctx=app.canvas.getContext('2d');
+    // Поле среды и здесь живёт: заменитель на hash() с тем же seed (см. hashField выше).
+    if(!app.field)app.field=hashField(app.world.seed);
     const resize=()=>{
       viewportSize();const dpr=Math.min(window.devicePixelRatio||1,1.6);
       app.canvas.width=Math.round(app.width*dpr);app.canvas.height=Math.round(app.height*dpr);
@@ -585,15 +707,18 @@
     g.addColorStop(0,rgba(color,opacity));g.addColorStop(.28,rgba(color,opacity*.44));g.addColorStop(1,rgba(color,0));
     ctx.fillStyle=g;ctx.fillRect(x-r,y-r,r*2,r*2);
   }
-  // Фон: градиент пустоты, три широких свечения и 150 мерцающих пылинок.
+  // Фон: градиент пустоты, три широких свечения и 150 мерцающих пылинок. Свечения
+  // подкрашены ОБЩИМ полем среды (тот же шум p5, что питает тела, раздел 02/05):
+  // плоский вид показывает ту же «погоду», а не собственную.
   function drawBackground(ctx,w,h,t){
+    const F=(x,z)=>app.field?app.field.at(x,.4,z,t):.5;
     const bg=ctx.createLinearGradient(0,0,w,h);
     bg.addColorStop(0,'#050915');bg.addColorStop(.48,'#0c1324');bg.addColorStop(1,'#080c17');
     ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);
     ctx.save();ctx.globalCompositeOperation='screen';
-    glow(ctx,w*.67,h*.45,Math.min(w*.48,720),'#56659d',.17);
-    glow(ctx,w*.84,h*.23,Math.min(w*.3,460),'#9b6a6e',.10);
-    glow(ctx,w*.28,h*.89,Math.min(w*.33,480),'#385d91',.09);
+    glow(ctx,w*.67,h*.45,Math.min(w*.48,720),'#56659d',.17*(.55+.95*F(-3,-4)));
+    glow(ctx,w*.84,h*.23,Math.min(w*.3,460),'#9b6a6e',.10*(.55+.95*F(4,-5)));
+    glow(ctx,w*.28,h*.89,Math.min(w*.33,480),'#385d91',.09*(.55+.95*F(-4,3)));
     for(let i=0;i<150;i++){
       const x=hash(i*1.343+91)*w,y=hash(i*3.771+18)*h;
       const twinkle=.28+.26*Math.sin(t*(.18+hash(i)*.65)+i);
@@ -611,7 +736,7 @@
       const radius=(52+k*51)*(Math.min(w/1400,1.2));
       const shift=(t*5+k*17)%44;
       ctx.beginPath();ctx.ellipse(centerX,centerY+12,radius+shift,(radius+shift)*.21,-.035,0,Math.PI*2);
-      const a=.10*(1-k/13)+.03*Math.sin(t*.6+k);
+      const a=(.10*(1-k/13)+.03*Math.sin(t*.6+k))*(.6+.8*(app.field?app.field.at(.5,.4,-3.2,t):.5));
       ctx.strokeStyle=k%3===0?rgba(PALETTE.warm,a):rgba(PALETTE.cool,a*.66);ctx.lineWidth=k%3===0?1.25:.75;ctx.stroke();
     }
     for(let i=0;i<45;i++){
@@ -657,13 +782,15 @@
     const petals=variant.lobes;
     return (1+.11*Math.sin(theta*petals + layer*.68+t*.19)+.07*Math.sin(theta*(petals+3)-t*.31+layer*2))*(1+layer*.04);
   }
-  // drawBody — одно тело. Радиус дышит и растёт от последнего импульса.
+  // drawBody — одно тело. Радиус дышит, растёт от последнего импульса и дрожит,
+  // когда тело встревожено (agitation — его тянет рука или курсор, раздел 08).
   function drawBody(ctx,b,t){
     const s=bodyScreen(b);
-    const r=s.r*(1+.035*Math.sin(t*b.freq*1.9+b.phase)+b.signal*.055);
+    const ag=b.agitation||0;
+    const r=s.r*(1+.035*Math.sin(t*b.freq*1.9+b.phase)+b.signal*.055+ag*.09);
     const warm=b.tint==='warm';const c=warm?PALETTE.warm:(b.tint==='cool'?PALETTE.cool:PALETTE.violet);
     const energy=b.energy;
-    ctx.save();ctx.translate(s.x,s.y);ctx.rotate(.10*Math.sin(t*.18+b.phase));ctx.globalCompositeOperation='screen';
+    ctx.save();ctx.translate(s.x,s.y);ctx.rotate(.10*Math.sin(t*.18+b.phase)+ag*.09*Math.sin(t*11+b.phase*2));ctx.globalCompositeOperation='screen';
     glow(ctx,0,0,r*2.1,c,.08+energy*.075);
     glow(ctx,0,0,r*.64,PALETTE.warm,.16+energy*.13);
     // Орбиты (их число — program.rings): сплюснутые кольца с бегущими по ним искрами.
@@ -766,6 +893,13 @@
       const ripple=r*(.45+(1-b.signal)*1.42);
       ctx.beginPath();ctx.ellipse(0,0,ripple,ripple*.85,0,0,6.283);
       ctx.strokeStyle=rgba(PALETTE.warm,b.signal*.32);ctx.lineWidth=1+b.signal*1.1;ctx.stroke();
+    }
+    // Встряска: вторая рябь и фиолетовый ореол — тело «шумит», пока его держат.
+    if(ag>.05){
+      const rr=r*(.55+(1-ag)*.9);
+      glow(ctx,0,0,r*1.7,PALETTE.violet,ag*.16);
+      ctx.beginPath();ctx.ellipse(0,0,rr,rr*.8,.4,0,6.283);
+      ctx.strokeStyle=rgba(PALETTE.violet,ag*.30);ctx.lineWidth=1+ag*1.4;ctx.stroke();
     }
     // Пунктирный контур и номер — у тела под курсором или открытого в инспекторе.
     if(app.started&&(app.selected===b.index&&app.inspectorOpen||app.hovered===b.index)){
@@ -879,7 +1013,9 @@
     (app.started?$('rules-button'):$('read-rules-button')).focus();
   }
   // Движение мыши по сцене: позиция курсора → точка присутствия посетителя в мире
-  // (в режиме возмущения) и какое тело сейчас под курсором.
+  // (в режиме возмущения) и какое тело сейчас под курсором. Если курсор тянет тело
+  // (dragBody, захват ставит pointerdown ниже), тело следует за точкой упруго —
+  // тот же grab, что и у grip'а в шлеме (08), и та же встряска от скорости руки.
   function updatePointer(e){
     const rect=app.canvas.getBoundingClientRect();
     app.pointer.x=e.clientX-rect.left;app.pointer.y=e.clientY-rect.top;app.pointer.inside=true;
@@ -890,6 +1026,15 @@
     let best=-1,score=Infinity;
     for(const b of app.world.bodies){const pos=bodyScreen(b);const dist=Math.hypot(pos.x-app.pointer.x,pos.y-app.pointer.y);if(dist<pos.r*.95&&dist<score){best=b.index;score=dist;}}
     app.hovered=best;
+    if(app.dragBody>=0){
+      const b=app.world.bodies[app.dragBody];
+      if(b){b.grab={x,y,z:b.z};
+        // Скорость курсора = пройденный путь между СОБЫТИЯМИ: браузер может склеивать
+        // pointermove при занятом главном потоке, поэтому считаем весь путь куска сразу.
+        const speed=app.dragPrev?Math.hypot(x-app.dragPrev.x,y-app.dragPrev.y):0;
+        app.dragPrev={x,y};
+        b.agitation=clamp(b.agitation+Math.min(.6,speed*1.2),0,1);}
+    }
     app.canvas.style.cursor=app.started&&best>=0?'pointer':'default';
   }
   // initUI — подписать все элементы интерфейса на события. Вызывается один раз при запуске.
@@ -924,14 +1069,19 @@
     $('ar-button').addEventListener('click',()=>openXR('ar'));
     $('xr-back-button').addEventListener('click',closeXR);
     $('close-inspector').addEventListener('click',()=>{app.inspectorOpen=false;$('body-inspector').classList.add('is-hidden');});
-    // Сцена: движение мыши, клик по телу, уход курсора.
+    // Сцена: движение мыши, клик по телу, уход курсора. В режиме «Возмущать» нажатие
+    // на тело берёт его в курсор (плоский аналог grip'а в шлеме), движение тянет.
+    const endDrag=()=>{if(app.dragBody>=0){const b=app.world.bodies[app.dragBody];if(b)b.grab=null;}app.dragBody=-1;app.dragPrev=null;};
     const stage=$('p5-stage');
     stage.addEventListener('pointermove',updatePointer);
     stage.addEventListener('pointerdown',e=>{
       if(!app.started||app.isXR)return;updatePointer(e);
-      if(app.hovered>=0)showInspector(app.hovered);
+      if(app.hovered>=0){showInspector(app.hovered);
+        if(app.world.mode==='perturb'){app.dragBody=app.hovered;
+          app.dragPrev={x:app.world.visitor.x,y:app.world.visitor.y};}}   // дельта от точки нажатия
     });
-    stage.addEventListener('pointerleave',()=>{app.pointer.inside=false;app.hovered=-1;app.world.visitor.active=false;});
+    window.addEventListener('pointerup',endDrag);
+    stage.addEventListener('pointerleave',()=>{endDrag();app.pointer.inside=false;app.hovered=-1;app.world.visitor.active=false;});
     // Клавиатура: Esc — закрыть правила; R — новый мир; P — сменить режим; пробел — пауза.
     window.addEventListener('keydown',e=>{
       if(e.key==='Escape'&&!$('rules-modal').classList.contains('is-hidden'))closeRules();
@@ -1015,9 +1165,11 @@
   }
 
   // ═══ 08 / ПРОСТРАНСТВО — A-FRAME 1.8 / THREE R184 ═══════════════════════════
-  // Тот же мир в VR и AR. p5 здесь не участвует: A-Frame даёт трекинг гарнитуры,
-  // контроллеров и рук, стерео-рендер и размещение в комнате. Состояние мира то же
-  // самое (app.world) — второй симуляции нет.
+  // Тот же мир в VR и AR. p5 здесь не участвует напрямую, но его поле доходит и сюда:
+  // app.field запекается в текстуру 32×32 (xrFieldTex в rebuildXR) и живёт в шейдере
+  // оболочек как uniform uField. A-Frame даёт трекинг гарнитуры, контроллеров и рук,
+  // стерео-рендер и размещение в комнате. Состояние мира то же (app.world) — второй
+  // симуляции нет.
   //
   // Что где (порядок в файле):
   //   тело     шейдерные оболочки, нити, орбиты, ядро   (makeXRBody)
@@ -1025,6 +1177,11 @@
   //   панели   карточка тела и подсказка (createPanel); меню (buildXRMenu)
   //   ввод     лучи контроллеров, руки, стики, кнопки    (xrHoverTarget … xrMoveRig)
   //   сцена    разметка a-scene и два компонента: lantern-input и lantern-simulation
+  //
+  // ЗАХВАТ GRIP'ОМ — основной способ взять тело в шлеме: зажали grip рядом с телом —
+  // тело упруго тянется за рукой (grab в tick, исполняется в updateOneStep, 02),
+  // скорость руки становится встряской (agitation): ярче, дрожит, импульсит чаще.
+  // Отпустили — тело плывёт домой и успокаивается. Тот же grab ставит курсор в 07.
   //
   // Голова в шлеме: при входе в сессию A-Frame обнуляет СУЩНОСТЬ #xr-camera, а позу
   // гарнитуры применяет к внутренней THREE-камере. Поэтому голова всегда читается
@@ -1035,9 +1192,12 @@
 
   // Шейдеры оболочки тела. Оболочка деформируется теми же величинами, что порождают
   // импульсы: uEnergy — амплитуда ряби, uSignal — всплеск, uPresence — усиление от
-  // посетителя. Это не посторонняя анимация, а видимое состояние тела.
+  // посетителя, uAgitation — встряска от захвата grip'ом (08). uField — текстура
+  // ОБЩЕГО поля среды: тот же шум p5, что питает симуляцию и фон (02/05), запечённый
+  // в 32×32 текселя (см. rebuildXR). Это не посторонняя анимация, а видимое состояние.
   const SHELL_VERTEX=`
-    uniform float uTime, uEnergy, uSignal, uPresence, uLayer, uLobes, uPhase;
+    uniform float uTime, uEnergy, uSignal, uPresence, uLayer, uLobes, uPhase, uAgitation;
+    uniform sampler2D uField;
     varying vec3 vN, vEye;
     varying float vWave;
     void main(){
@@ -1045,8 +1205,9 @@
       float theta=atan(pos.z,pos.x);
       float ripple=sin(theta*uLobes+pos.y*3.8+uTime*.63+uPhase+uLayer*.8);
       float echo=sin(length(pos)*12.0-uTime*2.3+uPhase);
-      float deform=(.032+uEnergy*.038)*ripple+.022*echo+uSignal*.032*sin(theta*4.0-uTime*3.1);
-      pos+=normal*deform*(1.0+uPresence*.32);
+      float weather=texture2D(uField,vec2(fract(theta/6.28318+.5),fract(length(pos.xz)*.14))).r;
+      float deform=(.032+uEnergy*.038)*ripple+.022*echo+uSignal*.032*sin(theta*4.0-uTime*3.1)+weather*.05;
+      pos+=normal*deform*(1.0+uPresence*.32+uAgitation*.85);
       vec4 mv=modelViewMatrix*vec4(pos,1.0);
       vN=normalize(normalMatrix*normal);
       vEye=normalize(-mv.xyz);
@@ -1056,7 +1217,7 @@
   `;
   const SHELL_FRAGMENT=`
     uniform vec3 uTint;
-    uniform float uEnergy, uSignal, uPresence, uLayer;
+    uniform float uEnergy, uSignal, uPresence, uLayer, uAgitation;
     varying vec3 vN, vEye;
     varying float vWave;
     void main(){
@@ -1066,18 +1227,20 @@
       vec3 c=mix(cold,uTint,.48+.27*vWave);
       c=mix(c,warm,uEnergy*.28+uSignal*.22);
       float filament=pow(vWave,6.0)*.19;
-      float alpha=(.037+rim*.30+filament*.24+uSignal*.13+uPresence*.06)*(1.0-uLayer*.09);
+      float alpha=(.037+rim*.30+filament*.24+uSignal*.13+uPresence*.06+uAgitation*.09)*(1.0-uLayer*.09);
       gl_FragColor=vec4(c*(1.1+rim*.35),clamp(alpha,0.02,.66));
     }
   `;
   // makeShellMaterial — материал оболочки: шейдеры выше и переменные (uniforms),
   // которые каждый кадр заполняются состоянием тела (см. tick в lantern-simulation).
+  // uField у всех материалов одно — общая текстура поля среды из rebuildXR.
   function makeShellMaterial(THREE,b,layer){
     const color=new THREE.Color(b.tint==='warm'?'#f5bf81':b.tint==='cool'?'#91d7dd':'#c5b0ef');
     return new THREE.ShaderMaterial({
       uniforms:{uTime:{value:0},uEnergy:{value:b.energy},uSignal:{value:0},
         uPresence:{value:0},uLayer:{value:layer},uLobes:{value:b.program.lobes},
-        uPhase:{value:b.phase},uTint:{value:color}},
+        uPhase:{value:b.phase},uTint:{value:color},
+        uAgitation:{value:0},uField:{value:app.xrFieldTex?app.xrFieldTex.tex:null}},
       vertexShader:SHELL_VERTEX,fragmentShader:SHELL_FRAGMENT,
       side:THREE.DoubleSide,transparent:true,depthWrite:false,
       blending:THREE.AdditiveBlending
@@ -1887,8 +2050,8 @@
       init(){
         this.elapsed=0;this.hudClock=0;this.rebased=false;this.ticks=0;this.guideAt=0;
         this.camera=null;this.tmp=new THREE.Vector3();
-        this.input=[{hand:'left',id:'xr-left-hand',ctrl:'xr-left-controller'},
-                    {hand:'right',id:'xr-right-hand',ctrl:'xr-right-controller'}];
+        this.input=[{hand:'left',id:'xr-left-hand',ctrl:'xr-left-controller',prev:null},
+                    {hand:'right',id:'xr-right-hand',ctrl:'xr-right-controller',prev:null}];
         // prepareAR — вход в AR: мир уменьшается до миниатюры и показывается впереди
         // как предпросмотр, пока устройство ищет поверхность.
         const prepareAR=()=>{
@@ -1977,7 +2140,9 @@
         const cameraPos=xrHeadPosition(new THREE.Vector3());
         if(!cameraPos)return;
         // 4. Присутствие: голова и руки — источники поля. Это влияние на условия
-        // среды, а не адресат, которому «говорят».
+        // среды, а не адресат, которому «говорят». Захваты пересобираются каждый кадр:
+        // grip держат — тело тянется за рукой; отпустили — grab исчезнет здесь же.
+        for(const b of app.world.bodies)b.grab=null;
         const cameraModel=modelPointFromWorld(cameraPos);
         const points=[{...cameraModel,range:2.2,strength:.27,kind:'head'}];
         const handPoints=[];
@@ -1992,9 +2157,23 @@
             const pose=(tip&&Number.isFinite(tip.x)&&handComponent.controllerPresent)?tip:
               el.object3D.getWorldPosition(this.tmp);
             const d=pose.distanceTo(cameraPos);
-            // Нетрекнутый источник стоит в нуле — не считать его рукой.
-            const live=(c?.connected || (el.object3D.visible && d>.16 && d<1.2 && pose.y>.35));
+            // Нетрекнутый источник стоит в нуле — не считать его рукой. Зажатый grip —
+            // намеренное действие: руку с телом не отрезаем на 1.2 м (тянуть в сторону).
+            const live=(c?.connected || (el.object3D.visible && d>.16 && d<(app.xrGrip[slot.hand]?2.6:1.2) && pose.y>.35));
             if(!live || d>1.5)continue;
+            // Захват grip'ом — основной способ взять тело в шлеме: рука рядом с телом
+            // (порог ≈1.05 м до центра) тянет его упруго (grab, раздел 02), а скорость
+            // руки переходит во встряску (agitation) — больше энергии, чаще импульсы.
+            const speed=slot.prev?pose.distanceTo(slot.prev):0;slot.prev=pose.clone();
+            if(app.xrGrip[slot.hand]){
+              // chooseNearbyBody ждёт точку в МИРОВЫХ координатах (сравнивает с body.y+1.7),
+              // а цель для тела — модельные (см. modelPointFromWorld): y без высоты головы.
+              const gi=chooseNearbyBody(pose,1.05);
+              if(gi>=0){const gb=app.world.bodies[gi];
+                const g=modelPointFromWorld(pose);
+                gb.grab={x:g.x,y:g.y,z:g.z};
+                gb.agitation=clamp(gb.agitation+Math.min(.16,speed*1.4),0,1);}
+            }
             handPoints.push({...modelPointFromWorld(pose),range:1.05,strength:app.xrGrip[slot.hand]?1.25:.9,kind:slot.hand});
             break; // для одной стороны предпочитаем руку, а не контроллер
           }
@@ -2004,15 +2183,18 @@
           points:app.world.mode==='perturb'&&(app.xrMode!=='ar'||app.arPlaced)?points:[]};
         // 5. Продвинуть мир — тот же шаг симуляции, что и в плоском виде.
         advanceWorld(app.world,delta);
-        // 6. Анимация тел по состоянию: вращение, пульс, оболочки, кольца отклика, ядро, блики.
+        // 6. Анимация тел по состоянию: позиция (в т.ч. захват и возврат домой), вращение,
+        // пульс, оболочки, кольца отклика, ядро, блики.
         for(const item of app.xrBodies){
           const b=app.world.bodies[item.index];if(!b)continue;
+          item.group.position.set(b.x,b.y+1.7,b.z);   // меш всегда на месте тела в симуляции
           item.group.rotation.y+=delta*(.075+b.freq*.065);
           item.group.rotation.z=.025*Math.sin(app.world.time*.34+b.phase);
-          const pulse=1+.016*Math.sin(app.world.time*b.freq*2+b.phase)+b.signal*.052;
+          const pulse=(1+.016*Math.sin(app.world.time*b.freq*2+b.phase)+b.signal*.052)*(1+b.agitation*.06);
           item.group.scale.setScalar(pulse);
           for(const mat of item.shellMaterials){const u=mat.uniforms;
-            u.uTime.value=app.world.time;u.uEnergy.value=b.energy;u.uSignal.value=b.signal;u.uPresence.value=b.visitorInfluence;}
+            u.uTime.value=app.world.time;u.uEnergy.value=b.energy;u.uSignal.value=b.signal;u.uPresence.value=b.visitorInfluence;
+            u.uAgitation.value=b.agitation;}   // встряска видна в шейдере: оболочка дрожит ярче
           const focus=(app.xrHoverBySide.left===item.index||app.xrHoverBySide.right===item.index);
           const selected=app.xrSelection===item.index;
           item.focusRing.visible=focus||selected;
@@ -2078,6 +2260,7 @@
         if(this.elapsed>.18){
           this.elapsed=0;
           if(app.xrTex){drawXRField(app.xrTex.canvas.getContext('2d'),512,512);app.xrTex.texture.needsUpdate=true;}
+          app.xrFieldTex&&app.xrFieldTex.refresh();   // общее поле среды → текстура шейдеров
           if(this.hudClock>.38){
             refreshXRLabel();this.hudClock=0;}
           updateSpatialVoices();
@@ -2112,6 +2295,22 @@
     const root=app.xrScene.querySelector('#xr-bodies'),linksRoot=app.xrScene.querySelector('#xr-links');
     app.xrWorld=app.xrScene.querySelector('#xr-world');
     if(!root||!linksRoot)return;
+    // Текстура ОБЩЕГО поля среды для шейдеров: 32×32 текселя из той же app.field
+    // (шум p5, раздел 05), что питает симуляцию и фон. Пересобирается при новом мире
+    // (reseed уже сделан в reset) и обновляется в tick раз в 0.18 с.
+    if(!app.xrFieldTex){
+      const N=32,data=new Uint8Array(N*N*4);
+      const tex=new THREE.DataTexture(data,N,N,THREE.RGBAFormat);
+      tex.needsUpdate=true;
+      app.xrFieldTex={N,data,tex,refresh(){
+        let k=0;
+        for(let j=0;j<N;j++)for(let i=0;i<N;i++){
+          const v=app.field?app.field.at(-6+12*i/(N-1),.4,-8+12*j/(N-1),app.world.time):0;
+          const c=Math.round(clamp(v,0,1)*255);
+          data[k]=c;data[k+1]=255-c;data[k+2]=c>>1;data[k+3]=255;k+=4;}
+        tex.needsUpdate=true;}};
+    }
+    app.xrFieldTex.refresh();
     for(const old of Array.from(root.children)){
       if(old.getObject3D('mesh'))disposeObject(old.getObject3D('mesh'));old.remove();
     }
@@ -2320,6 +2519,7 @@
     toggleXRMenu(false);
     if(app.p5Instance)app.p5Instance.loop();
     app.world.visitor.active=false;app.world.visitor.points=[];
+    for(const b of app.world.bodies)b.grab=null;   // вышли из сессии — никто не держит тело
     // Если в сессии были ошибки кадров — сказать об этом, а не молчать.
     if(app.tickErrors.length){
       toast(app.lang==='ru'

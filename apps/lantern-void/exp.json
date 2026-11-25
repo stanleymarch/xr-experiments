@@ -1,7 +1,12 @@
 {
   "title": "LANTERN // VOID",
   "stack": "p5",
-  "description": "A generative ecology of ten computational bodies that sense, remember and emit pulses with no addressee. Flat p5.js view on any screen, a VR world and AR room placement on Quest 3. A seminar piece on signals, presence and interpretation.",
-  "description_ru": "Генеративная экология из десяти вычислительных тел, которые слышат, помнят и излучают импульсы без адресата. Плоский вид на p5.js на любом экране, VR-мир и размещение в комнате на Quest 3. Практическая работа семинара о сигналах, присутствии и интерпретации.",
-  "tags": ["WebXR", "p5.js", "A-Frame", "Quest 3"]
+  "description": "A generative ecology of computational bodies (their number is part of the seed) that sense, remember and emit pulses with no addressee. Flat p5.js view on any screen, a VR world and AR room placement on Quest 3. A seminar piece on signals, presence and interpretation.",
+  "description_ru": "Генеративная экология из вычислительных тел — их число само часть seed'а, которые слышат, помнят и излучают импульсы без адресата. Плоский вид на p5.js на любом экране, VR-мир и размещение в комнате на Quest 3. Практическая работа семинара о сигналах, присутствии и интерпретации.",
+  "tags": [
+    "WebXR",
+    "p5.js",
+    "A-Frame",
+    "Quest 3"
+  ]
 }

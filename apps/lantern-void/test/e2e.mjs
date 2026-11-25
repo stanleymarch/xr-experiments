@@ -114,24 +114,24 @@ const det = await page.evaluate(() => {
 check('один seed → одно состояние мира', det)
 
 // ── 7. Инспектор тела (клик по телу на сцене) ───────────────────────────────
+// Точка клика считается по проекции тела (та же формула, что bodyScreen в скетче):
+// мир к этому моменту пересеян (seed 777), поэтому старый жёсткий пиксель промахивался.
 const clicked = await page.evaluate(() => {
-  // bodyScreen повторяет проекцию скетча: найдём экранную точку тела L-01.
   const w = window.innerWidth, h = window.innerHeight
   const st = window.lanternDebug.spatialLayout().find(b => b.id === 'L-01')
   const centerX = w * 0.52, centerY = h * 0.475
   const spread = Math.min(w * 0.100, h * 0.185)
-  const depth = 1 / (1 + Math.abs((st.z) + 4.4) * 0.10)
-  return {x: centerX + st.x * spread * depth, y: centerY - (st.y - 1.7 + 1.7) * 0 - (st.y) * spread * 0.88 * depth}
+  const depth = 1 / (1 + Math.abs(st.z + 4.4) * 0.10)
+  return {x: centerX + st.x * spread * depth, y: centerY - (st.y - 1.7) * spread * 0.88 * depth}
 })
-// Кликим по проекции ядра (смещение к экранному центру тела).
-await page.mouse.click(clicked.x, 768 * 0.475 - 1.0 * 768 * 0.185 * 0.88 * (1 / (1 + Math.abs(-1.14 + 4.4) * 0.10)) + 60)
+await page.mouse.click(clicked.x, clicked.y)
 await page.waitForTimeout(500)
 const inspector = await page.evaluate(() => ({
   open: !document.getElementById('body-inspector').classList.contains('is-hidden'),
   id: document.getElementById('inspector-id').textContent,
   energy: document.getElementById('metric-energy').textContent,
 }))
-check('инспектор открывается касанием', inspector.open, `${inspector.id} E=${inspector.energy}`)
+check('инспектор открывается касанием, открыто именно L-01', inspector.open && inspector.id === 'L-01', `${inspector.id} E=${inspector.energy}`)
 await page.locator('#close-inspector').click()
 
 // ── 8. Модалка правил ───────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ const regen = await page.evaluate(() => ({
   seed: String(window.lanternDebug.getState().seed),
   bodies: window.lanternDebug.getState().bodies.length,
 }))
-check('новый мир: другой seed, те же 10 тел', regen.seed !== '140821' && regen.bodies === 10, `seed=${regen.seed}`)
+check('новый мир: другой seed, 6–12 тел', regen.seed !== '140821' && regen.bodies >= 6 && regen.bodies <= 12, `seed=${regen.seed} тел=${regen.bodies}`)
 
 await page.locator('#audio-button').click()
 await page.waitForTimeout(700)
@@ -190,8 +190,11 @@ const xrMenu = await page.evaluate(() => {
   return {buttons: audit.buttons.length, meshes: audit.buttons.filter(b => b.hasMesh).length}
 })
 check('XR-меню построено с 3D-кнопками', xrMenu.buttons === 4 && xrMenu.meshes === 4, `кнопок=${xrMenu.buttons}`)
-const xrBodiesBuilt = await page.evaluate(() => document.querySelectorAll('.xr-body-target').length)
-check('10 тел построены в пространстве', xrBodiesBuilt === 10, `сущностей=${xrBodiesBuilt}`)
+const xrBodiesBuilt = await page.evaluate(() => ({
+  built: document.querySelectorAll('.xr-body-target').length,
+  world: window.lanternDebug.getState().bodies.length,
+}))
+check('тела построены в пространстве по числу мира', xrBodiesBuilt.built === xrBodiesBuilt.world, `сущностей=${xrBodiesBuilt.built}, в мире=${xrBodiesBuilt.world}`)
 
 // Синтетический Y-контроллер: обработчик меню срабатывает (проводка события).
 const menuSynthetic = await page.evaluate(() => {

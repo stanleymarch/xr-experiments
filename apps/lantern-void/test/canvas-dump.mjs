@@ -1,7 +1,8 @@
 // canvas-dump.mjs — выгрузка всех canvas-текстур LANTERN (VR-меню, панели
 // сведений, hover-карточка) в PNG под test/tmp/canvas-dump/: ровность текстур
 // проверяется глазами по файлам, а не на словах.
-// Запуск: node test/canvas-dump.mjs  (сервер на :8095 должен быть поднят)
+// Запуск: node test/canvas-dump.mjs  (сервер на :8095 должен быть поднят; LANTERN_BASE
+// переопределяет адрес — так же, как в e2e.mjs и xr-scenarios.mjs)
 import {createRequire} from 'node:module'
 import {mkdirSync, writeFileSync} from 'node:fs'
 import {fileURLToPath} from 'node:url'
@@ -24,6 +25,7 @@ const save = (name, dataUrl) => {
   return true
 }
 
+const BASE = process.env.LANTERN_BASE || 'http://localhost:8095'
 const b = await chromium.launch()
 const page = await b.newPage({viewport: {width: 1366, height: 768}})
 // Как в e2e: имитируем гарнитуру, иначе capability-gate прячет VR-кнопку.
@@ -31,7 +33,7 @@ await page.addInitScript(`navigator.xr = navigator.xr || {};
   navigator.xr.isSessionSupported = (m) => Promise.resolve(m === 'immersive-vr' || m === 'immersive-ar');`)
 const errors = []
 page.on('pageerror', (e) => errors.push(e.message))
-await page.goto('http://localhost:8095/?seed=140821', {waitUntil: 'domcontentloaded'})
+await page.goto(`${BASE}/?seed=140821`, {waitUntil: 'domcontentloaded'})
 await page.waitForTimeout(2600)
 await page.evaluate(() => window.lanternApp.start())
 await page.waitForTimeout(400)

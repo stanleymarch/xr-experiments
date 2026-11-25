@@ -39,6 +39,9 @@
 
   // ═══ 01 / ПРАВИЛА ══════════════════════════════════════════════════════════
   // Числа, задающие «жизнь» мира. Их можно менять руками и смотреть, что изменится.
+  // Что каждый оператор МЕНЯЕТ в поведении мира — измерено, а не прочитано по коду:
+  // docs/lantern-void-rules.md, часть 2 (без NOISE, FILTER или DELAY число импульсов
+  // в мире меняется меньше чем на 1 %).
 
   const RULES = Object.freeze({
     bodies: 10,              // сколько тел в мире
@@ -56,7 +59,8 @@
   // операторов (как они исполняются — см. updateOneStep). Программа задаёт и форму:
   //   ops   — какие операторы исполняет тело;
   //   lobes — число лепестков оболочки; rings — число орбит;
-  //   memory — инерция: чем выше, тем дольше тело помнит принятый сигнал и тем реже импульсы.
+  //   memory — инерция: чем выше, тем медленнее гаснет принятый сигнал и тем КОРОЧЕ пауза
+  //   после импульса (0.66 + (1 − memory)·0.75 с) — тело с длинной памятью кричит ЧАЩЕ.
   const OPERATOR_PROGRAMS = [
     {name:'Резонатор',       ops:['NOISE','FEEDBACK','GATE','EMIT'],  lobes:5, rings:3, memory:.69},
     {name:'Порог',           ops:['SENSE','FILTER','GATE','EMIT'],    lobes:7, rings:2, memory:.21},
@@ -79,11 +83,11 @@
   // seeded(seed) — генератор случайных чисел для конкретного seed: два запуска с одним
   // seed создают одинаковый мир. Так опыт можно воспроизвести и сравнить результаты.
   const seeded = seed => {let n=seed>>>0;return () => ((n=(Math.imul(n,1664525)+1013904223)>>>0)/4294967296);};
-  // seedMix(seed) — перемешать seed ПЕРЕД генератором. У соседних seed первое число
-  // seeded() почти одно и то же (шаг ≈0.0004): без перемешивания seed 140821…141190
-  // получили бы одно и то же число тел. Финализер murmur3 — пять операций, и соседние
-  // seed становятся независимыми (проверено: совпадение числа тел у соседей 14.3%, как
-  // у честного случайного источника). Всегда подавать в seeded(seedMix(seed)).
+  // seedMix(seed) — перемешать seed ПЕРЕД генератором. Первый бросок seeded() — линейная
+  // функция seed: у соседних seed число тел совпадает в 99.7% случаев (рекорд — 369 seed
+  // подряд), то есть без перемешивания «соседний seed — тот же мир». Финализер murmur3 —
+  // пять операций, и соседние seed становятся независимыми (измерено: совпадение числа тел
+  // у соседей 14.3%, как у честного случайного источника). Всегда подавать в seeded(seedMix(seed)).
   const seedMix=s=>{let h=s>>>0;h^=h>>>16;h=Math.imul(h,0x85ebca6b);h^=h>>>13;h=Math.imul(h,0xc2b2ae35);h^=h>>>16;return h>>>0;};
   // rgba('#f0bd77',.5) → 'rgba(240,189,119,0.5)': цвет палитры с прозрачностью.
   const rgba = (hex,opacity) => {
@@ -210,7 +214,8 @@
   }
 
   // emitSignal — тело излучает импульс. Он уходит по КАЖДОЙ связи отдельно и идёт до
-  // соседа конечное время: на дальней связи импульс дольше в пути и слабее.
+  // соседа конечное время: дальняя связь — дольше в пути. Сила от расстояния НЕ зависит
+  // (±20% — свой случайный множитель импульса); «дорого» импульс стоит отправителю.
   function emitSignal(world,b){
     const connected=world.links.filter(l=>l.a===b.index||l.b===b.index);
     for(const edge of connected){
@@ -248,6 +253,12 @@
     }
   }
 
+  // aboveThreshold(b) — хватает ли телу «заслонки» до порога излучения: энергия, а с
+  // оператором MEMORY — ещё и 11% следа памяти, против порога тела. У тел без GATE порог
+  // на 8% ниже. Только читает состояние; по тому же условию lanternDebug.trace узнаёт,
+  // ждало ли тело окончания паузы.
+  const aboveThreshold=b=>b.energy+(b.program.ops.includes('MEMORY')?b.memoryState*.11:0)>b.threshold*(b.program.ops.includes('GATE')?1:.92);
+
   // updateOneStep — один шаг мира: каждое тело исполняет свою программу, затем
   // долетают импульсы.
   function updateOneStep(world,dt){
@@ -275,8 +286,8 @@
       if(app.field&&RULES.fieldGain>0&&app.fieldScale>0)input+=(app.field.at(b.x,b.y,b.z,world.time)-.47)*RULES.fieldGain*app.fieldScale;
       if(ops.includes('NOISE')) input+=.022*Math.sin(world.time*1.7+b.phase*3.0);       // собственные колебания
       if(ops.includes('SENSE')) input+=b.received*.18;                                   // принимает импульсы соседей
-      if(ops.includes('FILTER')){b.filtered=lerp(b.filtered,input,.045);input=b.filtered;} // сглаживает вход: реагирует на тенденцию, а не на каждый сигнал
-      if(ops.includes('DELAY')){                                                          // откладывает вход на 0.48 с: реагирует на то, что было раньше
+      if(ops.includes('FILTER')){b.filtered=lerp(b.filtered,input,.045);input=b.filtered;} // сглаживает вход: заменяет его скользящим средним (окно ≈0.4 с)
+      if(ops.includes('DELAY')){                                                          // откладывает ВХОД на 0.48 с; энергию при прилёте (ниже) это не задерживает
         b.delayQueue.push({until:world.time+.48,value:input});
         while(b.delayQueue.length&&b.delayQueue[0].until<=world.time){
           b.delayed=b.delayQueue.shift().value;
@@ -303,11 +314,9 @@
       // Энергия: приток (input + поле посетителя) минус потери.
       b.energy+=dt*(input+disturbance - RULES.baseLoss*b.energy);
       b.energy=clamp(b.energy,0,1);
-      // Импульс: когда энергия (а с MEMORY — ещё и след) выше порога и пауза прошла,
-      // тело тратит часть энергии и излучает. У тел без GATE порог на 8% ниже.
-      const gating=b.energy + (ops.includes('MEMORY')?b.memoryState*.11:0);
-      const threshold=b.threshold*(ops.includes('GATE')?1:.92);
-      if(ops.includes('EMIT')&&gating>threshold && b.cooldown<=0){
+      // Импульс: когда «заслонка» выше порога (aboveThreshold) и пауза прошла,
+      // тело тратит часть энергии и излучает.
+      if(ops.includes('EMIT')&&aboveThreshold(b) && b.cooldown<=0){
         b.energy*=1-RULES.pulseCost;
         b.cooldown=(.66+(1-b.program.memory)*.75)*(1-b.agitation*.45);   // встревоженное тело импульсит чаще
         emitSignal(world,b);
@@ -372,6 +381,9 @@
   //   lanternDebug.getState()                  время, seed, энергия и импульсы каждого тела
   //   lanternDebug.spatialLayout()             координаты тел в метрах
   //   lanternDebug.simulate(600)               прокрутить 600 шагов (10 с) без рисования
+  //   lanternDebug.trace(600)                  то же, но вернуть события по шагам (кто излучил, к чему прилетело)
+  //   lanternDebug.ablate('FILTER')            убрать оператор у всех тел; результат — функция «вернуть как было»
+
   //   lanternDebug.injectPresence(точки,'perturb')  подставить точки присутствия и включить возмущение
   //   lanternDebug.reset(42)                   заменить мир новым с заданным seed
   //   lanternDebug.audioStats()                включён ли звук, сколько сигналов прозвучало
@@ -387,7 +399,7 @@
     reset:seed=>{app.world=createWorld(seed);app.field&&app.field.reseed(seed);return app.world.seed;},
     // structure() — состав мира НА МОМЕНТ РОЖДЕНИЯ: тела (программа, форма, слой), связи
     // и порог связей. По нему видно, где seed меняет структуру, а не только параметры.
-    structure:()=>({bodies:app.world.bodies.map(b=>({id:b.id,program:b.program.name,lobes:b.program.lobes,
+    structure:()=>({bodies:app.world.bodies.map(b=>({id:b.id,program:b.program.name,ops:[...b.program.ops],memory:b.program.memory,lobes:b.program.lobes,
         rings:b.program.rings,links:b.links,layer:b.layer,x:+b.x.toFixed(3),y:+b.y.toFixed(3),z:+b.z.toFixed(3)})),
       links:app.world.links.map(l=>`${app.world.bodies[l.a].id}–${app.world.bodies[l.b].id}`),reach:+app.world.reach.toFixed(4)}),
     // field() — общее поле среды ({kind:'p5'|'hash', at(x,y,z,t), reseed(seed)}); fieldGain —
@@ -402,6 +414,32 @@
       emissions:app.world.emissions,arrivals:app.world.arrivalHistory.length,
       energies:app.world.bodies.map(b=>+b.energy.toFixed(6)),
       fields:app.world.bodies.map(b=>+b.visitorInfluence.toFixed(3))};},
+    // trace(steps) — прокрутить steps шагов и вернуть события с номером шага:
+    //   emits [{i, step, held}] — тело i излучило; held — энергии уже хватало, и оно ждало
+    //     окончания паузы (кричал не потому, что услышал, а потому что «можно» снова);
+    //   arrivals [{from, to, step}] — импульс долетел;  energy — средняя энергия каждого тела.
+    // По итоговому счётчику нельзя узнать ритм и задержку ответа, а сравнение миров
+    // «с оператором / без» (docs/lantern-void-rules.md, часть 2) считается именно по ним.
+    trace:steps=>{
+      const w=app.world,emits=[],arrivals=[],energy=w.bodies.map(()=>0),seen=w.bodies.map(b=>b.emitted);
+      for(let s=0;s<steps;s++){
+        const held=w.bodies.map(b=>b.cooldown>0&&aboveThreshold(b));
+        updateOneStep(w,SIMULATION_STEP);
+        w.bodies.forEach((b,i)=>{energy[i]+=b.energy;if(b.emitted!==seen[i]){seen[i]=b.emitted;emits.push({i,step:s,held:held[i]});}});
+        // Журнал приёмов — кольцевой (40 записей); приёмы именно этого шага узнаём по времени мира.
+        for(const a of w.arrivalHistory)if(a.t===w.time)arrivals.push({from:a.from,to:a.to,step:s});
+      }
+      return {emits,arrivals,energy:energy.map(e=>e/steps)};
+    },
+    // ablate(op) — убрать оператор (например 'FILTER') из программ ВСЕХ тел текущего мира
+    // и вернуть функцию, которая возвращает программы как были. Мир сравнивают «с
+    // оператором / без», не меняя код правил; программа тела заменяется копией, поэтому
+    // общие OPERATOR_PROGRAMS не задеваются.
+    ablate:op=>{
+      const saved=app.world.bodies.map(b=>b.program);
+      app.world.bodies.forEach(b=>{b.program={...b.program,ops:b.program.ops.filter(o=>o!==op)};});
+      return ()=>app.world.bodies.forEach((b,i)=>{b.program=saved[i];});
+    },
     spatialLayout:()=>app.world.bodies.map(b=>({id:b.id,x:b.x,y:b.y+1.7,z:b.z,size:b.size})),
     audioStats:()=>({active:app.audioActive,spatialVoices:app.audio?.spatial?.length||0,
       packetSounds:app.audio?.signalPings||0,filter:app.audio?.filter?.frequency?.value||0}),
@@ -463,7 +501,7 @@
   "secondFoundation": "<span>02</span> HOW IDEAS BECOME CODE",
   "modalBridge": "A language model proposed a grammar of simple operators inspired by node-based environments such as TouchDesigner. The author selected and refined the rules; JavaScript now executes them. <strong>The LLM does not generate dialogue for the bodies in real time.</strong> Their behaviour emerges from numbers, connections and feedback.",
   "ruleCard1Title": "OPERATIONS / INTERNAL GRAPH",
-  "ruleCard1Text": "<code>NOISE</code> introduces fluctuations; <code>FILTER</code> selects inputs; <code>MEMORY</code> and <code>DELAY</code> retain traces; <code>GATE</code> sets a threshold; <code>EMIT</code> releases a pulse.",
+  "ruleCard1Text": "<code>NOISE</code> introduces fluctuations; <code>FILTER</code> smooths the input; <code>MEMORY</code> and <code>DELAY</code> retain traces; <code>GATE</code> sets a threshold; <code>EMIT</code> releases a pulse.",
   "ruleCard2Title": "SPATIAL BODIES",
   "ruleCard2Text": "Internal parameters influence rhythm, shape and glow. This is an artistic visualisation of computation, not a claim that code intrinsically “looks” like an organism.",
   "ruleCard3Title": "SIGNALS AND ENVIRONMENT",
@@ -2167,7 +2205,8 @@
               el.object3D.getWorldPosition(this.tmp);
             const d=pose.distanceTo(cameraPos);
             // Нетрекнутый источник стоит в нуле — не считать его рукой. Зажатый grip —
-            // намеренное действие: руку с телом не отрезаем на 1.2 м (тянуть в сторону).
+            // намеренное действие: «живой» считается рука до 2.6 м от головы вместо 1.2 м
+            // (тянуть в сторону); дальше 1.5 м от головы источник не считается рукой вовсе.
             const live=(c?.connected || (el.object3D.visible && d>.16 && d<(app.xrGrip[slot.hand]?2.6:1.2) && pose.y>.35));
             if(!live || d>1.5)continue;
             // Захват grip'ом — основной способ взять тело в шлеме: рука рядом с телом

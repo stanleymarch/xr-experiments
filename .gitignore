@@ -14,6 +14,7 @@ apps/*/dev/
 # Unanchored directory patterns also cover per-app copies.
 .omp/
 .agents/
+.zcode/
 
 .tmp-cert/
 

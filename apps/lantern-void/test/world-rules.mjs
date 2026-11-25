@@ -319,18 +319,16 @@ if (WITH_XR) await section('5. A-Frame: поле в шейдере и захва
   })
   check('имитация сессии: голова на 1.7 м', sim === 1.7)
 
-  // Захват: grip рядом с L-01, ведём руку в сторону, отпускаем. Рука «живая» только
-  // ближе 1.2 м к голове, поэтому ставим её на отрезке голова→тело в 1.15 м от головы:
-  // до тела L-01 остаётся ≈1.13 м — в пределах захвата (~1.3 м) и рядом с телом.
+  // Захват: grip рядом с L-01, ведём руку вбок, отпускаем. Рука ставится на отрезке
+  // голова→тело в 1.15 м от головы — до тела L-01 ≈0.1–0.2 м, в пределах захвата (1.05 м).
+  // Дальше 1.5 м от головы источник уже не считается рукой, поэтому путь вбок
+  // ограничен: 10 шагов по 0.085 м = 0.85 м, расстояние от головы в конце ≈1.43 м.
   const grip = await page.evaluate(() => new Promise((resolve) => {
     const THREE = window.AFRAME.THREE, s = document.querySelector('#xr-scene'), d = window.lanternDebug
     const comp = s.components['lantern-simulation'], right = s.querySelector('#xr-right-controller')
-    // waitTicks(n, move) — ждать n тиков lantern-simulation; движение руки — РАЗ на тик
-    // симуляции (а не раз на опрос: у софт-рендера тик ≈8 опросов, рука улетела бы).
-    const waitTicks = (n, move) => new Promise((res) => { const t0 = comp.ticks; let seen = 0
-      const iv = setInterval(() => { const now = comp.ticks - t0
-        if (move && now > seen) { move(); seen = now }
-        if (now >= n) { clearInterval(iv); res() } }, 40) })
+    // waitTicks(n) — дождаться n тиков lantern-simulation (опросом раз в 40 мс).
+    const waitTicks = (n) => new Promise((res) => { const t0 = comp.ticks
+      const iv = setInterval(() => { if (comp.ticks - t0 >= n) { clearInterval(iv); res() } }, 40) })
     const state = () => { const b = d.spatialLayout().find((x) => x.id === 'L-01'), a = d.getState().bodies[0].agitation
       const group = document.querySelector('.xr-body-target[data-body-index="0"]').getObject3D('mesh')
       let u = null; group.traverse((o) => { if (!u && o.material && o.material.uniforms && o.material.uniforms.uAgitation) u = o.material.uniforms.uAgitation.value })
@@ -348,16 +346,26 @@ if (WITH_XR) await section('5. A-Frame: поле в шейдере и захва
       const idle = {...state(), handDist: right.object3D.position.distanceTo(bodyW)}
       right.dispatchEvent(new CustomEvent('gripdown', {bubbles: true}))
       await waitTicks(1)
-      // 14 тиков по 0.085 м: шаг меньше радиуса захвата — рука не «убегает» из тела,
-      // а путь ≈1.2 м хватает на встряску и заметный отрыв от дома (тик зажат на 0.065 с).
+      // 10 шагов по 0.085 м: шаг меньше радиуса захвата — рука не «убегает» из тела,
+      // а путь 0.85 м даёт встряску и заметный отрыв от дома. Очередной шаг подаём,
+      // только когда тик «съел» предыдущий (встряска выросла): иначе число шагов,
+      // взятых тиками, зависит от того, сколько тиков пропустил опрос под нагрузкой.
       const step = (() => { const t = new THREE.Vector3(0, 1, 0).cross(toBody).normalize().multiplyScalar(.085); t.y = 0; return t })()   // вбок: голова—рука держит 1.15 м
-      await waitTicks(14, () => { right.object3D.position.add(step); right.object3D.updateMatrix() })
+      const STEPS = 10
+      let eaten = 0
+      for (let i = 0; i < STEPS; i++) {
+        const before = state().agitation
+        right.object3D.position.add(step); right.object3D.updateMatrix()
+        const t0m = comp.ticks
+        while (state().agitation <= before + .02 && comp.ticks - t0m < 6) await waitTicks(1)
+        if (state().agitation > before + .02) eaten++
+      }
       const pulled = state()
       right.dispatchEvent(new CustomEvent('gripup', {bubbles: true}))
       let back = null
       for (let i = 0; i < 300 && !back; i++) { await waitTicks(1); const b = state(); if (dist(b) < .1 && b.agitation < .2) back = {...b, ticks: i + 1} }
       clearTimeout(timer)
-      resolve({home: {x: home.x, y: home.y, z: home.z, agitation: home.agitation}, idle: {x: idle.x, y: idle.y, z: idle.z, agitation: idle.agitation, handDist: idle.handDist}, pulled, back, tickErrors: d.xrState().tickErrors(), mode: d.xrState().visitorMode})
+      resolve({home: {x: home.x, y: home.y, z: home.z, agitation: home.agitation}, idle: {x: idle.x, y: idle.y, z: idle.z, agitation: idle.agitation, handDist: idle.handDist}, pulled, eaten, back, tickErrors: d.xrState().tickErrors(), mode: d.xrState().visitorMode})
     })()
   }))
   if (grip.error) { check('сценарий grip завершился', false, `${grip.error}: ${JSON.stringify(grip.last).slice(0, 200)}`); }
@@ -365,6 +373,7 @@ if (WITH_XR) await section('5. A-Frame: поле в шейдере и захва
     const g = grip
     check('до захвата тело дома и спокойно', dist3(g.idle, g.home) < .02 && g.idle.agitation < .05, `${fmt(dist3(g.idle, g.home), 3)} м, agitation ${fmt(g.idle.agitation)}`)
     check('grip рядом с телом + движение руки отрывают тело (> 0.2 м от дома)', dist3(g.pulled, g.home) > .2, `сдвиг ${fmt(dist3(g.pulled, g.home), 2)} м`)
+    check('все шаги руки взяты тиками (сценарий не зависит от загрузки процессора)', g.eaten === 10, `взято ${g.eaten} из 10`)
     check('тело возбуждено (agitation > 0.5)', g.pulled.agitation > .5, `agitation ${fmt(g.pulled.agitation)}; uniform ${fmt(g.pulled.uniform)}`)
     check('оболочка в шлеме следует за телом', dist3(g.pulled.group, g.pulled) < 1e-5, `расхождение ${fmt(dist3(g.pulled.group, g.pulled), 6)} м`)
     check('uniform встряки равен состоянию тела', Math.abs(g.pulled.uniform - g.pulled.agitation) < .0011, `${fmt(g.pulled.uniform)} vs ${fmt(g.pulled.agitation)}`)

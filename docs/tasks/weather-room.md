@@ -10,7 +10,7 @@ Read first:
 - `MIGRATION.md`
 - `.omp/RULES.md` and `.omp/AGENTS.md` if present
 - root `package.json`, `scripts/`, `.gitignore`
-- active `8thwall/` structure and its root build dependencies
+- the active 8th Wall experiences (`apps/knockdown`, `apps/portal`, `apps/sea-battle`) and their root build dependencies
 
 Run `git status` before edits. Preserve unrelated user changes.
 
@@ -31,7 +31,7 @@ Desired architecture:
 ```text
 apps/
   weather-room/       fresh Meta IWSDK app
-8thwall/              active iPhone/iPad WebAR; preserve
+apps/                 8th Wall camera-AR (knockdown, portal, sea-battle); preserve
 .omp/, .agents/       ignored local tooling; never commit sessions/settings
 docs/tasks/            durable autonomous implementation briefs
 MIGRATION.md           concept-only XR Blocks migration record
@@ -47,9 +47,9 @@ Retire Google XR Blocks from the active working tree. Remove when present:
 - root package hooks/scripts/dependencies used only to install, sync or build XR Blocks
 - XR Blocks-only branches in `scripts/build-all.js` or equivalent root build logic
 
-Before editing shared root files, inspect them and preserve every path still required by `8thwall/`. The root build must continue to build/assemble active 8th Wall projects.
+Before editing shared root files, inspect them and preserve every path still required by the 8th Wall experiences in `apps/`. The root build must continue to build/assemble active 8th Wall projects.
 
-Do not delete, rename, mass-refactor or silently migrate `8thwall/`.
+Do not delete, mass-refactor or silently migrate the 8th Wall experiences in `apps/`, and keep their published `8thwall/<name>/` addresses.
 
 The existing 8th Wall Sea Battle/Battleship must remain working. An IWSDK version for Quest/Android is a separate deliberate project, not part of Weather Room.
 
@@ -225,7 +225,7 @@ The lead remains responsible for integration. Reviewers do not own the task.
 Do not declare completion until all locally verifiable items are satisfied:
 
 - active repository build/setup no longer depends on XR Blocks;
-- `8thwall/` still exists and its root build path has not been intentionally broken;
+- the 8th Wall experiences still exist under `apps/`, and their root build path and published `8thwall/<name>/` addresses have not been intentionally broken;
 - `apps/weather-room` is a fresh IWSDK project;
 - Weather Room build/typecheck succeeds;
 - Open-Meteo loading, permission, error and fallback paths exist;

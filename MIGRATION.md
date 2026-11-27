@@ -18,5 +18,5 @@ Migration rules:
 - preserve ideas, not XR Blocks source;
 - do not inspect Git history to recover old XR Blocks implementation unless explicitly requested;
 - remove XR Blocks implementation/support from the active working tree;
-- `8thwall/` remains active for iPhone/iPad WebAR and is outside this retirement;
+- the 8th Wall experiences (`apps/knockdown`, `apps/portal`, `apps/sea-battle`) remain active for iPhone/iPad WebAR and are outside this retirement;
 - the existing 8th Wall Battleship/Sea Battle stays working; any IWSDK counterpart is a separate deliberate task.

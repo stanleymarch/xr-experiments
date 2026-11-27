@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
+<meta content="#080b17" name="theme-color"/>
+<meta content="LANTERN // VOID — генеративная экология вычислительных тел. Художественный WebXR-эксперимент о сигналах, присутствии и интерпретации." name="description"/>
+<title>LANTERN // VOID — Крик без адресата</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Geologica:wght@300;400;500;600;700&amp;family=Unbounded:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="style.css" rel="stylesheet"/>
+<!--
+  LANTERN // VOID — разметка экранной части. Три файла опыта: index.html (эта разметка),
+  style.css (её оформление), mySketch.js (мир, поведение и пространство в VR/AR).
+  Что где: пролог (#intro) → живой вид (#live-ui) → окно правил (#rules-modal) →
+  выход в VR/AR (#xr-stage). В шлеме эта разметка не видна: интерфейс там рисует mySketch.js.
+-->
+<!-- Библиотеки с CDN: p5 — холст и такт плоского вида, A-Frame — трекинг и стерео в VR/AR. -->
+<script src="https://cdn.jsdelivr.net/npm/p5@2.4.0/lib/p5.min.js"></script>
+<script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
+<script defer="" src="mySketch.js"></script>
+<script>
+// Диагностика загрузки для OpenProcessing. Не заменяет mySketch.js.
+window.addEventListener('load', function () {
+  window.setTimeout(function () {
+    if (window.lanternApp) return;
+    const notice = document.getElementById('boot-error');
+    if (!notice) return;
+    notice.classList.remove('is-hidden');
+    notice.textContent = 'LANTERN // VOID: mySketch.js не запущен. Проверьте, что JS находится во вкладке кода mySketch.js, а не в FILES, и что в index.html указан src="mySketch.js".';
+  }, 1200);
+});
+</script>
+</head>
+<body>
+<!-- ── Экранный опыт ── -->
+<main class="experience" id="experience">
+<!-- Слои: холст p5 (его создаёт mySketch.js), виньетка и зерно поверх. -->
+<div aria-label="Генеративная среда вычислительных тел" class="p5-stage" id="p5-stage"></div>
+<div aria-hidden="true" class="vignette"></div>
+<div aria-hidden="true" class="noise-overlay"></div>
+<!-- ── Шапка: знак, статус системы, переключатель языка ── -->
+<header class="masthead">
+<div class="brand-lockup">
+<span aria-hidden="true" class="brand-mark"><i></i><i></i><i></i></span>
+<div class="brand-text"><b>LANTERN<span> //</span> VOID</b><small>COMPUTATIONAL ECOLOGY</small></div>
+</div>
+<div class="masthead-right"><div aria-label="Language / Язык" class="lang-switch" role="group"><button aria-label="Русский" aria-pressed="true" class="lang-button" data-lang="ru" type="button">RU</button><button aria-label="English" aria-pressed="false" class="lang-button" data-lang="en" type="button">EN</button></div><span class="system-dot"></span> <span id="system-status">СИСТЕМА АКТИВНА</span> <span class="masthead-divider"></span> <span data-i18n="headPractice">ПРАКТИКА / 01</span></div>
+</header>
+<!-- ── Пролог: что это и четыре входа — в среду, «как устроено», VR-мир, AR в комнате ── -->
+<section aria-labelledby="intro-heading" class="intro-screen" id="intro">
+<div class="intro-content">
+<div class="eyebrow"><span class="eyebrow-line"></span> <span data-i18n="course">ПРОЕКТИРОВАНИЕ (НЕ)ЧЕЛОВЕЧЕСКИХ СИСТЕМ</span></div>
+<div class="intro-heading-wrap">
+<div class="pretitle" data-i18n="practice">ПРАКТИЧЕСКАЯ РАБОТА № 1 / СИМВОЛИЧЕСКАЯ МАШИНА</div>
+<h1 id="intro-heading">LANTERN <span>//</span><br/><em>VOID</em></h1>
+<p class="intro-lead" data-i18n="lead">Мир подаёт сигналы.<br/>Но кому они адресованы?</p>
+</div>
+<p class="intro-copy" data-i18n="introCopy">Перед вами — генеративная среда, населённая вычислительными телами. Их формы, свет и движения зависят от внутренних операторов и сигналов соседей. Мы можем видеть их состояния — но не обязаны понимать, <i>что они означают</i>.</p>
+<div class="intro-principles">
+<div><span class="number">01</span><span data-i18n="principle1">Нет заранее написанного сценария</span></div>
+<div><span class="number">02</span><span data-i18n="principle2">Объекты продолжают изменяться без вас</span></div>
+<div><span class="number">03</span><span data-i18n="principle3">Ваше присутствие может изменить среду</span></div>
+</div>
+<blockquote class="intro-quote" data-i18n="quote">«Она кричит о своем существовании»</blockquote>
+<div class="intro-actions">
+<button class="button-primary" id="start-button" type="button"><span data-i18n="start">Войти в среду</span><span aria-hidden="true" class="button-arrow">↗</span></button>
+<button class="button-ghost" id="direct-xr-button" type="button"><span data-i18n="directXR">VR-мир</span> <span aria-hidden="true">◈</span></button>
+<button class="button-ghost" id="intro-ar-button" type="button"><span data-i18n="arLabel">AR в комнате</span> <span aria-hidden="true">◇</span></button>
+<button class="button-ghost" data-i18n="rulesOpen" id="read-rules-button" type="button">Как это устроено <span>＋</span></button>
+</div>
+<div class="intro-footnote" data-i18n="footnote"><span class="rule-glyph">◈</span> Наблюдайте. Не торопитесь искать смысл.</div>
+</div>
+<div class="intro-side-note"><span data-i18n="sideNote">НЕЗАВИСИМАЯ СРЕДА</span><span class="side-rule"></span><span id="intro-time">00:00:00</span></div>
+</section>
+<!-- ── Живой вид (после входа): строка повествования, инспектор тела, нижняя панель ── -->
+<section aria-label="Интерфейс наблюдения" class="live-ui is-hidden" id="live-ui">
+<!-- Строка повествования — сухой журнал. Переключатель открывает «человеческое чтение» того же события (mySketch.js, humanReading) и предупреждение, что это правило перевода. -->
+<div class="live-caption"><span class="live-kicker" data-i18n="process">ПРОЦЕСС 01 / НАБЛЮДЕНИЕ</span><p id="live-story">Система испускает сигналы, не зная, кто их увидит.</p><button aria-pressed="false" class="reading-toggle" data-i18n="readingToggle" id="reading-toggle" type="button">как это читается</button><p class="live-reading is-hidden" id="live-reading"></p><p class="live-reading-note is-hidden" data-i18n="readingNote" id="live-reading-note">Чтение по-человечески — работа правила перевода. В правилах мира нет ни ответа, ни зова, ни ожидания.</p></div>
+<!-- Инспектор: открывается кликом по телу; показания обновляет mySketch.js. -->
+<aside aria-live="polite" class="inspector" id="body-inspector">
+<div class="inspector-top"><span data-i18n="inspectorTop">ВЫБРАННОЕ ТЕЛО</span><span id="inspector-id">L—03</span></div>
+<div class="inspector-name" id="inspector-name">Резонатор</div>
+<p class="inspector-desc" data-i18n="inspectorDesc">Тело не имеет имени в своей среде. Здесь дано условное название для наблюдения.</p>
+<div class="metrics"><div><span data-i18n="metricEnergy">ЭНЕРГИЯ</span><strong id="metric-energy">0.72</strong></div><div><span data-i18n="metricSignal">СИГНАЛ</span><strong id="metric-signal">0.28</strong></div><div><span data-i18n="metricLinks">СВЯЗИ</span><strong id="metric-links">03</strong></div></div>
+<div class="inspector-subheading" data-i18n="operatorGraph">ОПЕРАТОРНЫЙ ГРАФ</div>
+<!-- Цепочка операторов графа тела и живые показания каждого оператора (refreshInspector). -->
+<div class="operator-chain" id="operator-chain"><span>SOURCE</span><i>→</i><span>FEEDBACK</span><i>→</i><span>GATE</span><i>→</i><span>EMIT</span></div>
+<p class="operator-live" id="operator-live"></p>
+<p class="inspector-note" id="inspector-note">Сигнал не является сообщением. Это следствие изменения состояния.</p>
+<button class="text-button" data-i18n="closeInspector" id="close-inspector" type="button">Скрыть разбор <span>×</span></button>
+</aside>
+<!-- Нижняя панель: режим (наблюдать / возмущать), инструменты, показания мира. -->
+<div class="live-bottom">
+<div class="observatory">
+<span class="tiny-label" data-i18n="modeTitle">РЕЖИМ ВЗАИМОДЕЙСТВИЯ</span>
+<div class="mode-buttons"><button class="mode-button active" data-i18n="observe" id="observe-button" type="button">Наблюдать</button><button class="mode-button" data-i18n="perturb" id="perturb-button" type="button">Возмущать</button></div>
+<p id="mode-hint">Ваше движение не влияет на мир.</p>
+</div>
+<div class="control-tray">
+<button class="tool-button" id="regenerate-button" title="Пересоздать мир" type="button"><span>⟳</span><small data-i18n="regenLabel">НОВЫЙ МИР</small></button>
+<button class="tool-button" id="pause-button" title="Пауза" type="button"><span id="pause-icon">Ⅱ</span><small id="pause-label">ПАУЗА</small></button>
+<button class="tool-button" id="audio-button" title="Включить или выключить звук" type="button"><span id="audio-icon">♪</span><small id="audio-label">ЗВУК: ВЫКЛ.</small></button>
+<button class="tool-button" id="rules-button" title="О правилах мира" type="button"><span>?</span><small data-i18n="rulesLabel">ПРАВИЛА</small></button>
+<button class="tool-button" id="ar-button" title="AR в комнате" type="button"><span>◇</span><small data-i18n="arLabel">AR В КОМНАТЕ</small></button>
+<button class="tool-button tool-button-accent" id="xr-button" title="Перейти в пространственный режим" type="button"><span>◈</span><small data-i18n="xrLabel">VR-МИР</small></button>
+</div>
+<div class="live-readout"><span>SEED <b id="seed-readout">000000</b></span><span id="population-readout">07 ТЕЛ</span><span id="time-readout">00:00</span><span id="twin-readout">СИГНАЛОВ 0000 · БЕЗ ВАС 0000</span></div>
+</div>
+<div class="touch-hint" data-i18n="touchHint" id="touch-hint">Коснитесь тела, чтобы исследовать его устройство</div>
+</section>
+<!-- ── Окно «Как это устроено»: основания работы и правила ── -->
+<section aria-labelledby="rules-heading" aria-modal="true" class="modal-screen is-hidden" id="rules-modal" role="dialog">
+<div class="modal-backdrop" data-close-modal=""></div>
+<div class="modal-panel">
+<button aria-label="Закрыть" class="modal-close" id="modal-close" type="button">×</button>
+<div class="eyebrow" data-i18n="rulesEyebrow"><span class="eyebrow-line"></span> ПРАКТИЧЕСКАЯ РАБОТА № 1 / ОСНОВАНИЯ И ПРАВИЛА</div>
+<h2 data-i18n="rulesTitle" id="rules-heading">Почему мир<br/><em>ведёт себя именно так?</em></h2>
+<p class="modal-introduction" data-i18n="rulesIntro">Мы начали с простого вопроса: если технический объект мигает, реагирует на касание или перестаёт работать, <strong>сообщает ли он нам что-то — или мы сами превращаем его состояние в сообщение?</strong> В LANTERN // VOID от исходного предмета осталась только эта проблема. Вместо него — вычислительные тела, в которых правила становятся светом, движением и отношениями.</p>
+<div class="modal-section-label" data-i18n="firstFoundation"><span>01</span> ОТКУДА ВЗЯЛАСЬ ИДЕЯ</div>
+<div class="concept-grid">
+<article class="concept-card">
+<span class="concept-source" data-i18n="cassirerSource">КАССИРЕР / СИМВОЛИЧЕСКИЕ ФОРМЫ</span>
+<h3 data-i18n="cassirerTitle">Мы видим сигнал и достраиваем смысл</h3>
+<p data-i18n="cassirerText">Вспышка может означать для нас просьбу, ответ или тревогу. Но сами вычисления знают только пороги и изменения состояний. О светодиодной тыкве на первой встрече ведущий ответил, что она не говорит, а показывает своё состояние. Мы проверяем границу между <em>происходящим в системе</em> и <em>историей, которую о ней рассказывает наблюдатель</em>.</p>
+</article>
+<article class="concept-card">
+<span class="concept-source" data-i18n="wienerSource">ВИНЕР / КИБЕРНЕТИКА</span>
+<h3 data-i18n="wienerTitle">Следствие становится новой причиной</h3>
+<p data-i18n="wienerText">Существо испускает импульс, другое на него реагирует, меняется общая среда — и следующий импульс возникает уже в новых условиях. Поэтому здесь важны петли <em>обратной связи</em>, а не заранее записанная анимация.</p>
+</article>
+<article class="concept-card">
+<span class="concept-source" data-i18n="simondonSource">СИМОНДОН / СТАНОВЛЕНИЕ ТЕХНИКИ</span>
+<h3 data-i18n="simondonTitle">Тело — не законченный предмет</h3>
+<p data-i18n="simondonText">Объект определяют не только форма и оболочка. Его устройство, память событий, соседние связи и среда участвуют в том, каким он становится. Виртуальное «тело» здесь — временно устойчивый процесс, а не персонаж с готовым характером.</p>
+</article>
+<article class="concept-card">
+<span class="concept-source" data-i18n="embodiedSource">ТЕЛЕСНОСТЬ / НЕЧЕЛОВЕЧЕСКОЕ ВОСПРИЯТИЕ</span>
+<h3 data-i18n="embodiedTitle">Человек — не центр этой экологии</h3>
+<p data-i18n="embodiedText">Разные системы чувствительны к разным сигналам: одни — к соседям, другие — к задержке или накоплению. В WebXR ваша голова и руки могут стать частью этой среды, но ни одно тело не обязано узнавать вас и «отвечать» вам.</p>
+</article>
+<article class="concept-card concept-card-wide">
+<span class="concept-source" data-i18n="virtualSource">ВИРТУАЛЬНОЕ И АКТУАЛЬНОЕ / ГЕНЕРАТИВНОСТЬ</span>
+<h3 data-i18n="virtualTitle">Правила задают возможности, а не сюжет</h3>
+<p data-i18n="virtualText">Один набор правил может привести к различным цепочкам событий. Не всё потенциальное случится: часть связей образуется, часть сигналов затухнет, часть совпадений покажется диалогом. Поэтому мы наблюдаем <em>развёртывание возможностей</em>, а не прохождение сценария.</p>
+</article>
+</div>
+<div class="modal-section-label" data-i18n="secondFoundation"><span>02</span> КАК ЭТО ПРЕВРАЩЕНО В КОД</div>
+<p class="modal-bridge" data-i18n="modalBridge">Языковая модель предложила грамматику простых операторов, вдохновлённую нодовыми средами вроде TouchDesigner. Затем правила измерили — убирали из мира по одному оператору и смотрели, что изменится, — и переписали там, где обещание не держалось. Теперь их исполняет JavaScript. <strong>LLM не сочиняет реплики тел в реальном времени.</strong> Их поведение возникает из чисел, связей и обратной связи.</p>
+<div class="rule-card-grid">
+<div><b data-i18n="ruleCard1Title">ОПЕРАЦИИ / ГРАФ ТЕЛА</b><p data-i18n="ruleCard1Text">У каждого тела — свой граф из восьми операторов, выращенный по seed. <code>SOURCE</code> задаёт собственный ритм, <code>SENSE</code> — слух, <code>FILTER</code> пропускает лишь чужие ритмы, близкие к своему периоду, <code>DELAY</code> откладывает услышанное, <code>MEMORY</code> хранит след, <code>FEEDBACK</code> возвращает телу его собственный крик — или сдерживает его, <code>GATE</code> ставит порог, <code>EMIT</code> кричит.</p></div>
+<div><b data-i18n="ruleCard2Title">ТЕЛА ИЗ ГРАФА</b><p data-i18n="ruleCard2Text">Форма — чтение графа: лепестки считают узлы, орбиты — возвраты к собственному прошлому. Имя в инспекторе тоже присваивает правило. Это художественная визуализация вычисления, а не утверждение, что код «выглядит» как организм.</p></div>
+<div><b data-i18n="ruleCard3Title">СИГНАЛЫ БЕЗ СООБЩЕНИЯ</b><p data-i18n="ruleCard3Text">Импульс несёт энергию, а не смысл. Услышать может только тело со слухом, и тем полнее, чем ближе ритм отправителя к настройке слушателя. Один и тот же сигнал вызывает у разных тел разные последствия — это видно в инспекторе. Кажущийся разговор ещё не доказывает наличия языка или намерения.</p></div>
+<div><b data-i18n="ruleCard4Title">ВЫ — И МИР БЕЗ ВАС</b><p data-i18n="ruleCard4Text">В режиме наблюдения ваши действия не входят в расчёт. В режиме возмущения курсор — или голова и руки в XR — меняет локальные условия. Рядом теми же шагами идёт тот же мир без вас: разница между ними — единственное, что принадлежит вашему присутствию. Строка «как это читается» переводит события по-человечески; это правило перевода, и его можно выключить.</p></div>
+</div>
+<div class="modal-conclusion" data-i18n="conclusion">«Она кричит о своем существовании»<span>Но крик не обязательно имеет адресата. Работа предлагает наблюдать, как проявление технического состояния становится для нас почти жестом, обращением или признаком жизни — и где такая интерпретация перестаёт быть надёжной.</span></div>
+<button class="button-primary" id="modal-done" type="button"><span data-i18n="modalDone">Продолжить наблюдение</span><span>↗</span></button>
+</div>
+</section>
+<!-- Короткие сообщения и ошибка запуска. -->
+<div aria-live="polite" class="toast" id="toast" role="status"></div>
+<div class="boot-error is-hidden" data-lang-note="start" id="boot-error" role="alert">Не удалось запустить программу. Проверьте вкладку кода mySketch.js и путь к ней в index.html.</div></main>
+<!-- Виртуальное пространство строится только при первом обращении; не грузит GPU во время вступления. -->
+<div aria-label="WebXR-пространство LANTERN VOID" class="xr-stage is-hidden" id="xr-stage"></div>
+<div class="xr-overlay is-hidden" id="xr-overlay"><div class="xr-overlay-text"><b>LANTERN // VOID</b><small data-i18n="xrGuide">ЛУЧ + ТРИГГЕР: ИССЛЕДОВАТЬ · СТИКИ: ПЕРЕМЕЩЕНИЕ · Y: МЕНЮ · B: НАЗАД</small></div><button data-i18n="xrBack" id="xr-back-button" type="button">← Назад к наблюдению</button></div>
+</body>
+</html>

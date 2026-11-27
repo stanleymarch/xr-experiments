@@ -9,7 +9,7 @@
 - **REALITY//FIELD** — [`apps/reality-field`](../../apps/reality-field/);
 - **WEATHER//ROOM** — [`apps/weather-room`](../../apps/weather-room/).
 
-Камерные AR-опыты — в [`8thwall/`](../../8thwall/).
+Камерные AR-опыты — [`apps/knockdown`](../../apps/knockdown/), [`apps/portal`](../../apps/portal/), [`apps/sea-battle`](../../apps/sea-battle/); статический p5.js-опыт — [`apps/lantern-void`](../../apps/lantern-void/).
 
 ## Архив
 

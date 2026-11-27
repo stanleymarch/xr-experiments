@@ -94,12 +94,13 @@
 <body>
   <header>
     <h1>xr<span class="glow">//</span>experiments</h1>
-    <p data-i18n="tagline">Три MR-опыта на Meta IWSDK, полноценный «Морской бой» на WebXR — Quest 3, Android и десктоп — и камерные AR-игры для iPhone.</p>
+    <p data-i18n="tagline">Три MR-опыта на Meta IWSDK, полноценный «Морской бой» на WebXR — Quest 3, Android и десктоп — и камерные AR-игры для iPhone и генеративная среда LANTERN // VOID на p5.js.</p>
     <p class="quick">
       <span data-i18n="quick">Сразу в опыте:</span>
       <a href="iwsdk/reality-field/">REALITY//FIELD</a>
       <a href="iwsdk/weather-room/">WEATHER//ROOM</a>
       <a href="iwsdk/agent-body/">AGENT//BODY</a>
+      <a href="p5/lantern-void/">LANTERN//VOID</a>
     </p>
     <div class="lang">
       <button id="lang-ru" class="on">RU</button><button id="lang-en">EN</button>
@@ -113,11 +114,12 @@
     <p data-i18n="lic_intro">Стороннее — бесплатное, с атрибуцией. Наш код — MIT. Данные — по их лицензиям.</p>
     <table>
       <tr><th data-i18n="th_what">Что</th><th data-i18n="th_src">Источник / лицензия</th><th data-i18n="th_where">Где</th></tr>
-      <tr><td>8th Wall engine (8frame 1.5.0), A-Frame</td><td><a href="https://www.8thwall.com/">8thwall.com</a> — коммерческий движок, бесплатный тир; <a href="https://aframe.io/">A-Frame</a> MIT</td><td>8thwall/</td></tr>
+      <tr><td>8th Wall engine (8frame 1.5.0), A-Frame</td><td><a href="https://www.8thwall.com/">8thwall.com</a> — коммерческий движок, бесплатный тир; <a href="https://aframe.io/">A-Frame</a> MIT</td><td>apps/knockdown, portal, sea-battle</td></tr>
       <tr><td>Meta Immersive Web SDK 1.1.0-rc.1 + three.js (super-three)</td><td><a href="https://www.npmjs.com/package/@iwsdk/create">npm @iwsdk/create</a>, Meta Platforms, MIT; three.js MIT</td><td>apps/weather-room, apps/reality-field</td></tr>
       <tr><td>Meta Immersive Web SDK 1.1.0-rc.2 + three.js (super-three)</td><td><a href="https://www.npmjs.com/package/@iwsdk/create">npm @iwsdk/create</a>, Meta Platforms, MIT; three.js MIT</td><td>apps/agent-body</td></tr>
       <tr><td>WebLLM, Transformers.js, onnxruntime-web, three-vrm</td><td><a href="https://github.com/mlc-ai/web-llm">mlc-ai/web-llm</a> Apache-2.0; <a href="https://github.com/huggingface/transformers.js">huggingface/transformers.js</a> Apache-2.0; <a href="https://onnxruntime.ai/">onnxruntime-web</a> MIT; <a href="https://github.com/pixiv/three-vrm">pixiv/three-vrm</a> MIT (npm)</td><td>apps/agent-body</td></tr>
-      <tr><td>cannon-es</td><td><a href="https://github.com/pmndrs/cannon-es">pmndrs/cannon-es</a>, MIT (npm)</td><td>8thwall/knockdown</td></tr>
+      <tr><td>cannon-es</td><td><a href="https://github.com/pmndrs/cannon-es">pmndrs/cannon-es</a>, MIT (npm)</td><td>apps/knockdown</td></tr>
+      <tr><td>p5.js 2.4.0 + A-Frame 1.8.0 (CDN)</td><td><a href="https://p5js.org/">p5js.org</a> MIT; <a href="https://aframe.io/">aframe.io</a> MIT</td><td>apps/lantern-void</td></tr>
       <tr><td>Open-Meteo API</td><td><a href="https://open-meteo.com/">open-meteo.com</a> — бесплатно без ключа, лимит 10 000 запр./сутки, некоммерческое использование; резерв — MET Norway, wttr.in</td><td>apps/weather-room</td></tr>
       <tr><td>Unbounded, Geologica</td><td>Google Fonts, <a href="https://scripts.sil.org/OFL">SIL Open Font License 1.1</a></td><td data-i18n="lic_fonts">эта страница</td></tr>
       <tr><td>QR-коды</td><td><a href="https://goqr.me/api/">goqr.me API</a> — бесплатный генератор, картинки по требованию</td><td data-i18n="lic_qr">карточки каталога</td></tr>
@@ -131,7 +133,7 @@
   <script>
     const I18N = {
       ru: {
-        tagline: 'Три MR-опыта на Meta IWSDK, полноценный «Морской бой» на WebXR — Quest 3, Android и десктоп — и камерные AR-игры для iPhone.',
+        tagline: 'Три MR-опыта на Meta IWSDK, полноценный «Морской бой» на WebXR — Quest 3, Android и десктоп — и камерные AR-игры для iPhone и генеративная среда LANTERN // VOID на p5.js.',
         quick: 'Сразу в опыте:',
         lic_title: 'Технологии и лицензии',
         lic_intro: 'Стороннее — бесплатное, с атрибуцией. Наш код — MIT. Данные — по их лицензиям.',
@@ -145,9 +147,11 @@
         sec_iwsdk_title: 'Meta IWSDK',
         sec_iwsdk_note: 'WebXR MR · Quest 3 / Android XR · собирается из apps/',
         sec_8thwall_note: 'A-Frame/WebXR · Quest 3, Android, десктоп; камера 8th Wall — только iOS',
+        sec_p5_title: 'Генеративные среды · p5',
+        sec_p5_note: 'p5.js + A-Frame · десктоп-вид и Quest 3 · из apps/lantern-void/',
       },
       en: {
-        tagline: 'Three Meta IWSDK mixed-reality experiences, a full Sea Battle arcade game on WebXR — Quest 3, Android and desktop — plus camera-AR games for iPhone.',
+        tagline: 'Three Meta IWSDK mixed-reality experiences, a full Sea Battle arcade game on WebXR — Quest 3, Android and desktop — and camera-AR games for iPhone, plus the p5.js generative environment LANTERN // VOID.',
         quick: 'Jump straight in:',
         lic_title: 'Tech & licenses',
         lic_intro: 'Third-party bits are free and credited. Our code is MIT. Data follows its licenses.',
@@ -161,6 +165,8 @@
         sec_iwsdk_title: 'Meta IWSDK',
         sec_iwsdk_note: 'WebXR MR · Quest 3 / Android XR · built from apps/',
         sec_8thwall_note: 'A-Frame/WebXR · Quest 3, Android, desktop; 8th Wall camera — iOS only',
+        sec_p5_title: 'Generative ecologies · p5',
+        sec_p5_note: 'p5.js + A-Frame · desktop view and Quest 3 · from apps/lantern-void/',
       },
     };
     let LANG = localStorage.getItem('xr-lang') || 'ru';
@@ -202,6 +208,7 @@
     const SECTIONS = () => ({
       'iwsdk': { title: t('sec_iwsdk_title'), note: t('sec_iwsdk_note') },
       '8thwall': { title: t('sec_8thwall_title'), note: t('sec_8thwall_note') },
+      'p5': { title: t('sec_p5_title'), note: t('sec_p5_note') },
     });
     function render() {
       const root = document.getElementById('root');

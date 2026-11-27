@@ -382,7 +382,7 @@ $rules = @'
 - New Meta/Android XR work uses Meta Immersive Web SDK (IWSDK) under 'apps/'.
 - Google XR Blocks is dead. Never restore, inspect through Git history, copy, or use its implementation unless the user explicitly asks to recover history.
 - Preserve XR Blocks concepts only through 'MIGRATION.md'. Every IWSDK implementation is greenfield.
-- '8thwall/' is NOT legacy. It is active supported iPhone/iPad WebAR code. Never delete, mass-migrate, or rewrite it merely because IWSDK is preferred elsewhere.
+- The 8th Wall experiences under 'apps/' ('knockdown', 'portal', 'sea-battle') are NOT legacy. They are active supported iPhone/iPad WebAR code. Never delete, mass-migrate, or rewrite them merely because IWSDK is preferred elsewhere.
 - Quest 3 / supported Android WebXR => IWSDK. iPhone/iPad WebAR => existing 8th Wall implementation when needed.
 - A concept may have separate IWSDK and 8th Wall frontends. Share framework-neutral TypeScript logic only when there are two real consumers.
 - Existing 8th Wall experiences such as Battleship stay working. An IWSDK counterpart is a separate deliberate task, never an automatic migration.
@@ -417,7 +417,8 @@ Delegation:
 - iwsdk-reviewer / advisor: independent technical review;
 - designer: Kimi K3 spatial/visual/game-feel review after a coherent milestone.
 
-8thwall/ is active supported Apple WebAR code and must be preserved.
+The 8th Wall experiences in apps/ (knockdown, portal, sea-battle) are active
+supported Apple WebAR code and must be preserved.
 Google XR Blocks implementation is retired and is removed by the migration task,
 not resurrected or consulted through Git history.
 '@

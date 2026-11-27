@@ -77,7 +77,8 @@ window.addEventListener('load', function () {
 </section>
 <!-- ── Живой вид (после входа): строка повествования, инспектор тела, нижняя панель ── -->
 <section aria-label="Интерфейс наблюдения" class="live-ui is-hidden" id="live-ui">
-<div class="live-caption"><span class="live-kicker" data-i18n="process">ПРОЦЕСС 01 / НАБЛЮДЕНИЕ</span><p id="live-story">Система испускает сигналы, не зная, кто их увидит.</p></div>
+<!-- Строка повествования — сухой журнал. Переключатель открывает «человеческое чтение» того же события (mySketch.js, humanReading) и предупреждение, что это правило перевода. -->
+<div class="live-caption"><span class="live-kicker" data-i18n="process">ПРОЦЕСС 01 / НАБЛЮДЕНИЕ</span><p id="live-story">Система испускает сигналы, не зная, кто их увидит.</p><button aria-pressed="false" class="reading-toggle" data-i18n="readingToggle" id="reading-toggle" type="button">как это читается</button><p class="live-reading is-hidden" id="live-reading"></p><p class="live-reading-note is-hidden" data-i18n="readingNote" id="live-reading-note">Чтение по-человечески — работа правила перевода. В правилах мира нет ни ответа, ни зова, ни ожидания.</p></div>
 <!-- Инспектор: открывается кликом по телу; показания обновляет mySketch.js. -->
 <aside aria-live="polite" class="inspector" id="body-inspector">
 <div class="inspector-top"><span data-i18n="inspectorTop">ВЫБРАННОЕ ТЕЛО</span><span id="inspector-id">L—03</span></div>
@@ -85,7 +86,9 @@ window.addEventListener('load', function () {
 <p class="inspector-desc" data-i18n="inspectorDesc">Тело не имеет имени в своей среде. Здесь дано условное название для наблюдения.</p>
 <div class="metrics"><div><span data-i18n="metricEnergy">ЭНЕРГИЯ</span><strong id="metric-energy">0.72</strong></div><div><span data-i18n="metricSignal">СИГНАЛ</span><strong id="metric-signal">0.28</strong></div><div><span data-i18n="metricLinks">СВЯЗИ</span><strong id="metric-links">03</strong></div></div>
 <div class="inspector-subheading" data-i18n="operatorGraph">ОПЕРАТОРНЫЙ ГРАФ</div>
-<div class="operator-chain" id="operator-chain"><span>NOISE</span><i>→</i><span>FILTER</span><i>→</i><span>EMIT</span></div>
+<!-- Цепочка операторов графа тела и живые показания каждого оператора (refreshInspector). -->
+<div class="operator-chain" id="operator-chain"><span>SOURCE</span><i>→</i><span>FEEDBACK</span><i>→</i><span>GATE</span><i>→</i><span>EMIT</span></div>
+<p class="operator-live" id="operator-live"></p>
 <p class="inspector-note" id="inspector-note">Сигнал не является сообщением. Это следствие изменения состояния.</p>
 <button class="text-button" data-i18n="closeInspector" id="close-inspector" type="button">Скрыть разбор <span>×</span></button>
 </aside>
@@ -104,7 +107,7 @@ window.addEventListener('load', function () {
 <button class="tool-button" id="ar-button" title="AR в комнате" type="button"><span>◇</span><small data-i18n="arLabel">AR В КОМНАТЕ</small></button>
 <button class="tool-button tool-button-accent" id="xr-button" title="Перейти в пространственный режим" type="button"><span>◈</span><small data-i18n="xrLabel">VR-МИР</small></button>
 </div>
-<div class="live-readout"><span>SEED <b id="seed-readout">000000</b></span><span id="population-readout">07 ТЕЛ</span><span id="time-readout">00:00</span></div>
+<div class="live-readout"><span>SEED <b id="seed-readout">000000</b></span><span id="population-readout">07 ТЕЛ</span><span id="time-readout">00:00</span><span id="twin-readout">СИГНАЛОВ 0000 · БЕЗ ВАС 0000</span></div>
 </div>
 <div class="touch-hint" data-i18n="touchHint" id="touch-hint">Коснитесь тела, чтобы исследовать его устройство</div>
 </section>
@@ -121,7 +124,7 @@ window.addEventListener('load', function () {
 <article class="concept-card">
 <span class="concept-source" data-i18n="cassirerSource">КАССИРЕР / СИМВОЛИЧЕСКИЕ ФОРМЫ</span>
 <h3 data-i18n="cassirerTitle">Мы видим сигнал и достраиваем смысл</h3>
-<p data-i18n="cassirerText">Вспышка может означать для нас просьбу, ответ или тревогу. Но сами вычисления знают только пороги и изменения состояний. Мы проверяем границу между <em>происходящим в системе</em> и <em>историей, которую о ней рассказывает наблюдатель</em>.</p>
+<p data-i18n="cassirerText">Вспышка может означать для нас просьбу, ответ или тревогу. Но сами вычисления знают только пороги и изменения состояний. О светодиодной тыкве на первой встрече ведущий ответил, что она не говорит, а показывает своё состояние. Мы проверяем границу между <em>происходящим в системе</em> и <em>историей, которую о ней рассказывает наблюдатель</em>.</p>
 </article>
 <article class="concept-card">
 <span class="concept-source" data-i18n="wienerSource">ВИНЕР / КИБЕРНЕТИКА</span>
@@ -145,12 +148,12 @@ window.addEventListener('load', function () {
 </article>
 </div>
 <div class="modal-section-label" data-i18n="secondFoundation"><span>02</span> КАК ЭТО ПРЕВРАЩЕНО В КОД</div>
-<p class="modal-bridge" data-i18n="modalBridge">Языковая модель предложила грамматику простых операторов, вдохновлённую нодовыми средами вроде TouchDesigner. Автор отобрал и уточнил правила; теперь их исполняет JavaScript. <strong>LLM не сочиняет реплики существ в реальном времени.</strong> Их поведение возникает из чисел, связей и обратной связи.</p>
+<p class="modal-bridge" data-i18n="modalBridge">Языковая модель предложила грамматику простых операторов, вдохновлённую нодовыми средами вроде TouchDesigner. Затем правила измерили — убирали из мира по одному оператору и смотрели, что изменится, — и переписали там, где обещание не держалось. Теперь их исполняет JavaScript. <strong>LLM не сочиняет реплики тел в реальном времени.</strong> Их поведение возникает из чисел, связей и обратной связи.</p>
 <div class="rule-card-grid">
-<div><b data-i18n="ruleCard1Title">ОПЕРАЦИИ / ВНУТРЕННИЙ ГРАФ</b><p data-i18n="ruleCard1Text"><code>NOISE</code> вносит колебания, <code>FILTER</code> сглаживает вход, <code>MEMORY</code> и <code>DELAY</code> сохраняют следы, <code>GATE</code> задаёт порог, а <code>EMIT</code> выпускает импульс.</p></div>
-<div><b data-i18n="ruleCard2Title">ПРОСТРАНСТВЕННЫЕ ТЕЛА</b><p data-i18n="ruleCard2Text">Внутренние параметры управляют ритмом, оболочкой и свечением. Это предложенная художественная визуализация вычислений, а не утверждение, что код сам «выглядит» как организм.</p></div>
-<div><b data-i18n="ruleCard3Title">СИГНАЛЫ И СРЕДА</b><p data-i18n="ruleCard3Text">Импульсы передаются между телами с задержкой и потерями. Полученное событие способно изменить следующий цикл соседа. Кажущийся разговор ещё не доказывает наличие языка или намерения.</p></div>
-<div><b data-i18n="ruleCard4Title">ВЫ КАК ЧАСТЬ ПОЛЯ</b><p data-i18n="ruleCard4Text">В режиме наблюдения система не учитывает ваши действия. В режиме возмущения курсор либо положение головы и рук в XR меняют локальные условия. Последствия иногда обнаруживаются у далёких тел, не контактировавших с вами.</p></div>
+<div><b data-i18n="ruleCard1Title">ОПЕРАЦИИ / ГРАФ ТЕЛА</b><p data-i18n="ruleCard1Text">У каждого тела — свой граф из восьми операторов, выращенный по seed. <code>SOURCE</code> задаёт собственный ритм, <code>SENSE</code> — слух, <code>FILTER</code> пропускает лишь чужие ритмы, близкие к своему периоду, <code>DELAY</code> откладывает услышанное, <code>MEMORY</code> хранит след, <code>FEEDBACK</code> возвращает телу его собственный крик — или сдерживает его, <code>GATE</code> ставит порог, <code>EMIT</code> кричит.</p></div>
+<div><b data-i18n="ruleCard2Title">ТЕЛА ИЗ ГРАФА</b><p data-i18n="ruleCard2Text">Форма — чтение графа: лепестки считают узлы, орбиты — возвраты к собственному прошлому. Имя в инспекторе тоже присваивает правило. Это художественная визуализация вычисления, а не утверждение, что код «выглядит» как организм.</p></div>
+<div><b data-i18n="ruleCard3Title">СИГНАЛЫ БЕЗ СООБЩЕНИЯ</b><p data-i18n="ruleCard3Text">Импульс несёт энергию, а не смысл. Услышать может только тело со слухом, и тем полнее, чем ближе ритм отправителя к настройке слушателя. Один и тот же сигнал вызывает у разных тел разные последствия — это видно в инспекторе. Кажущийся разговор ещё не доказывает наличия языка или намерения.</p></div>
+<div><b data-i18n="ruleCard4Title">ВЫ — И МИР БЕЗ ВАС</b><p data-i18n="ruleCard4Text">В режиме наблюдения ваши действия не входят в расчёт. В режиме возмущения курсор — или голова и руки в XR — меняет локальные условия. Рядом теми же шагами идёт тот же мир без вас: разница между ними — единственное, что принадлежит вашему присутствию. Строка «как это читается» переводит события по-человечески; это правило перевода, и его можно выключить.</p></div>
 </div>
 <div class="modal-conclusion" data-i18n="conclusion">«Она кричит о своем существовании»<span>Но крик не обязательно имеет адресата. Работа предлагает наблюдать, как проявление технического состояния становится для нас почти жестом, обращением или признаком жизни — и где такая интерпретация перестаёт быть надёжной.</span></div>
 <button class="button-primary" id="modal-done" type="button"><span data-i18n="modalDone">Продолжить наблюдение</span><span>↗</span></button>

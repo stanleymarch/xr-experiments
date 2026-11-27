@@ -29,6 +29,25 @@ const XR_STUB = `navigator.xr = navigator.xr || {};
 const browser = await chromium.launch()
 const page = await browser.newPage({viewport: {width: 1366, height: 768}})
 await page.addInitScript(XR_STUB)
+// Детектор тихой поломки: вызовы рисования Canvas 2D с нечисловым числовым аргументом.
+// Canvas при NaN не бросает исключение, а молча ничего не рисует — «ошибок нет» ещё не значит
+// «всё нарисовано». Детектор проверяется на заведомо плохом вызове (раздел 14).
+await page.addInitScript(() => {
+  window.__nanDraw = 0; window.__drawCalls = 0; window.__nanSamples = []
+  for (const m of ['arc', 'ellipse', 'moveTo', 'lineTo', 'quadraticCurveTo', 'bezierCurveTo', 'rect', 'translate', 'rotate', 'scale',
+    'fillRect', 'strokeRect', 'clearRect', 'fillText', 'strokeText']) {
+    const orig = CanvasRenderingContext2D.prototype[m]
+    if (typeof orig !== 'function') continue
+    CanvasRenderingContext2D.prototype[m] = function (...args) {
+      window.__drawCalls++
+      if (args.some((a) => typeof a === 'number' && !Number.isFinite(a))) {
+        window.__nanDraw++
+        if (window.__nanSamples.length < 8) window.__nanSamples.push(m + '(' + args.map(String).join(', ') + ')')
+      }
+      return orig.apply(this, args)
+    }
+  }
+})
 const errors = []
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
 page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('permission')) errors.push(`console: ${m.text()}`) })
@@ -267,6 +286,98 @@ await page.waitForTimeout(200)
 check('P переключает режим', await page.evaluate(() => document.querySelector('.mode-button.active').textContent === 'Возмущать'))
 await page.keyboard.press('p')
 
+// ── 14. Наличие правильного, а не только отсутствие ошибок ──────────────────
+// Числа из счётчика берутся разбором строки; счётчик обновляется раз в 0.25 с накопленного
+// времени интерфейса (при программном рендере кадр долгой) — ждём, пока он догонит мир.
+const twinOf = (text) => { const m = /^(?:СИГНАЛОВ|PULSES) (\d{4}) · (?:БЕЗ ВАС|WITHOUT YOU) (\d{4})$/.exec(text); return m ? [+m[1], +m[2]] : null }
+{
+  const self = await page.evaluate(() => {
+    const c = document.createElement('canvas').getContext('2d'), before = window.__nanDraw
+    c.arc(10, 10, NaN, 0, 6.28); c.lineTo(Infinity, 3); c.arc(10, 10, 5, 0, 6.28)
+    const caught = window.__nanDraw - before
+    window.__nanDraw = 0; window.__nanSamples = []
+    return caught
+  })
+  check('детектор нечисловых аргументов ловит заведомо плохой вызов и не считает хороший', self === 2, `поймано ${self} из 2`)
+  const draw = await page.evaluate(() => ({calls: window.__drawCalls, nan: window.__nanDraw, samples: window.__nanSamples}))
+  check('плоский вид рисует, и в рисовании нет нечисловых аргументов', draw.calls > 2000 && draw.nan === 0, `${draw.calls} вызовов${draw.nan ? ': ' + JSON.stringify(draw.samples) : ''}`)
+
+  const earlier = await page.evaluate(() => ({a: window.lanternDebug.getState().emissions, b: window.lanternDebug.shadow().emissions}))
+  await page.waitForFunction((n) => { const m = /^(?:СИГНАЛОВ|PULSES) (\d{4}) · (?:БЕЗ ВАС|WITHOUT YOU) (\d{4})$/.exec(document.getElementById('twin-readout').textContent); return !!m && +m[1] >= n.a && +m[2] >= n.b }, earlier, {timeout: 25000}).catch(() => {})
+  const later = await page.evaluate(() => ({a: window.lanternDebug.getState().emissions, b: window.lanternDebug.shadow().emissions}))
+  const shown = twinOf(await page.evaluate(() => document.getElementById('twin-readout').textContent))
+  check('счётчик «сигналов · без вас» показывает числа из мира', !!shown && shown[0] >= earlier.a && shown[0] <= later.a && shown[1] >= earlier.b && shown[1] <= later.b,
+    shown ? `${shown.join(' · ')} (мир ${later.a} и ${later.b})` : 'не разобрался')
+
+  // Инспектор: граф и живые показания операторов.
+  const pt = await page.evaluate(() => {
+    const st = window.lanternDebug.spatialLayout().find((x) => x.id === 'L-01'), w = window.innerWidth, h = window.innerHeight
+    const spread = Math.min(w * .100, h * .185), depth = 1 / (1 + Math.abs(st.z + 4.4) * .10)
+    return {x: w * .52 + st.x * spread * depth, y: h * .475 - (st.y - 1.7) * spread * .88 * depth}
+  })
+  let opened = false
+  for (const [dx, dy] of [[0, 0], [0, 30], [0, -30], [30, 0], [-30, 0], [0, 60], [0, -60]]) {
+    await page.mouse.click(pt.x + dx, pt.y + dy)
+    await page.waitForTimeout(450)
+    opened = await page.evaluate(() => !document.getElementById('body-inspector').classList.contains('is-hidden'))
+    if (opened) break
+  }
+  const readings = await page.evaluate(() => [...document.querySelectorAll('#operator-live span')].map((s) => s.textContent))
+  check('в инспекторе по показанию на узел графа тела, без несработавших подстановок', opened && readings.length >= 3 && readings.every((s) => s.length > 0 && !s.includes('{')), readings.join(' | '))
+
+  // «Как это читается» — правило перевода, скрыто до включения.
+  const off = await page.evaluate(() => document.getElementById('live-reading').classList.contains('is-hidden') && document.getElementById('live-reading-note').classList.contains('is-hidden'))
+  check('человеческое чтение скрыто до включения', off)
+  await page.click('#reading-toggle')
+  await page.waitForTimeout(600)
+  const on = await page.evaluate(() => ({text: document.getElementById('live-reading').textContent, note: document.getElementById('live-reading-note').textContent,
+    hidden: document.getElementById('live-reading').classList.contains('is-hidden') || document.getElementById('live-reading-note').classList.contains('is-hidden')}))
+  check('переключатель показывает чтение события и предупреждение о правиле перевода', !on.hidden && /^«.+»$/.test(on.text) && /правил/.test(on.note), on.text)
+  await page.click('#reading-toggle')
+  await page.waitForTimeout(300)
+  check('повторное нажатие скрывает чтение', await page.evaluate(() => document.getElementById('live-reading').classList.contains('is-hidden')))
+
+  // Английский: весь новый интерфейс без кириллицы (счётчик переводится вместе с остальным).
+  await page.click('#reading-toggle')
+  await page.locator('.lang-button[data-lang="en"]').click()
+  await page.waitForFunction(() => !/[А-Яа-я]/.test(['reading-toggle', 'live-reading', 'live-reading-note', 'twin-readout'].map((id) => document.getElementById(id).textContent).join('') +
+    [...document.querySelectorAll('#operator-live span')].map((s) => s.textContent).join('')), null, {timeout: 15000}).catch(() => {})
+  const en = await page.evaluate(() => ['reading-toggle', 'live-reading', 'twin-readout'].map((id) => document.getElementById(id).textContent.trim()))
+  check('на английском чтение, предупреждение, показания и счётчик — без кириллицы', en.every((s) => s.length > 0 && !/[А-Яа-я]/.test(s)), en.join(' | '))
+  await page.locator('.lang-button[data-lang="ru"]').click()
+  await page.waitForTimeout(300)
+  await page.click('#reading-toggle')
+  await page.locator('#close-inspector').click()
+
+  // Возмущение настоящим курсором: мир расходится с «миром без вас». Момента два, и они
+  // разные: курсор сначала подпитывает тело (расходятся энергии), а лишний крик приходит
+  // позже — счётчики расходятся через 0.3–1.2 с мира (зонд на 40 фазах мира, 26.11.2026).
+  // Ждать нужно счётчики: прежняя проверка ждала энергии и сразу читала счётчик — и
+  // проваливалась, когда расхождение энергий обгоняло первый лишний крик.
+  await page.locator('#perturb-button').click()
+  await page.mouse.move(700, 380)
+  const cursor = await page.evaluate(() => { const s = window.lanternDebug.getState(); return {time: s.time, active: s.visitor.active, points: s.visitor.points.length} })
+  const worldHandle = await page.waitForFunction((t0) => {
+    const c = window.lanternDebug.compare(), s = window.lanternDebug.getState()
+    if (c && c.withYou !== c.withoutYou) return {sim: +(s.time - t0).toFixed(2), withYou: c.withYou, withoutYou: c.withoutYou}
+  }, cursor.time, {timeout: 90000}).catch(() => null)
+  const splitWorld = worldHandle ? await worldHandle.jsonValue() : null
+  const cmp = await page.evaluate(() => window.lanternDebug.compare())
+  // Счётчик в интерфейсе догоняет мир и показывает оба числа — разные.
+  // (Внутри страницы функции теста недоступны — разбор строки как в разделе 14.)
+  const uiHandle = await page.waitForFunction(() => {
+    const m = /^(?:СИГНАЛОВ|PULSES) (\d{4}) · (?:БЕЗ ВАС|WITHOUT YOU) (\d{4})$/.exec(document.getElementById('twin-readout').textContent)
+    if (m && m[1] !== m[2]) return [+m[1], +m[2]]
+  }, null, {timeout: 25000}).catch(() => null)
+  const split = uiHandle ? await uiHandle.jsonValue() : null
+  check('под курсором мир расходится с «миром без вас», и счётчик это показывает',
+    cursor.active && !!splitWorld && splitWorld.sim <= 5 && cmp.changed.length > 0 && !!split,
+    `${cmp.withYou} против ${cmp.withoutYou}; разошлись: ${cmp.changed.join(', ')}; ` +
+    `счётчики разошлись через ${splitWorld ? splitWorld.sim + ' с мира' : 'не разошлись (бюджет 5 с)'}; ` +
+    `счётчик ${split ? split.join(' · ') : '?'}`)
+  await page.locator('#observe-button').click()
+}
+
 // Ожидаемые для этой среды сообщения отбрасываются: отказ AR-рантайма в headless
 // (проверяется сам путь деградации) и журналирование fallback-входа.
 const expectedEnv = (e) =>
@@ -277,5 +388,5 @@ check('нет неожиданных ошибок страницы', realErrors.
 check('путь деградации AR залогирован (headless без AR-рантайма)', errors.some((e) => e.includes('No runtimes supported')))
 
 await browser.close()
-console.log(failed ? `\n${failed} проверок провалено` : '\nE2E v6.3 пройден полностью')
+console.log(failed ? `\n${failed} проверок провалено` : '\nE2E пройден полностью')
 process.exit(failed ? 1 : 0)

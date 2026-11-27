@@ -265,6 +265,29 @@ const noFloor = await page.evaluate(() => {
 })
 check('референс-спейс без пола: риг поднят, голова на 1.65–1.7 м', noFloor.rigY > 1.5 && noFloor.headY > 1.6 && noFloor.headY < 1.75, JSON.stringify(noFloor))
 
+// Наличие правильного, а не только отсутствие ошибок: NaN в радиусе, угле или матрице не
+// даёт исключения — тело просто исчезает. Проверяются конечные числа во всех объектах тел.
+const finiteXr = await page.evaluate(() => {
+  const s = document.querySelector('#xr-scene'), out = {bodies: 0, objects: 0, bad: []}
+  s.querySelectorAll('.xr-body-target').forEach((el) => {
+    out.bodies++
+    el.object3D.traverse((o) => {
+      out.objects++
+      const flags = []
+      if (!o.position.toArray().every(Number.isFinite)) flags.push('position')
+      if (!o.quaternion.toArray().every(Number.isFinite)) flags.push('quaternion')
+      if (!o.scale.toArray().every(Number.isFinite)) flags.push('scale')
+      if (!o.matrixWorld.elements.every(Number.isFinite)) flags.push('matrixWorld')
+      const pos = o.geometry && o.geometry.attributes && o.geometry.attributes.position
+      if (pos && !pos.array.every(Number.isFinite)) flags.push('geometry')
+      if (flags.length && out.bad.length < 8) out.bad.push(`${el.id || el.className}/${o.type}: ${flags.join('+')}`)
+    })
+  })
+  return out
+})
+check('в телах нет нечисловых значений (положения, вращения, масштабы, матрицы, геометрия)', finiteXr.bodies > 0 && finiteXr.bad.length === 0,
+  `${finiteXr.objects} объектов в ${finiteXr.bodies} телах${finiteXr.bad.length ? ': ' + finiteXr.bad.join(' | ') : ''}`)
+
 check('нет необработанных ошибок страницы', errors.length === 0, errors[0] || '')
 await browser.close()
 console.log(failed ? `\n${failed} провалено; скриншоты: ${shots}` : `\nвсе сценарии пройдены; скриншоты: ${shots}`)

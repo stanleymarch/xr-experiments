@@ -18,8 +18,9 @@ const BASE = process.env.LANTERN_BASE || 'http://localhost:8095'
 const WITH_XR = process.env.LANTERN_FAST !== '1'
 const SEEDS = [140821, 1, 2, 3, 4, 5, 6, 7] // стартовый + семь подряд: у соседних seed первое
 //                                            случайное число почти одинаковое — трудный случай
-// Номинальная форма программ из OPERATOR_PROGRAMS: [лепестки, орбиты].
-const NOMINAL = {'Резонатор': [5, 3], 'Порог': [7, 2], 'Отложенный свет': [4, 4], 'Рассеиватель': [8, 2], 'Петля': [6, 4]}
+// Ключ графа тела — его операторы и знак петли. Им набор различает тела и миры: имя — тоже
+// чтение графа, но одно имя могут носить разные графы (иначе сравнение проходит впустую).
+const graphKey = (b) => b.ops.join('>') + (b.ops.includes('FEEDBACK') ? (b.p.loop > 0 ? '+' : '-') : '')
 
 let failed = 0, passed = 0
 const check = (name, cond, detail = '') => {
@@ -76,31 +77,33 @@ await section('1. Seed → структура мира', async () => {
 
   const sig = (w) => ({
     n: w.structure.bodies.length,
-    programs: w.structure.bodies.map((b) => b.program).sort().join(','),
+    graphs: w.structure.bodies.map(graphKey).sort().join(','),
     links: JSON.stringify(w.structure.links),
   })
-  const shapes = (w) => w.structure.bodies.map((b) => `${b.program}:${b.lobes}/${b.rings}`).sort().join(' | ')
+  const shapes = (w) => w.structure.bodies.map((b) => `${b.name}:${b.lobes}/${b.rings}`).sort().join(' | ')
   const tuples = new Set(worlds.map((w) => JSON.stringify(sig(w))))
-  check(`${SEEDS.length} seed → ${SEEDS.length} разных наборов {число тел, программы, связи}`, tuples.size === SEEDS.length, `разных: ${tuples.size}`)
+  check(`${SEEDS.length} seed → ${SEEDS.length} разных наборов {число тел, графы, связи}`, tuples.size === SEEDS.length, `разных: ${tuples.size}`)
 
   const counts = new Set(worlds.map((w) => sig(w).n))
-  const programs = new Set(worlds.map((w) => sig(w).programs))
+  const graphs = new Set(worlds.map((w) => sig(w).graphs))
   const links = new Set(worlds.map((w) => sig(w).links))
   const forms = new Set(worlds.map(shapes))
   check('число тел принимает ≥ 3 разных значений', counts.size >= 3, [...counts].sort((a, b) => a - b).join('/'))
-  check('наборы программ принимают ≥ 3 разных значений', programs.size >= 3, `разных: ${programs.size}`)
+  check('наборы графов принимают ≥ 3 разных значений', graphs.size >= 3, `разных: ${graphs.size}`)
   check('список связей различен у всех seed', links.size === SEEDS.length, `разных: ${links.size}`)
-  check('наборы форм (программа + лепестки + орбиты) различны у всех seed', forms.size === SEEDS.length, `разных: ${forms.size}`)
+  check('наборы форм (имя + лепестки + орбиты) различны у всех seed', forms.size === SEEDS.length, `разных: ${forms.size}`)
 
-  // Правило формы: тело остаётся узнаваемым по своей программе (лепестки ±2 и ≥ 3, орбиты ±1 и ≥ 1).
+  // Правило формы (грамматика v1): форма — чтение графа. Орбиты = 1 + возвраты (петля, след,
+  // задержка); лепестки = 3 + вклад узлов ± 1 по собственному seed тела, всего от 3 до 9.
   const offenders = []
   for (const w of worlds) for (const b of w.structure.bodies) {
-    const [lobes, rings] = NOMINAL[b.program] || [NaN, NaN]
-    if (!(Math.abs(b.lobes - lobes) <= 2 && b.lobes >= 3 && Math.abs(b.rings - rings) <= 1 && b.rings >= 1)) offenders.push(`${w.seed}/${b.id}:${b.program} ${b.lobes}/${b.rings}`)
+    const has = (o) => b.ops.includes(o)
+    const rings = 1 + (has('FEEDBACK') ? 1 : 0) + (has('MEMORY') ? 1 : 0) + (has('DELAY') ? 1 : 0)
+    if (!(b.rings === rings && b.lobes >= 3 && b.lobes <= 9)) offenders.push(`${w.seed}/${b.id}:${graphKey(b)} ${b.lobes}/${b.rings}`)
   }
-  check('форма тела = его программа ± собственный seed (лепестки ±2, орбиты ±1)', offenders.length === 0, offenders.slice(0, 4).join('; '))
-  const kinds = worlds.map((w) => new Set(w.structure.bodies.map((b) => b.program)).size)
-  check('сколько видов программ живёт в мире — решает seed', new Set(kinds).size >= 2, `видов в мире: ${kinds.join('/')}`)
+  check('форма тела — чтение его графа (орбиты = 1 + возвраты, лепестки 3–9)', offenders.length === 0, offenders.slice(0, 4).join('; '))
+  const kinds = worlds.map((w) => new Set(w.structure.bodies.map(graphKey)).size)
+  check('сколько разных графов живёт в мире — решает seed', new Set(kinds).size >= 2, `графов в мире: ${kinds.join('/')}`)
   const reach = worlds.map((w) => w.structure.reach)
   check('порог связи («разговорчивость») — от seed', new Set(reach.map((v) => v.toFixed(4))).size >= 3, reach.map((v) => fmt(v, 2)).join('/'))
 
@@ -118,20 +121,20 @@ await section('1. Seed → структура мира', async () => {
   check('стартовый seed 140821: ≥ 40 импульсов за 30 с', def.emissions >= 40, `${def.emissions} импульсов`)
 
   // Таблица различий.
-  console.log('\n  seed    тел  видов  связей  порог(м)  за спиной  имп./30с  программы×тел')
+  console.log('\n  seed    тел графов  связей  порог(м)  за спиной  имп./30с  графы×тел')
   for (const w of worlds) {
     const b = w.structure.bodies, multi = {}
-    for (const x of b) multi[x.program] = (multi[x.program] || 0) + 1
+    for (const x of b) multi[graphKey(x)] = (multi[graphKey(x)] || 0) + 1
     console.log(`  ${String(w.seed).padEnd(7)} ${String(b.length).padStart(3)} ${String(Object.keys(multi).length).padStart(5)} ${String(w.structure.links.length).padStart(7)} ${fmt(w.structure.reach, 2).padStart(10)} ${String(b.filter((x) => x.layer === 'behind').length).padStart(10)} ${String(w.emissions).padStart(9)}  ${Object.entries(multi).map(([k, v]) => `${k}×${v}`).join(' ')}`)
   }
-  console.log('\n  формы (программа:лепестки/орбиты):')
+  console.log('\n  формы (имя:лепестки/орбиты):')
   for (const w of worlds) console.log(`  ${String(w.seed).padEnd(7)} ${shapes(w)}`)
-  console.log('\n  чем миры отличаются попарно (Ч — число тел, П — программы, С — связи, Ф — формы):')
+  console.log('\n  чем миры отличаются попарно (Ч — число тел, П — графы, С — связи, Ф — формы):')
   for (let i = 1; i < worlds.length; i++) {
     const row = []
     for (let j = 0; j < i; j++) {
       const a = sig(worlds[i]), b = sig(worlds[j])
-      row.push((a.n !== b.n ? 'Ч' : '·') + (a.programs !== b.programs ? 'П' : '·') + (a.links !== b.links ? 'С' : '·') + (shapes(worlds[i]) !== shapes(worlds[j]) ? 'Ф' : '·'))
+      row.push((a.n !== b.n ? 'Ч' : '·') + (a.graphs !== b.graphs ? 'П' : '·') + (a.links !== b.links ? 'С' : '·') + (shapes(worlds[i]) !== shapes(worlds[j]) ? 'Ф' : '·'))
     }
     console.log(`  ${String(worlds[i].seed).padEnd(7)} ${row.join('   ')}`)
   }

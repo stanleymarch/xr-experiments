@@ -248,3 +248,15 @@ body{font-family:var(--body);-webkit-font-smoothing:antialiased}button{font-fami
 .intro-actions .button-ghost > span:not([data-i18n]){font-size:14px!important;line-height:1;color:var(--amber);margin:0!important;font-weight:400}
 .intro-actions .button-ghost > span[data-i18n]{font-weight:inherit;letter-spacing:inherit}
 .intro-actions #start-button{font-weight:500;letter-spacing:.005em}
+
+/* ── «Как это читается» и «мир без вас» ─────────────────────────────────────
+   Строка человеческого чтения под журналом (по переключателю), живые показания
+   операторов в инспекторе, счётчик двойника в нижней колонке. Специфичность
+   «.live-caption .live-…» выше, чем у общего правила «.live-caption p», поэтому
+   размер сноски задан здесь и не перебивается базовым правилом подписи. */
+.reading-toggle{pointer-events:auto;background:none;border:0;padding:8px 0 0;margin:0;font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:#94a7b5;cursor:pointer;transition:color .2s}
+.reading-toggle:hover,.reading-toggle:focus-visible,.reading-toggle[aria-pressed="true"]{color:var(--amber)}
+.live-caption .live-reading{margin-top:12px;font-style:italic;color:#dcc9a8}
+.live-caption .live-reading-note{margin-top:7px;font-size:9px;line-height:1.65;letter-spacing:.03em;color:#7f8d9b}
+.operator-live{margin-top:12px;font-size:10px;line-height:1.6;color:#c7ac81}
+.operator-live span{display:inline-block;margin:0 10px 5px 0;white-space:nowrap}

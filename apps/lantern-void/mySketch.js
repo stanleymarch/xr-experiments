@@ -7,8 +7,8 @@
  * во время работы опыта обращений к ней нет — последствия правил исполняет этот код.
  *
  * КАК УСТРОЕН ФАЙЛ. Разделы идут от правил к картинке:
- *   01 ПРАВИЛА        числа и операторы, по которым живёт мир
- *   02 МИР            создание мира по seed, шаг симуляции, импульсы, захваты и встряски
+*   01 ПРАВИЛА        числа и грамматика тела: восемь операторов и правила роста графов
+*   02 МИР            создание мира по seed, шаг симуляции и «мир без вас», импульсы, захваты
  *   03 СОСТОЯНИЕ      общее состояние опыта и отладка из консоли
  *   04 ЯЗЫК           словарь интерфейса RU/EN
  *   05 ХОЛСТ          холст p5, такт, ОБЩЕЕ ПОЛЕ СРЕДЫ и запасной режим без p5
@@ -21,15 +21,20 @@
  * ни про A-Frame. На экране её рисует p5 (06), в шлеме — A-Frame (08).
  * Это не две симуляции: в каждый момент тела одни и те же.
  *
+ * МИР БЕЗ ВАС: рядом с миром теми же шагами идёт его двойник (app.shadow) — тот же seed,
+ * но присутствие посетителя в него не входит. Разница между ними — единственное, что
+ * принадлежит вашему присутствию (lanternDebug.compare()).
+ *
  * ПОЛЕ СРЕДЫ: одна функция app.field.at(x,y,z,t) — шум p5, посеянный seed'ом мира
  * (рождается в 05, заменитель на hash() в запасном режиме). Её читают: приток энергии
  * тел (02), свечения фона и кольца (06) и шейдер оболочек A-Frame через текстуру
  * 32×32 (08). Один источник — три потребителя, второй симуляции шума нет.
  *
- * ГДЕ SEED МЕНЯЕТ МИР: число тел (6–12), состав программ (2–5 видов), «разговорчивость»
- * (порог связей 2.6–4.1 м), расстановка (слоты, отражение, сила сдвига), форма каждого
- * тела (лепестки/орбиты поверх программы) — всё в createWorld (02); плюс шум поля (05).
- * Один seed — один мир: детерминизм держат seeded(seedMix(seed)) и фиксированный шаг.
+ * ГДЕ SEED МЕНЯЕТ МИР: число тел (6–12); какие графы выращены у тел, кроме трёх архетипов
+ * (автономный крик, избирательный слушатель, запаздывающий слушатель); параметры каждого
+ * графа; «разговорчивость» (порог связей 2.6–4.1 м); расстановка (слоты, отражение, сила
+ * сдвига); узор тела — всё в createWorld (02); плюс шум поля (05). Форма тела — чтение его
+ * графа. Один seed — один мир: детерминизм держат seeded(seedMix(seed)) и фиксированный шаг.
  *
  * Весь код обёрнут в (() => { … })(), чтобы не засорять глобальную область.
  * p5 работает в режиме instance — new p5(…) вместо глобальных функций.
@@ -37,37 +42,127 @@
 (() => {
   'use strict';
 
-  // ═══ 01 / ПРАВИЛА ══════════════════════════════════════════════════════════
-  // Числа, задающие «жизнь» мира. Их можно менять руками и смотреть, что изменится.
-  // Что каждый оператор МЕНЯЕТ в поведении мира — измерено, а не прочитано по коду:
-  // docs/lantern-void-rules.md, часть 2 (без NOISE, FILTER или DELAY число импульсов
-  // в мире меняется меньше чем на 1 %).
+  // ═══ 01 / ПРАВИЛА И ГРАММАТИКА ══════════════════════════════════════════════
+  // Числа, задающие «жизнь» мира, и грамматика тела. Что каждый оператор МЕНЯЕТ в
+  // поведении мира — измеряется прогоном test/rules-ab.mjs; числа и выводы — в
+  // docs/lantern-void-rules.md.
 
-  const RULES = Object.freeze({
-    bodies: 10,              // сколько тел в мире
+  const RULES = {
     range: 3.45,             // на каком расстоянии (м) два тела могут быть связаны
     travelSpeed: 1.6,        // скорость импульса по связи (м/с): дальняя связь — долгий путь
-    baseLoss: 0.085,         // как быстро тело теряет энергию: сигнал без адресата «дорого» даётся
-    spontaneousInput: 0.105, // собственный приток энергии, независимо от соседей
+    baseLoss: 0.085,         // как быстро тело теряет энергию: запас живёт около 12 с
     pulseCost: 0.32,         // какая доля энергии уходит на один импульс
     pulseStrength: 0.21,     // сила импульса, который тело посылает соседу
+    senseGain: 0.7,          // сколько энергии даёт телу один услышанный импульс (× его силу × пропуск фильтра)
+    traceGain: 0.15,         // MEMORY: насколько след прошлых сигналов подпитывает тело
     presenceGain: 0.28,      // насколько присутствие человека подпитывает тела в режиме «Возмущать»
+    presenceRest: 0.7,      // насколько присутствие сокращает телу паузу между криками (доля влияния): рука у тела удваивает частоту
+    touchGain: 0.10,         // сколько энергии даёт телу рука у самого тела (не чаще, чем раз в 0.85 с)
+    agitationGain: 0.16,     // насколько встряска (захват и движение) подпитывает тело
+    leak: 0.38,              // порог крика у тела БЕЗ оператора GATE: кричит, едва накопив
+    gateBoost: 1.35,         // крик с порогом громче — тело дольше копило…
+    leakDamp: 0.7,           // …а крик без порога тише
+    filterWidth: 0.6,        // FILTER: ширина полосы — доля собственного периода тела
+    filterFloor: 0.12,       // FILTER: совсем не в ритме — слышит плохо (не глохнет)
     fieldGain: 0.11          // сила «погоды»: вклад общего поля среды (шум p5) в приток каждого тела
-  });
+  };
+  // RULES не заморожены: lanternDebug.setRules меняет константы на лету — только для
+  // калибровочных развёрток и опытов из консоли. Сам опыт константы не меняет.
 
-  // Пять программ тел. Это не «виды существ» и не характеры, а стартовые наборы
-  // операторов (как они исполняются — см. updateOneStep). Программа задаёт и форму:
-  //   ops   — какие операторы исполняет тело;
-  //   lobes — число лепестков оболочки; rings — число орбит;
-  //   memory — инерция: чем выше, тем медленнее гаснет принятый сигнал и тем КОРОЧЕ пауза
-  //   после импульса (0.66 + (1 − memory)·0.75 с) — тело с длинной памятью кричит ЧАЩЕ.
-  const OPERATOR_PROGRAMS = [
-    {name:'Резонатор',       ops:['NOISE','FEEDBACK','GATE','EMIT'],  lobes:5, rings:3, memory:.69},
-    {name:'Порог',           ops:['SENSE','FILTER','GATE','EMIT'],    lobes:7, rings:2, memory:.21},
-    {name:'Отложенный свет', ops:['SENSE','DELAY','MEMORY','EMIT'],   lobes:4, rings:4, memory:.84},
-    {name:'Рассеиватель',    ops:['NOISE','FILTER','EMIT'],           lobes:8, rings:2, memory:.33},
-    {name:'Петля',           ops:['SENSE','FEEDBACK','MEMORY','EMIT'],lobes:6, rings:4, memory:.92}
-  ];
+  // ГРАММАТИКА ТЕЛА. Тело — небольшой граф из восьми операторов. Что делает каждый —
+  // в updateOneStep (02); здесь — как графы ВЫРАЩИВАЮТСЯ по seed. Правила роста
+  // определяют и то, какие тела возможны:
+  //   • EMIT есть у всякого тела: тело, которое не может кричать, не участвует в экологии;
+  //   • нужен вход — SOURCE (собственный ритм), SENSE (чужие сигналы) или оба;
+  //   • FILTER, DELAY и MEMORY преобразуют чужие сигналы — вырастают только на SENSE;
+  //   • FEEDBACK — петля на себя; знак (раскачивает или сдерживает) решает отдельный бросок;
+  //   • GATE — порог крика; без него тело кричит «без порога».
+  // Сколько графов позволяют эти правила — перечисляет test/rules-ab.mjs.
+  // Порядок в списке — порядок исполнения и показа (цепочка в инспекторе).
+  const OPERATORS = ['SOURCE','SENSE','FILTER','DELAY','MEMORY','FEEDBACK','GATE','EMIT'];
+
+  // Архетипы — пять графов, у которых есть собственное имя наблюдателя (ещё из v6.3):
+  // [русское, английское]. Первые три стоят в каждом мире — это композиция, она не
+  // зависит от seed: автономный крик, избирательный слушатель и запаздывающий
+  // слушатель.
+  const ARCHETYPES = {
+    'SOURCE,FEEDBACK,GATE,EMIT':['Резонатор','Resonator'],
+    'SENSE,FILTER,GATE,EMIT':['Порог','Threshold'],
+    'SENSE,DELAY,MEMORY,EMIT':['Отложенный свет','Deferred light'],
+    'SOURCE,SENSE,FILTER,EMIT':['Рассеиватель','Diffuser'],
+    'SENSE,FEEDBACK,MEMORY,EMIT':['Петля','Loop']
+  };
+  // Первые три архетипа в виде списков операторов — их growGraph ставит в начало мира.
+  const ANCHORS = Object.keys(ARCHETYPES).slice(0,3).map(k => k.split(','));
+
+  // readGraph(program) — чтение графа для наблюдателя: [русское, английское].
+  // У тела в его собственной среде имени нет. Название — результат ПРАВИЛА, применённого
+  // к графу: архетип сохраняет имя, прочее тело называется по входу и первой из своих
+  // черт («Слушатель · настроенный»).
+  const NOUNS = {
+    source:['Исток','Source'],           // только SOURCE: кричит сам, ничего не слышит
+    listener:['Слушатель','Listener'],   // только SENSE: кричит, только когда его кормят
+    relay:['Ретранслятор','Relay']       // SOURCE и SENSE
+  };
+  const TRAIT_TEXT = {
+    tuned:['настроенный','tuned'], delayed:['запаздывающий','delayed'], remembering:['помнящий','remembering'],
+    looped:['с петлёй','looped'], damped:['с тормозом','damped'], gated:['с порогом','gated'], ungated:['без порога','ungated']
+  };
+  function readGraph(program){
+    const archetype = ARCHETYPES[program.ops.join(',')];
+    if (archetype) return archetype;
+    const has = o => program.ops.includes(o);
+    const noun = has('SOURCE') ? (has('SENSE') ? NOUNS.relay : NOUNS.source) : NOUNS.listener;
+    // Черты — по убыванию значимости; в имя идёт первая найденная.
+    const traits = [
+      has('FILTER') && 'tuned', has('DELAY') && 'delayed', has('MEMORY') && 'remembering',
+      has('FEEDBACK') && (program.p.loop > 0 ? 'looped' : 'damped'),
+      has('GATE') && 'gated', !has('GATE') && 'ungated'
+    ];
+    const trait = traits.find(Boolean);
+    return trait ? [`${noun[0]} · ${TRAIT_TEXT[trait][0]}`, `${noun[1]} · ${TRAIT_TEXT[trait][1]}`] : noun;
+  }
+
+  // growGraph(rng, i) — вырастить граф и параметры i-го тела мира. Первые три тела —
+  // архетипы; остальные выращиваются по правилам выше. Параметры — свои броски
+  // генератора у каждого тела. pause (пауза после крика) и обе постоянные времени
+  // заданы у всех тел, чтобы формулы затухания были одними и теми же.
+  function growGraph(rng, i){
+    const U = (lo, hi) => lo + rng() * (hi - lo);
+    const ops = [];
+    const anchor = ANCHORS[i];
+    if (anchor) ops.push(...anchor);
+    else {
+      const source = rng() < .4, sense = !source || rng() < .7;
+      if (source) ops.push('SOURCE');
+      if (sense) ops.push('SENSE');
+      if (sense && rng() < .55) ops.push('FILTER');
+      if (sense && rng() < .4) ops.push('DELAY');
+      if (sense && rng() < .45) ops.push('MEMORY');
+      if (rng() < .3) ops.push('FEEDBACK');
+      if (rng() < .6) ops.push('GATE');
+      ops.push('EMIT');
+    }
+    const p = { pause: U(.6, 1.15), traceTau: U(4, 9), arousalTau: 2.2 };
+    const has = o => ops.includes(o);
+    if (has('GATE')) p.gate = U(.72, .92);
+    // Источник жизнеспособен по построению: его средний приток минимум вдвое выше того, что
+    // тело теряет на пороге (амплитуда ≥ 0.33 при пороге ≤ 0.92), иначе он не закричит никогда.
+    // В этой зоне частота крика растёт с притоком (крик ≈ приток / цена крика), а не задаётся
+    // одной паузой. «Резонатор» (тело 0) — ровный крик около 0.7 Гц; прочие — от 0.35 до 0.8 Гц.
+    // Без порога источник становится «метрономом»: энергии с избытком, кричит по паузе.
+    if (has('SOURCE')) p.amp = !has('GATE') ? U(.2, .7) : i === 0 ? U(.33, .38) : U(.33, .85);
+    // Период фильтра — там, где лежат реальные ритмы мира: 90 % интервалов между чужими
+    // криками короче 1.12 с (измерено). Настроенный на 2 с слушатель был бы глух ко всем.
+    if (has('FILTER')) p.period = U(.6, 1.25);
+    if (has('DELAY')) p.delay = U(.3, .9);
+    // Петля: после своего крика приток возрастает (+) или падает (−); величина сравнима
+    // с притоком источника, иначе петля ничего не меняет. «Резонатор» (тело 0) всегда с
+    // самораскруткой: с тормозом он кричит 1–2 раза за 10 с, и мир остаётся без узла.
+    if (has('FEEDBACK')) p.loop = i === 0 || rng() < .65 ? U(.15, .4) : -U(.15, .35);
+    return { ops, p };
+  }
+
   // Палитра: тёплый — энергия и импульсы; холодный и фиолетовый — строение тел.
   const PALETTE = {
     warm:'#f0bd77', cool:'#8bd3dc', violet:'#a698d5'
@@ -87,7 +182,7 @@
   // функция seed: у соседних seed число тел совпадает в 99.7% случаев (рекорд — 369 seed
   // подряд), то есть без перемешивания «соседний seed — тот же мир». Финализер murmur3 —
   // пять операций, и соседние seed становятся независимыми (измерено: совпадение числа тел
-  // у соседей 14.3%, как у честного случайного источника). Всегда подавать в seeded(seedMix(seed)).
+  // у соседей ≈14%, как у честного случайного источника). Всегда подавать в seeded(seedMix(seed)).
   const seedMix=s=>{let h=s>>>0;h^=h>>>16;h=Math.imul(h,0x85ebca6b);h^=h>>>13;h=Math.imul(h,0xc2b2ae35);h^=h>>>16;return h>>>0;};
   // rgba('#f0bd77',.5) → 'rgba(240,189,119,0.5)': цвет палитры с прозрачностью.
   const rgba = (hex,opacity) => {
@@ -102,17 +197,17 @@
 
   // createWorld(seed) строит мир с нуля: тела, их состояние и связи между ними.
   // ГДЕ РЕШАЕТ SEED (структура, а не только параметры):
-  //   сколько тел (6–12), какие программы вообще встречаются (2–5 видов из пяти),
-  //   сколько тел делит одну программу, «разговорчивость» мира (порог связи 2.6–4.1 м),
-  //   расстановка (слоты выбираются и отражаются по seed, сила сдвига своя),
-  //   и форма каждого тела (лепестки/орбиты = программа + собственный seed тела).
-  // СлойComposition при этом сохранён: первое тело — у руки, средний и дальний планы,
-  // и хотя бы одно тело за спиной посетителя есть в каждом мире.
+  //   сколько тел (6–12); какие графы выращены у тел, кроме трёх архетипов; параметры
+  //   каждого графа (ритм источника, период фильтра, задержка, постоянная следа, знак
+  //   петли, порог, пауза); «разговорчивость» мира (порог связи 2.6–4.1 м); расстановка
+  //   (слоты, отражение, сила сдвига) и узор тела.
+  // Композиция сохранена: первое тело — у руки, есть средний и дальний планы, за спиной —
+  // одно или два тела, ни одно тело не остаётся без связи.
   function createWorld(seed){
     const rng=seeded(seedMix(seed));
     // Число тел: 6–12. Стартовый seed 140821 подобран так, что даёт 10.
     const count=6+Math.floor(rng()*7);
-    // «Разговорчивость»: порог связи этого мира, 2.6–4.1 м вместо прежних фиксированных 3.45.
+    // «Разговорчивость»: порог связи этого мира, 2.6–4.1 м.
     const reach=RULES.range*(.75+rng()*.45);
     // Расстановка: ближний, средний и дальний слои; два слота — ЗА спиной посетителя.
     // Формат: x, y, z, радиус тела. Слоты 0 (у руки), 1 (средний план), 4 (дальний)
@@ -137,26 +232,21 @@
     const slots=[0,1,4,8,...rest].slice(0,count);
     const flip=rng()<.5?-1:1;          // половина миров отражена слева направо
     const spread=.13+rng()*.55;        // сила случайного сдвига каждого тела
-    // Какие программы вообще живут в этом мире: 2–5 видов из пяти, решает seed.
-    const pool=[...OPERATOR_PROGRAMS];
-    for(let i=pool.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}
-    pool.length=2+Math.floor(rng()*4);
     const layerOf=z=>z>0?'behind':(z>-2.05?'near':(z>-4.2?'middle':'far'));
     const bodies=slots.map((slot,i)=>{
       const layout=layouts[slot];
-      // Первое тело всегда «Резонатор»; остальные берут программы из пула мира по кругу —
-      // поэтому «сколько тел делит одну программу» тоже решает seed.
-      const base=i===0?OPERATOR_PROGRAMS[0]:pool[i%pool.length];
+      const program=growGraph(rng,i);
+      const has=o=>program.ops.includes(o);
+      // morphology — seed узора тела; он же слегка меняет число лепестков (±1).
+      const morphology=Math.floor(rng()*100000);
       // Тело у руки сдвигается слабее: оно должно остаться в пределах вытянутой руки.
       const sp=i===0?.13:spread;
       const jx=layout[0]*flip+(rng()-.5)*sp*2,jy=layout[1]+(rng()-.5)*sp*1.4,jz=layout[2];
       const size=layout[3]*(.9+rng()*.2);
-      // morphology — seed узора тела; из него же выводится форма (лепестки ±2, орбиты ±1)
-      // поверх номинала программы: тело узнаётся по программе, но между мирами отличается.
-      const morphology=Math.floor(rng()*100000);
-      const variant={...base,
-        lobes:clamp(base.lobes+Math.floor(hash(morphology*3.7)*5)-2,3,9),
-        rings:clamp(base.rings+Math.floor(hash(morphology*7.9)*3)-1,1,5)};
+      // ФОРМА = ЧТЕНИЕ ГРАФА, чтобы тело можно было «прочитать» снаружи:
+      //   лепестки — 3 + вклад узлов (источник +2, слух +1, фильтр +2, порог +1) ± 1 по seed тела;
+      //   орбиты — 1 + число «возвратов» (петля, след, задержка): тело возвращается к своему прошлому.
+      const named={...program,name:readGraph(program)[0],lobes:clamp(3+2*has('SOURCE')+has('SENSE')+2*has('FILTER')+has('GATE')+(morphology%3-1),3,9),rings:1+(has('FEEDBACK')?1:0)+(has('MEMORY')?1:0)+(has('DELAY')?1:0)};
       return {
         // Имя, номер, положение в метрах (со случайным сдвигом своего seed) и радиус size.
         id:`L-${String(i+1).padStart(2,'0')}`,index:i,
@@ -164,19 +254,23 @@
         // home — куда тело возвращается, когда его отпустили (см. grab/agitation, раздел 08).
         home:{x:jx,y:jy,z:jz},agitation:0,grab:null,layer:layerOf(jz),
         // Состояние. energy (0…1) — запас энергии; signal и received — сила последнего
-        // отправленного и последнего принятого импульса (обе затухают).
-        program:variant,energy:.30+rng()*.34,signal:0,received:0,
-        // phase и freq — собственный ритм; threshold — порог излучения;
-        // cooldown — оставшаяся пауза после импульса; emitted — счётчик импульсов.
-        phase:rng()*Math.PI*2,freq:.34+rng()*.48,
-        threshold:.60+rng()*.18,cooldown:rng()*.6,emitted:0,
+        // отправленного и последнего принятого сигнала (обе затухают).
+        program:named,energy:.30+rng()*.34,signal:0,received:0,
+        // phase и freq — собственный ритм тела: в него дышит форма (06, 08), и он же питает тело,
+        // если есть SOURCE; cooldown — оставшаяся пауза после крика;
+        // emitted — счётчик импульсов.
+        phase:rng()*Math.PI*2,freq:.34+rng()*.48,cooldown:rng()*.6,emitted:0,
         tint:i%3===0?'warm':(i%3===1?'cool':'violet'),
-        // Внутренняя память операторов FILTER, DELAY и MEMORY.
-        filtered:0,delayed:0,delayQueue:[],memoryState:0,
-        // links — число связей; visitorInfluence — насколько тело сейчас чувствует
-        // посетителя. last… — время и источник последних событий (по ним рисуются волны
-        // и заполняется карточка тела).
+        // Внутренние состояния операторов: queue — задержанные DELAY возбуждения [{t, e}];
+        // lastFrom — когда тело последний раз слышало каждого отправителя (интервал для FILTER);
+        // gainAvg — средняя доля пропускания фильтра; arrived — сколько импульсов долетело.
+        queue:[],lastFrom:{},gainAvg:1,arrived:0,
+        // trace — след чужих сигналов (MEMORY); arousal — след собственного крика (FEEDBACK).
+        trace:0,arousal:0,
+        // morphology,links,visitorInfluence — узор тела, число связей, чувство посетителя.
         morphology,links:0,visitorInfluence:0,
+        // Времена последних событий: приёма, приёма, пропущенного фильтром, крика.
+        lastPassedAt:-100,lastArrivalAt:-100,lastEmitAt:-100,prevEmitAt:-100,
         lastReceivedAt:-100,lastReceivedFrom:-1,lastReceivedInfluenced:false,lastTouchAt:-100
       };
     });
@@ -213,11 +307,47 @@
     };
   }
 
-  // emitSignal — тело излучает импульс. Он уходит по КАЖДОЙ связи отдельно и идёт до
-  // соседа конечное время: дальняя связь — дольше в пути. Сила от расстояния НЕ зависит
-  // (±20% — свой случайный множитель импульса); «дорого» импульс стоит отправителю.
+  // thresholdOf(b) — сколько энергии нужно телу, чтобы крикнуть: свой порог (GATE) или
+  // «без порога» (RULES.leak). aboveThreshold — только читает состояние; по тому же
+  // условию lanternDebug.trace узнаёт, ждало ли тело окончания паузы.
+  const thresholdOf=b=>b.program.ops.includes('GATE')?b.program.p.gate:RULES.leak;
+  const aboveThreshold=b=>b.energy>thresholdOf(b);
+
+  // deliver(world, b, e) — возбуждение вошло в тело: принятый сигнал и энергия, а с
+  // оператором MEMORY — ещё и след.
+  function deliver(world,b,e){
+    b.received=clamp(b.received+e,0,1);
+    b.energy=clamp(b.energy+e*RULES.senseGain,0,1);
+    if(b.program.ops.includes('MEMORY'))b.trace=Math.min(1,b.trace+e*1.2);
+  }
+
+  // sense(world, b, from, strength) — чужой импульс долетел до тела. Дальше работает
+  // граф тела: без SENSE импульс для тела не существует; FILTER пропускает его тем
+  // сильнее, чем ближе ритм отправителя к собственному периоду тела; DELAY откладывает
+  // возбуждение, без DELAY оно входит сразу.
+  function sense(world,b,from,strength){
+    if(!b.program.ops.includes('SENSE'))return;
+    b.arrived++;
+    let e=strength,gain=1;
+    if(b.program.ops.includes('FILTER')){
+      const last=b.lastFrom[from],T=b.program.p.period;
+      // Пол: сигнал не в ритме слышен плохо (filterFloor), а не глохнет; в ритме — целиком.
+      // Первый сигнал отправителя проходит целиком: ритм ещё не известен.
+      if(last!==undefined){const d=world.time-last;gain=RULES.filterFloor+(1-RULES.filterFloor)*Math.exp(-Math.pow((d-T)/(T*RULES.filterWidth),2));}
+      b.lastFrom[from]=world.time;b.gainAvg+=(gain-b.gainAvg)*.1;e*=gain;
+    }
+    if(gain>=.5)b.lastPassedAt=world.time;
+    if(b.program.ops.includes('DELAY'))b.queue.push({t:world.time+b.program.p.delay,e});
+    else deliver(world,b,e);
+  }
+
+  // emitSignal — тело кричит. Импульс уходит по КАЖДОЙ связи отдельно и идёт до соседа
+  // конечное время: дальняя связь — дольше в пути. Сила от расстояния НЕ зависит
+  // (±20% — свой случайный множитель импульса), но зависит от GATE: крик с порогом
+  // громче (тело дольше копило), крик без порога тише.
   function emitSignal(world,b){
     const connected=world.links.filter(l=>l.a===b.index||l.b===b.index);
+    const loud=RULES.pulseStrength*(b.program.ops.includes('GATE')?RULES.gateBoost:RULES.leakDamp);
     for(const edge of connected){
       const target=edge.a===b.index?edge.b:edge.a;
       const other=world.bodies[target];
@@ -226,47 +356,61 @@
       const localField=Math.max(b.visitorInfluence,other.visitorInfluence);
       world.pulses.push({from:b.index,to:target,age:0,
         duration:Math.max(.42,edge.dist/RULES.travelSpeed)*(1+.28*localField),
-        strength:RULES.pulseStrength*(.8+hash(world.emissions*17+target)*.4)*(1+.65*localField),
+        strength:loud*(.8+hash(world.emissions*17+target)*.4)*(1+.65*localField),
         influenced:localField>.2});
     }
     b.signal=1;b.emitted++;world.emissions++;
-    if(world===app.world) playSignalSound(b.index,'emit',b.signal);
+    b.arousal=Math.min(2,b.arousal+1);   // след собственного крика — для петли FEEDBACK
+    if(world===app.world)playSignalSound(b.index,'emit',b.signal);
     world.emissionHistory.push({from:b.index,t:world.time,influenced:b.visitorInfluence>.2});
     if(world.emissionHistory.length>32)world.emissionHistory.shift();
     if(world.emissions%3===0){
-      world.lastEvent={type:'emission',params:{id:b.id,count:connected.length}};
+      // kind — заготовка для строки «как это читается»: крик только что услышанного,
+      // очередь криков, крик при недавнем приёме или крик в тишине. Само прочтение — в 04.
+      const kind=b.lastEmitAt>world.time-.7&&b.prevEmitAt>world.time-1.4?'burst'
+        :b.lastPassedAt>world.time-.5?'reply':b.lastArrivalAt>world.time-3?'plain':'alone';
+      world.lastEvent={type:'emission',params:{id:b.id,count:connected.length,kind}};
     }
+    b.prevEmitAt=b.lastEmitAt;b.lastEmitAt=world.time;
   }
 
   // Фиксированный шаг симуляции: 1/60 с. Экран может рисоваться с любой частотой,
   // а мир продвигается одинаковыми шагами — поэтому один seed и те же действия
   // посетителя всегда дают одно и то же состояние, на каком бы устройстве ни шёл опыт.
   const SIMULATION_STEP=1/60;
+
+  // advanceWorld(world, dt) — продвинуть мир на dt (равными шагами через накопитель,
+  // не больше 9 шагов за кадр). Вместе с миром идёт его двойник — «мир без вас»
+  // (app.shadow): тот же seed, те же шаги, но присутствие посетителя в него не входит.
+  // Разница между ними — единственное, что принадлежит присутствию.
   function advanceWorld(world,dt){
     if(world.paused)return;
     world.accumulator+=clamp(dt,0,.15);
     let count=0;
     while(world.accumulator>=SIMULATION_STEP && count<9){
-      updateOneStep(world,SIMULATION_STEP);
+      stepBoth(world,SIMULATION_STEP);
       world.accumulator-=SIMULATION_STEP;
       count++;
     }
   }
+  // stepBoth(world, dt) — один шаг мира; если это основной мир — тот же шаг делает и двойник.
+  function stepBoth(world,dt){
+    updateOneStep(world,dt);
+    if(world===app.world&&app.shadow&&app.shadow!==world)updateOneStep(app.shadow,dt);
+  }
 
-  // aboveThreshold(b) — хватает ли телу «заслонки» до порога излучения: энергия, а с
-  // оператором MEMORY — ещё и 11% следа памяти, против порога тела. У тел без GATE порог
-  // на 8% ниже. Только читает состояние; по тому же условию lanternDebug.trace узнаёт,
-  // ждало ли тело окончания паузы.
-  const aboveThreshold=b=>b.energy+(b.program.ops.includes('MEMORY')?b.memoryState*.11:0)>b.threshold*(b.program.ops.includes('GATE')?1:.92);
-
-  // updateOneStep — один шаг мира: каждое тело исполняет свою программу, затем
-  // долетают импульсы.
+  // updateOneStep — один шаг мира: каждое тело исполняет свой граф, затем долетают
+  // импульсы и входят задержанные возбуждения.
   function updateOneStep(world,dt){
     world.time+=dt;
     for(const b of world.bodies){
-      // Всё недавнее затухает: принятый и отправленный сигналы, пауза после импульса.
-      // Чем выше memory программы, тем медленнее гаснет принятый сигнал.
-      b.received*=Math.exp(-dt*(.8+b.program.memory*.3));
+      const ops=b.program.ops,p=b.program.p;
+      // Всё недавнее затухает: принятый сигнал (около секунды), след чужих сигналов и
+      // след своего крика (у каждого своя постоянная времени), собственный сигнал
+      // (для света и звука) и пауза после импульса.
+      b.received*=Math.exp(-dt*.95);
+      b.trace*=Math.exp(-dt/p.traceTau);
+      b.arousal*=Math.exp(-dt/p.arousalTau);
       b.signal*=Math.exp(-dt*2.55);
       b.cooldown=Math.max(0,b.cooldown-dt);
       // Рука/курсор тянет тело (grab ставит tick в 08 или указатель в 07); отпущенное
@@ -275,33 +419,20 @@
       if(b.grab){b.x=lerp(b.x,b.grab.x,.18);b.y=lerp(b.y,b.grab.y,.18);b.z=lerp(b.z,b.grab.z,.18);}
       else{b.x=lerp(b.x,b.home.x,.045);b.y=lerp(b.y,b.home.y,.045);b.z=lerp(b.z,b.home.z,.045);}
       b.agitation=Math.max(0,b.agitation-dt*.3);   // отпущенное тело успокаивается за ~3 с
-      // Исполнитель операторов. Программа тела — список операторов, и каждый из них
-      // здесь ДЕЙСТВУЕТ, а не просто подписан в инспекторе.
-      const oscillator=.5+.5*Math.sin(world.time*b.freq*1.8+b.phase);   // собственный ритм тела
-      const ops=b.program.ops;
-      let input=RULES.spontaneousInput*(.55+oscillator*.7);
+      // ИСПОЛНИТЕЛЬ ГРАФА. Каждый оператор здесь ДЕЙСТВУЕТ, а не просто подписан в инспекторе.
+      let input=0;
+      if(ops.includes('SOURCE')) input+=p.amp*(.5+.5*Math.sin(world.time*b.freq*6.2832+b.phase));   // собственный ритм
+      if(ops.includes('MEMORY')) input+=b.trace*RULES.traceGain;                                     // след прошлых сигналов
+      if(ops.includes('FEEDBACK')) input+=p.loop*b.arousal;                                          // свой крик возвращается — или тормозит
+      if(b.agitation>0) input+=b.agitation*RULES.agitationGain;                                      // встряска питает тело
+      // SENSE здесь не добавляет притока: энергия чужого сигнала входит вместе с ним самим (deliver).
       // «Погода»: общее поле среды app.field — ОДНА функция шума p5 (сеется seed'ом мира
       // в разделе 05), её читают симуляция, фон плоского вида и шейдеры A-Frame.
       // RULES.fieldGain задаёт силу правила; lanternDebug.fieldGain(0) выключает вклад.
-      if(app.field&&RULES.fieldGain>0&&app.fieldScale>0)input+=(app.field.at(b.x,b.y,b.z,world.time)-.47)*RULES.fieldGain*app.fieldScale;
-      if(ops.includes('NOISE')) input+=.022*Math.sin(world.time*1.7+b.phase*3.0);       // собственные колебания
-      if(ops.includes('SENSE')) input+=b.received*.18;                                   // принимает импульсы соседей
-      if(ops.includes('FILTER')){b.filtered=lerp(b.filtered,input,.045);input=b.filtered;} // сглаживает вход: заменяет его скользящим средним (окно ≈0.4 с)
-      if(ops.includes('DELAY')){                                                          // откладывает ВХОД на 0.48 с; энергию при прилёте (ниже) это не задерживает
-        b.delayQueue.push({until:world.time+.48,value:input});
-        while(b.delayQueue.length&&b.delayQueue[0].until<=world.time){
-          b.delayed=b.delayQueue.shift().value;
-        }
-        input=b.delayed;
-      }
-      if(ops.includes('MEMORY')){                                                         // копит среднее входа и подпитывается им
-        b.memoryState=lerp(b.memoryState,input,.025);
-        input+=b.memoryState*.13;
-      }
-      if(ops.includes('FEEDBACK'))input+=b.signal*.055+b.energy*.015;                    // собственный импульс и запас энергии возвращаются на вход
-      if(b.agitation>0)input+=b.agitation*.16;                                           // встряска питает тело
+      if(app.field&&RULES.fieldGain>0&&app.fieldScale>0) input+=(app.field.at(b.x,b.y,b.z,world.time)-.47)*RULES.fieldGain*app.fieldScale;
       // Присутствие посетителя — слабое поле вокруг головы и более сильное вокруг рук.
       // В режиме наблюдения (observe) оно не влияет на симуляцию.
+      // Действует дважды: подпитывает голодное тело (disturbance) и сокращает паузу сытому (крик).
       let disturbance=0;
       if(world.mode==='perturb'&&world.visitor.active){
         for(const point of world.visitor.points){
@@ -312,32 +443,39 @@
       b.visitorInfluence=lerp(b.visitorInfluence,clamp(disturbance,0,1),.1);
       disturbance=RULES.presenceGain*b.visitorInfluence;
       // Энергия: приток (input + поле посетителя) минус потери.
-      b.energy+=dt*(input+disturbance - RULES.baseLoss*b.energy);
-      b.energy=clamp(b.energy,0,1);
-      // Импульс: когда «заслонка» выше порога (aboveThreshold) и пауза прошла,
-      // тело тратит часть энергии и излучает.
-      if(ops.includes('EMIT')&&aboveThreshold(b) && b.cooldown<=0){
+      b.energy=clamp(b.energy+dt*(input+disturbance-RULES.baseLoss*b.energy),0,1);
+      // Крик: в графе есть EMIT, энергии хватает до порога и пауза прошла — тело тратит её
+      // часть и излучает. Проверка EMIT нужна и при том, что он есть у каждого графа:
+      // lanternDebug.ablate('EMIT') отключает крик — это контроль всех опытов с изоляцией.
+      if(ops.includes('EMIT')&&aboveThreshold(b)&&b.cooldown<=0){
         b.energy*=1-RULES.pulseCost;
-        b.cooldown=(.66+(1-b.program.memory)*.75)*(1-b.agitation*.45);   // встревоженное тело импульсит чаще
+        // Пауза короче у встревоженного тела (захват и движение) и рядом с посетителем:
+        // присутствие возбуждает даже сытое тело, которое кричит по паузе. Не короче 30 % паузы.
+        b.cooldown=p.pause*Math.max(.3,1-b.agitation*.45-RULES.presenceRest*b.visitorInfluence);
         emitSignal(world,b);
       }
     }
-    // Долетевшие импульсы: сосед получает сигнал и немного энергии.
+    // Долетевшие импульсы: работает граф получателя (sense). Журнал приёма общий для всех
+    // тел — импульс долетел физически, даже если тело его не услышало.
     for(let i=world.pulses.length-1;i>=0;i--){
-      const p=world.pulses[i];p.age+=dt;
-      if(p.age>=p.duration){
-        const target=world.bodies[p.to];
-        target.received=clamp(target.received+p.strength,0,1);
-        target.lastReceivedAt=world.time;target.lastReceivedFrom=p.from;target.lastReceivedInfluenced=p.influenced;
-        target.energy=clamp(target.energy+p.strength*.18,0,1);
-        if(world===app.world) playSignalSound(p.to,'receive',p.strength);
-        world.arrivalHistory.push({from:p.from,to:p.to,t:world.time,influenced:p.influenced});
+      const pulse=world.pulses[i];pulse.age+=dt;
+      if(pulse.age>=pulse.duration){
+        const target=world.bodies[pulse.to],before=target.arrived;
+        target.lastArrivalAt=world.time;
+        sense(world,target,pulse.from,pulse.strength);
+        target.lastReceivedAt=world.time;target.lastReceivedFrom=pulse.from;target.lastReceivedInfluenced=pulse.influenced;
+        if(world===app.world)playSignalSound(pulse.to,'receive',pulse.strength);
+        world.arrivalHistory.push({from:pulse.from,to:pulse.to,t:world.time,influenced:pulse.influenced,heard:target.arrived>before});
         if(world.arrivalHistory.length>40)world.arrivalHistory.shift();
-        if(p.influenced){
-          world.lastEvent={type:'arrival',params:{from:world.bodies[p.from].id,to:target.id}};
+        if(pulse.influenced&&target.arrived>before){
+          world.lastEvent={type:'arrival',params:{from:world.bodies[pulse.from].id,to:target.id}};
         }
         world.pulses.splice(i,1);
       }
+    }
+    // Задержанные DELAY возбуждения входят в тело, когда приходит их срок.
+    for(const b of world.bodies){
+      while(b.queue.length&&b.queue[0].t<=world.time)deliver(world,b,b.queue.shift().e);
     }
   }
 
@@ -347,11 +485,15 @@
   // ссылки на свои объекты.
   const app={
     world:createWorld(140821),   // стартовый seed: измените число — получится другой мир
+    // shadow — «мир без вас»: тот же seed, идёт теми же шагами, но присутствие посетителя
+    // в него не входит. Сравнение — lanternDebug.compare().
+    shadow:createWorld(140821),
     lang:'ru',                   // язык интерфейса: 'ru' | 'en'
     started:false,               // пролог закрыт, показан живой вид
     // XR-сессия: идёт ли она, в каком режиме ('vr' | 'ar'), подготовлена ли и размещён ли мир в AR.
     isXR:false,xrMode:'vr',arPlaced:false,arSessionPrepared:false,
     selected:0,inspectorOpen:false,          // какое тело открыто в инспекторе на экране
+    reading:false,                           // включено ли «как это читается» (строка человеческого чтения)
     // Плоский холст: элемент canvas, его 2D-контекст, экземпляр p5, размер окна.
     canvas:null,ctx:null,p5Instance:null,canvasFallback:false,
     // Поле среды: app.field ставит p5 (раздел 05) или запасной hash-режим; fieldScale —
@@ -377,17 +519,30 @@
     tickErrors:[]                             // ошибки, пойманные в кадре A-Frame (см. lanternDebug)
   };
 
+  // shadowCompare() — «мир без вас» (app.shadow) против мира с вами: тот же seed и те же шаги,
+  // но присутствие посетителя входит только в основной мир. changed — тела, у которых
+  // разошлись энергия (больше 0.05) или число импульсов. Разница между двумя мирами —
+  // единственное, что принадлежит присутствию посетителя.
+  function shadowCompare(){
+    const w=app.world,s=app.shadow;if(!s)return null;
+    return {withYou:w.emissions,withoutYou:s.emissions,
+      changed:w.bodies.filter((b,i)=>Math.abs(b.energy-s.bodies[i].energy)>.05||b.emitted!==s.bodies[i].emitted).map(b=>b.id)};
+  }
+
   // ОТЛАДКА. Из консоли браузера можно заглянуть в мир и управлять им, не трогая код:
   //   lanternDebug.getState()                  время, seed, энергия и импульсы каждого тела
   //   lanternDebug.spatialLayout()             координаты тел в метрах
   //   lanternDebug.simulate(600)               прокрутить 600 шагов (10 с) без рисования
   //   lanternDebug.trace(600)                  то же, но вернуть события по шагам (кто излучил, к чему прилетело)
-  //   lanternDebug.ablate('FILTER')            убрать оператор у всех тел; результат — функция «вернуть как было»
+  //   lanternDebug.ablate('FILTER')            убрать оператор у всех тел (кроме номера except); результат — «вернуть как было»
+  //   lanternDebug.compare()                  «мир без вас» против мира с вами: импульсы, тела, у которых разошлись
+  //   lanternDebug.stimulate(i, сила, от)     подать телу i чужой сигнал как настоящий прилёт (через SENSE, FILTER, DELAY)
+  //   lanternDebug.tune(i, {параметры})       поменять параметры графа тела i (для контролируемых опытов)
 
   //   lanternDebug.injectPresence(точки,'perturb')  подставить точки присутствия и включить возмущение
   //   lanternDebug.reset(42)                   заменить мир новым с заданным seed
   //   lanternDebug.audioStats()                включён ли звук, сколько сигналов прозвучало
-  //   lanternDebug.structure()                 состав мира при рождении: тела, программы, связи
+  //   lanternDebug.structure()                 состав мира при рождении: графы и параметры тел, форма, связи
   //   lanternDebug.field()                     общее поле среды ({kind, at, reseed})
   //   lanternDebug.fieldGain(v)                множитель поля (0 — мир без «погоды»)
   //   lanternDebug.fieldTexture()              байты текстуры поля для шейдеров (32×32 RGBA)
@@ -395,11 +550,14 @@
   //   lanternDebug.xrState()                   что выбрано в шлеме; .tickErrors() — ошибки кадров
   //   lanternDebug.xrMenuAudit()               из чего собрано меню в шлеме
   window.lanternDebug={
-    getState:()=>({time:app.world.time,seed:app.world.seed,bodies:app.world.bodies.map(b=>({id:b.id,energy:b.energy,emitted:b.emitted,agitation:+b.agitation.toFixed(3)})),emissions:app.world.emissions,arrivalHistory:app.world.arrivalHistory.slice(-5),visitor:app.world.visitor,bodiesNear:app.world.bodies.map(b=>({id:b.id,field:+b.visitorInfluence.toFixed(3)})),started:app.started,xr:app.isXR}),
-    reset:seed=>{app.world=createWorld(seed);app.field&&app.field.reseed(seed);return app.world.seed;},
-    // structure() — состав мира НА МОМЕНТ РОЖДЕНИЯ: тела (программа, форма, слой), связи
+    getState:()=>({time:app.world.time,seed:app.world.seed,bodies:app.world.bodies.map(b=>({id:b.id,energy:b.energy,emitted:b.emitted,agitation:+b.agitation.toFixed(3),
+      // внутренние состояния операторов — для инспектора, тестов и опытов из консоли
+      cooldown:+b.cooldown.toFixed(3),arrived:b.arrived,gain:+b.gainAvg.toFixed(3),trace:+b.trace.toFixed(3),queue:b.queue.length,arousal:+b.arousal.toFixed(3)})),emissions:app.world.emissions,arrivalHistory:app.world.arrivalHistory.slice(-5),visitor:app.world.visitor,bodiesNear:app.world.bodies.map(b=>({id:b.id,field:+b.visitorInfluence.toFixed(3)})),started:app.started,xr:app.isXR}),
+    // reset(seed) — заменить мир новым с заданным seed; двойник («мир без вас») пересоздаётся тоже.
+    reset:seed=>{app.world=createWorld(seed);app.shadow=createWorld(seed);app.field&&app.field.reseed(seed);return app.world.seed;},
+    // structure() — состав мира НА МОМЕНТ РОЖДЕНИЯ: тела (граф, параметры, форма, слой), связи
     // и порог связей. По нему видно, где seed меняет структуру, а не только параметры.
-    structure:()=>({bodies:app.world.bodies.map(b=>({id:b.id,program:b.program.name,ops:[...b.program.ops],memory:b.program.memory,lobes:b.program.lobes,
+    structure:()=>({bodies:app.world.bodies.map(b=>({id:b.id,name:b.program.name,ops:[...b.program.ops],p:{...b.program.p},freq:+b.freq.toFixed(4),lobes:b.program.lobes,
         rings:b.program.rings,links:b.links,layer:b.layer,x:+b.x.toFixed(3),y:+b.y.toFixed(3),z:+b.z.toFixed(3)})),
       links:app.world.links.map(l=>`${app.world.bodies[l.a].id}–${app.world.bodies[l.b].id}`),reach:+app.world.reach.toFixed(4)}),
     // field() — общее поле среды ({kind:'p5'|'hash', at(x,y,z,t), reseed(seed)}); fieldGain —
@@ -410,36 +568,61 @@
       return app.xrFieldTex?{data:Array.from(app.xrFieldTex.data),n:app.xrFieldTex.N,time:+app.world.time.toFixed(3)}:null;},
     agitate:(i,v)=>{const b=app.world.bodies[i];if(!b)return null;b.agitation=clamp(v,0,1);return b.agitation;},
     injectPresence:(points,mode='perturb')=>{app.world.mode=mode;app.world.visitor={active:mode==='perturb',points};},
-    simulate:steps=>{for(let i=0;i<steps;i++)updateOneStep(app.world,SIMULATION_STEP);return{
-      emissions:app.world.emissions,arrivals:app.world.arrivalHistory.length,
+    simulate:steps=>{for(let i=0;i<steps;i++)stepBoth(app.world,SIMULATION_STEP);return{
+      emissions:app.world.emissions,withoutYou:app.shadow.emissions,arrivals:app.world.arrivalHistory.length,
       energies:app.world.bodies.map(b=>+b.energy.toFixed(6)),
       fields:app.world.bodies.map(b=>+b.visitorInfluence.toFixed(3))};},
     // trace(steps) — прокрутить steps шагов и вернуть события с номером шага:
-    //   emits [{i, step, held}] — тело i излучило; held — энергии уже хватало, и оно ждало
-    //     окончания паузы (кричал не потому, что услышал, а потому что «можно» снова);
-    //   arrivals [{from, to, step}] — импульс долетел;  energy — средняя энергия каждого тела.
+    //   emits [{i, step, held, gated}] — тело i излучило; held — энергии уже хватало, и оно
+    //     ждало окончания паузы (кричал не потому, что услышал, а потому что «можно» снова);
+    //     gated — был ли у тела порог (крик с порогом громче);
+    //   arrivals [{from, to, step, heard}] — импульс долетел; heard — услышало ли тело
+    //     (есть ли у него SENSE);  energy — средняя энергия каждого тела.
     // По итоговому счётчику нельзя узнать ритм и задержку ответа, а сравнение миров
     // «с оператором / без» (docs/lantern-void-rules.md, часть 2) считается именно по ним.
     trace:steps=>{
       const w=app.world,emits=[],arrivals=[],energy=w.bodies.map(()=>0),seen=w.bodies.map(b=>b.emitted);
       for(let s=0;s<steps;s++){
         const held=w.bodies.map(b=>b.cooldown>0&&aboveThreshold(b));
-        updateOneStep(w,SIMULATION_STEP);
-        w.bodies.forEach((b,i)=>{energy[i]+=b.energy;if(b.emitted!==seen[i]){seen[i]=b.emitted;emits.push({i,step:s,held:held[i]});}});
+        stepBoth(w,SIMULATION_STEP);
+        w.bodies.forEach((b,i)=>{energy[i]+=b.energy;if(b.emitted!==seen[i]){seen[i]=b.emitted;emits.push({i,step:s,held:held[i],gated:b.program.ops.includes('GATE')});}});
         // Журнал приёмов — кольцевой (40 записей); приёмы именно этого шага узнаём по времени мира.
-        for(const a of w.arrivalHistory)if(a.t===w.time)arrivals.push({from:a.from,to:a.to,step:s});
+        for(const a of w.arrivalHistory)if(a.t===w.time)arrivals.push({from:a.from,to:a.to,step:s,heard:a.heard});
       }
       return {emits,arrivals,energy:energy.map(e=>e/steps)};
     },
-    // ablate(op) — убрать оператор (например 'FILTER') из программ ВСЕХ тел текущего мира
-    // и вернуть функцию, которая возвращает программы как были. Мир сравнивают «с
-    // оператором / без», не меняя код правил; программа тела заменяется копией, поэтому
-    // общие OPERATOR_PROGRAMS не задеваются.
-    ablate:op=>{
+    // ablate(op, except) — убрать оператор (например 'FILTER') из графов всех тел текущего
+    // мира, кроме тела с номером except, и вернуть функцию, которая возвращает графы как
+    // были. Так мир сравнивают «с оператором / без», не меняя код правил; граф заменяется
+    // копией, поэтому исходные объекты не задеваются.
+    ablate:(op,except=-1)=>{
       const saved=app.world.bodies.map(b=>b.program);
-      app.world.bodies.forEach(b=>{b.program={...b.program,ops:b.program.ops.filter(o=>o!==op)};});
+      app.world.bodies.forEach((b,i)=>{if(i!==except)b.program={...b.program,ops:b.program.ops.filter(o=>o!==op)};});
       return ()=>app.world.bodies.forEach((b,i)=>{b.program=saved[i];});
     },
+    // compare() — «мир без вас» (двойник) против мира с вами: тот же seed и те же шаги,
+    // но присутствие посетителя входит только в основной мир. changed — тела, у которых
+    // разошлись энергия (больше 0.05) или число импульсов.
+    compare:()=>shadowCompare(),
+    // stimulate(i, strength, from) — подать телу i чужой сигнал силы strength как настоящий
+    // прилёт (тот же путь: SENSE → FILTER → DELAY). Для контролируемых опытов: tuning-кривая
+    // фильтра, одинаковый сигнал разным телам.
+    stimulate:(i,strength,from=0)=>{const b=app.world.bodies[i];if(!b)return null;sense(app.world,b,from,strength);return b.arrived;},
+    // tune(i, params) — заменить параметры графа тела i (period, delay, loop, gate, amp…).
+    tune:(i,params)=>{const b=app.world.bodies[i];if(!b)return null;Object.assign(b.program.p,params);return {...b.program.p};},
+    // rules() — копия констант RULES: тесты и калибровочные прогоны берут числа отсюда,
+    // а не переписывают их руками (иначе проверка может сойтись с устаревшей константой).
+    rules:()=>({...RULES}),
+    // setRules(patch) — подменить константы RULES на лету (калибровочные развёртки и опыты
+    // из консоли). Возвращает новые значения.
+    setRules:patch=>{Object.assign(RULES,patch);return {...RULES};},
+    // shadow() — состояние «мира без вас»: время, импульсы, энергия и импульсы каждого тела.
+    shadow:()=>app.shadow?{time:+app.shadow.time.toFixed(3),emissions:app.shadow.emissions,
+      bodies:app.shadow.bodies.map(b=>({id:b.id,energy:b.energy,emitted:b.emitted}))}:null,
+    // reading() — «как это читается» для последнего события мира; names(lang) — имена тел по
+    // правилу чтения графа ('ru' | 'en').
+    reading:()=>humanReading(app.world.lastEvent),
+    names:lang=>app.world.bodies.map(b=>readGraph(b.program)[lang==='en'?1:0]),
     spatialLayout:()=>app.world.bodies.map(b=>({id:b.id,x:b.x,y:b.y+1.7,z:b.z,size:b.size})),
     audioStats:()=>({active:app.audioActive,spatialVoices:app.audio?.spatial?.length||0,
       packetSounds:app.audio?.signalPings||0,filter:app.audio?.filter?.frequency?.value||0}),
@@ -485,7 +668,7 @@
   "firstFoundation": "<span>01</span> WHERE THE IDEA COMES FROM",
   "cassirerSource": "CASSIRER / SYMBOLIC FORMS",
   "cassirerTitle": "We see a signal and add meaning",
-  "cassirerText": "A flash may look like a plea, a reply or an alarm. Yet the calculations know only thresholds and changes of state. We explore the boundary between <em>what happens in the system</em> and <em>the story an observer tells about it</em>.",
+  "cassirerText": "A flash may look like a plea, a reply or an alarm. Yet the calculations know only thresholds and changes of state. Asked about the LED pumpkin at the first meeting, the lecturer answered that it does not speak — it shows its state. We explore the boundary between <em>what happens in the system</em> and <em>the story an observer tells about it</em>.",
   "wienerSource": "WIENER / CYBERNETICS",
   "wienerTitle": "An effect becomes a new cause",
   "wienerText": "One body emits a pulse, another responds, and the environment changes. The next pulse occurs under different conditions. What matters here are <em>feedback loops</em>, not a prerecorded animation.",
@@ -499,15 +682,15 @@
   "virtualTitle": "Rules create possibilities, not a plot",
   "virtualText": "The same rules can lead to different sequences of events. Not every possibility is realised: some connections emerge, some signals fade, some coincidences look like a dialogue. We observe <em>possibilities unfolding</em> rather than a fixed story.",
   "secondFoundation": "<span>02</span> HOW IDEAS BECOME CODE",
-  "modalBridge": "A language model proposed a grammar of simple operators inspired by node-based environments such as TouchDesigner. The author selected and refined the rules; JavaScript now executes them. <strong>The LLM does not generate dialogue for the bodies in real time.</strong> Their behaviour emerges from numbers, connections and feedback.",
-  "ruleCard1Title": "OPERATIONS / INTERNAL GRAPH",
-  "ruleCard1Text": "<code>NOISE</code> introduces fluctuations; <code>FILTER</code> smooths the input; <code>MEMORY</code> and <code>DELAY</code> retain traces; <code>GATE</code> sets a threshold; <code>EMIT</code> releases a pulse.",
-  "ruleCard2Title": "SPATIAL BODIES",
-  "ruleCard2Text": "Internal parameters influence rhythm, shape and glow. This is an artistic visualisation of computation, not a claim that code intrinsically “looks” like an organism.",
-  "ruleCard3Title": "SIGNALS AND ENVIRONMENT",
-  "ruleCard3Text": "Signals travel between bodies with delay and attenuation. An incoming event can alter a neighbour’s next cycle. What looks like conversation is not proof of language or intention.",
-  "ruleCard4Title": "YOU AS PART OF THE FIELD",
-  "ruleCard4Text": "In Observe mode your actions are excluded from the simulation. In Disturb mode, the pointer — or head and hands in XR — modifies local conditions. Effects may appear in distant bodies that never directly encountered you.",
+  "modalBridge": "A language model proposed a grammar of simple operators inspired by node-based environments such as TouchDesigner. The rules were then measured — each operator was removed from the world in turn to see what changed — and rewritten where the promise did not hold. JavaScript now executes them. <strong>The LLM does not generate lines for the bodies in real time.</strong> Their behaviour emerges from numbers, connections and feedback.",
+  "ruleCard1Title": "OPERATIONS / THE BODY’S GRAPH",
+  "ruleCard1Text": "Each body has its own graph of eight operators, grown from the seed. <code>SOURCE</code> sets an own rhythm, <code>SENSE</code> is hearing, <code>FILTER</code> passes only those rhythms close to its own period, <code>DELAY</code> postpones what was heard, <code>MEMORY</code> keeps a trace, <code>FEEDBACK</code> returns the body’s own cry to it — or holds it back, <code>GATE</code> sets a threshold, <code>EMIT</code> cries.",
+  "ruleCard2Title": "BODIES FROM THE GRAPH",
+  "ruleCard2Text": "Form is a reading of the graph: petals count the nodes, orbits count the returns to the body’s own past. The name in the inspector is also assigned by a rule. This is an artistic visualisation of computation, not a claim that code intrinsically “looks” like an organism.",
+  "ruleCard3Title": "SIGNALS WITHOUT A MESSAGE",
+  "ruleCard3Text": "A pulse carries energy, not meaning. Only a body with hearing can hear it, and the closer the sender’s rhythm is to the listener’s tuning, the fuller it arrives. The same signal has different consequences for different bodies — visible in the inspector. What looks like conversation is not proof of language or intention.",
+  "ruleCard4Title": "YOU — AND THE WORLD WITHOUT YOU",
+  "ruleCard4Text": "In Observe mode your actions are excluded from the simulation. In Disturb mode, the pointer — or head and hands in XR — modifies local conditions. The same world without you runs alongside, step for step: the difference between them is the only thing that belongs to your presence. The line “how it reads” translates events in human terms; it is a translation rule, and it can be switched off.",
   "conclusion": "“It cries out its existence.”<span>But a cry does not always have an addressee. This work asks how a technical state becomes, to our eyes, almost a gesture, an address, or a sign of life — and where that interpretation breaks down.</span>",
   "modalDone": "Continue observing",
   "xrGuide": "PINCH / TRIGGER: INSPECT · COME CLOSE / TOUCH: DISTURB · B: CLOSE · WORLD BUTTONS: MODE / SOUND.",
@@ -515,7 +698,9 @@
   "headPractice": "PRACTICE / 01",
   "directXR": "VR world",
   "arLabel": "AR in your room",
-  "xrLabel": "VR WORLD"
+  "xrLabel": "VR WORLD",
+  "readingToggle": "how it reads",
+  "readingNote": "The human reading is a translation rule at work. The world’s rules contain no reply, no call, no waiting."
 };
   const LANG = {
     ru:{
@@ -536,7 +721,16 @@
       xrInitial:'Среда существует независимо от вас.',
       xrEnergy:'ЭНЕРГИЯ {energy}    ИМПУЛЬС {signal}',
       xrField:'ПОЛЕ ПОСЕТИТЕЛЯ {field}',
-      names:['Резонатор','Порог','Отложенный свет','Рассеиватель','Петля']
+      // twin — счётчик «сигналов · без вас»; twinTitle — пояснение к нему.
+      twin:'СИГНАЛОВ {a} · БЕЗ ВАС {b}', twinTitle:'Тот же мир с тем же seed идёт рядом, но ваше присутствие в него не входит',
+      // read_* — «как это читается»: человеческое прочтение события по его типу и виду (kind).
+      read_first:'Мир ждёт вашего внимания.', read_plain:'{id} подаёт голос.', read_reply:'{id} отвечает соседу.',
+      read_burst:'{id} не находит себе места.', read_alone:'{id} зовёт в пустоту.', read_arrival:'{to} прислушивается к {from}.',
+      // op_* — живые показания операторов тела в инспекторе.
+      op_source:'исток {v}/с · ритм {f} Гц', op_sense:'услышал сигналов: {n}', op_filter:'настроен на {t} с · пропускает {p} %',
+      op_delay:'задержка {d} с · в очереди {n}', op_memory:'след {v} · держится ~{s} с',
+      op_loop:'петля +{v} · отклик {a}', op_brake:'тормоз {v} · отклик {a}', op_gate:'порог {v}', op_leak:'без порога ({v})',
+      op_loud:'крик ×{v}'
     },
     en:{
       active:'SYSTEM ACTIVE',paused:'PROCESS PAUSED',
@@ -556,7 +750,13 @@
       xrInitial:'The environment exists independently of you.',
       xrEnergy:'ENERGY {energy}    PULSE {signal}',
       xrField:'VISITOR FIELD {field}',
-      names:['Resonator','Threshold','Deferred light','Diffuser','Loop']
+      twin:'PULSES {a} · WITHOUT YOU {b}', twinTitle:'The same world with the same seed runs alongside, but your presence never enters it',
+      read_first:'The world is waiting for your attention.', read_plain:'{id} makes itself heard.', read_reply:'{id} answers a neighbour.',
+      read_burst:'{id} is beside itself.', read_alone:'{id} calls into the void.', read_arrival:'{to} is listening to {from}.',
+      op_source:'source {v}/s · rhythm {f} Hz', op_sense:'signals heard: {n}', op_filter:'tuned to {t} s · passes {p} %',
+      op_delay:'delay {d} s · queued {n}', op_memory:'trace {v} · lasts ~{s} s',
+      op_loop:'loop +{v} · response {a}', op_brake:'brake {v} · response {a}', op_gate:'threshold {v}', op_leak:'ungated ({v})',
+      op_loud:'cry ×{v}'
     }
   };
   // tr('key',{param}) — взять строку из словаря текущего языка и подставить {param}.
@@ -570,12 +770,37 @@
     if(!event||typeof event!=='object')return tr('first');
     return tr(event.type,event.params||{});
   }
-  // Условное имя тела на текущем языке («Резонатор», «Threshold»…). У тела в его
-  // собственной среде имени нет — название нужно только наблюдателю. Программа тела
-  // — свой экземпляр (форма выводится из seed тела), поэтому ищем по имени, не по ссылке.
+  // programName(body) — условное имя тела на текущем языке («Резонатор», «Слушатель ·
+  // настроенный»…). У тела в его собственной среде имени нет; название — чтение его графа
+  // ПРАВИЛОМ (readGraph, 01): архетип сохраняет имя, прочее тело называется по входу
+  // и главной черте.
   function programName(body){
-    const i=OPERATOR_PROGRAMS.findIndex(p=>p.name===body.program.name);
-    return (i>=0?(LANG[app.lang].names[i]||body.program.name):body.program.name);
+    const [ru,en]=readGraph(body.program);
+    return app.lang==='en'?en:ru;
+  }
+  // humanReading(event) — «как это читается»: то же событие мира, переведённое по-человечески
+  // («отвечает», «зовёт», «прислушивается»). Это ПРАВИЛО перевода и ничего больше: в графах
+  // тел нет ни ответа, ни зова — их додумывает наблюдатель. Здесь перевод сделан явным,
+  // чтобы его можно было включить, увидеть и выключить.
+  function humanReading(event){
+    if(!event||typeof event!=='object'||event.type==='first')return tr('read_first');
+    if(event.type==='emission')return tr('read_'+((event.params||{}).kind||'plain'),event.params||{});
+    if(event.type==='arrival')return tr('read_arrival',event.params||{});
+    return formatEvent(event);
+  }
+  // operatorReadings(b) — живые показания операторов тела для инспектора («показать логику»):
+  // что каждый узел графа делает и как настроен прямо сейчас.
+  function operatorReadings(b){
+    const has=o=>b.program.ops.includes(o),p=b.program.p,out=[];
+    if(has('SOURCE'))out.push(tr('op_source',{v:(p.amp/2).toFixed(2),f:b.freq.toFixed(2)}));
+    if(has('SENSE'))out.push(tr('op_sense',{n:b.arrived}));
+    if(has('FILTER'))out.push(tr('op_filter',{t:p.period.toFixed(2),p:Math.round(b.gainAvg*100)}));
+    if(has('DELAY'))out.push(tr('op_delay',{d:p.delay.toFixed(2),n:b.queue.length}));
+    if(has('MEMORY'))out.push(tr('op_memory',{v:b.trace.toFixed(2),s:Math.round(p.traceTau)}));
+    if(has('FEEDBACK'))out.push(p.loop>0?tr('op_loop',{v:p.loop.toFixed(2),a:b.arousal.toFixed(2)}):tr('op_brake',{v:p.loop.toFixed(2),a:b.arousal.toFixed(2)}));
+    out.push(has('GATE')?tr('op_gate',{v:p.gate.toFixed(2)}):tr('op_leak',{v:RULES.leak.toFixed(2)}));
+    out.push(tr('op_loud',{v:(has('GATE')?RULES.gateBoost:RULES.leakDamp).toFixed(2)}));
+    return out;
   }
   // refreshLanguage — перевести весь интерфейс на app.lang: статические надписи,
   // заголовок страницы, подписи кнопок, инспектор, карточки и меню в шлеме.
@@ -602,6 +827,9 @@
     $('pause-label').textContent=tr(app.world.paused?'resume':'pause');
     $('audio-label').textContent=tr(app.audioActive?'audioOn':'audioOff');
     $('mode-hint').textContent=tr(app.world.mode==='perturb'?'disturbHint':'observeHint');
+    $('twin-readout').title=tr('twinTitle');
+    renderTwin();
+    renderReading();
     $('population-readout').textContent=`${String(app.world.bodies.length).padStart(2,'0')} ${tr('bodies')}`;
     $('live-story').textContent=formatEvent(app.world.lastEvent);
     if(app.inspectorOpen)refreshInspector();
@@ -989,7 +1217,9 @@
       $('seed-readout').textContent=String(app.world.seed);
       $('population-readout').textContent=`${app.world.bodies.length.toString().padStart(2,'0')} ${tr('bodies')}`;
       $('time-readout').textContent=`${fmt(secs/60)}:${fmt(secs%60)}`;
+      renderTwin();   // «Мир без вас»: сигналов в мире с вами и в том же мире без вас
       $('live-story').textContent=formatEvent(app.world.lastEvent);
+      renderReading();
       if(app.inspectorOpen)refreshInspector();
       updateAudio();
     }
@@ -1007,6 +1237,9 @@
       if(i){const arrow=document.createElement('i');arrow.textContent='→';$('operator-chain').append(arrow);}
       const node=document.createElement('span');node.textContent=op;$('operator-chain').append(node);
     });
+    // Живые показания операторов: по одному значению на каждый узел графа тела.
+    $('operator-live').replaceChildren();
+    operatorReadings(b).forEach((text)=>{const span=document.createElement('span');span.textContent=text;$('operator-live').append(span);});
     $('inspector-note').textContent=b.emitted===0?tr('inspectorNone'):tr('inspectorEmitted',{count:b.emitted});
   }
   // Открыть инспектор тела — клик по телу на сцене.
@@ -1021,6 +1254,26 @@
     if(mode==='perturb')toast(tr('presenceOn'));
     else {app.world.visitor.active=false;app.world.visitor.points=[];}
   }
+  // renderTwin — счётчик «сигналов · без вас»: два числа рядом (shadowCompare). Вызывается
+  // и в такт интерфейса, и при смене языка — чтобы после переключения не оставаться на старом.
+  function renderTwin(){
+    const cmp=shadowCompare();if(!cmp)return;
+    $('twin-readout').textContent=tr('twin',{a:String(cmp.withYou).padStart(4,'0'),b:String(cmp.withoutYou).padStart(4,'0')});
+  }
+  // toggleReading / renderReading — показать или скрыть «как это читается»: человеческое
+  // прочтение того же события, что стоит в строке журнала. Журнал остаётся сухим; прочтение —
+  // правило перевода (humanReading, 04), и рядом сказано, что это именно оно.
+  function toggleReading(){
+    app.reading=!app.reading;
+    $('reading-toggle').setAttribute('aria-pressed',String(app.reading));
+    $('live-reading').classList.toggle('is-hidden',!app.reading);
+    $('live-reading-note').classList.toggle('is-hidden',!app.reading);
+    renderReading();
+  }
+  function renderReading(){
+    if(!app.reading)return;
+    $('live-reading').textContent=`«${humanReading(app.world.lastEvent)}»`;
+  }
   // Вход из пролога в живой вид. Мир к этому моменту уже идёт: вход не запускает его.
   function startExperience(){
     app.started=true;$('intro').classList.add('is-hidden');$('live-ui').classList.remove('is-hidden');
@@ -1030,7 +1283,7 @@
   // Новый мир со случайным seed (клавиша R). В шлеме тела пересобираются.
   function regenerate(){
     const next=(Math.floor(Math.random()*900000)+100000);
-    app.world=createWorld(next);app.selected=0;app.inspectorOpen=false;app.xrLastContactAt.clear();
+    app.world=createWorld(next);app.shadow=createWorld(next);app.selected=0;app.inspectorOpen=false;app.xrLastContactAt.clear();
     $('body-inspector').classList.add('is-hidden');
     if(app.isXR)rebuildXR();
     toast(tr('regenerate',{seed:next}));
@@ -1079,6 +1332,7 @@
   function initUI(){
     document.querySelectorAll('.lang-button').forEach(el=>el.addEventListener('click',()=>setLanguage(el.dataset.lang)));
     $('start-button').addEventListener('click',startExperience);
+    $('reading-toggle').addEventListener('click',toggleReading);
     const directXR=$('direct-xr-button');
     if(directXR){directXR.classList.remove('is-hidden');directXR.addEventListener('click',()=>openXR('vr'));}
     $('intro-ar-button').addEventListener('click',()=>openXR('ar'));
@@ -1628,7 +1882,7 @@
       // Кегль следует физической высоте плоскости: текст не растягивается по ширине.
       const family='Geologica, Arial, sans-serif';
       const maxWidth=canvas.width*.90;
-      let size=Math.floor(ch*(kind==='info'?.48:.57));
+      let size=Math.floor(ch*(kind==='info'?.58:.57));   // подзаголовок: 0.48 давало высоту букв 0.96° (меньше 1° по чек-листу Meta)
       ctx.font=`${kind==='header'?700:600} ${size}px ${family}`;
       while(ctx.measureText(value).width>maxWidth&&size>Math.floor(ch*.32)){
         size-=2;ctx.font=`600 ${size}px ${family}`;
@@ -1662,24 +1916,34 @@
     const menu=document.createElement('a-entity');menu.id='xr-context-menu';
     menu.setAttribute('visible','false');
     app.xrScene.appendChild(menu);
+    // Панель меню рисуется ПОВЕРХ мира. Тело у руки стоит примерно в 1.26 м, меню
+    // открывается в 1.4 м — и ядро и свечение этого тела оказывались перед кнопками
+    // (кадры приёмки, test/xr-acceptance.mjs). Поэтому фон, плашки и подписи не проверяют
+    // глубину и идут с порядком выше объектов мира (карточки — 22), но ниже прицела
+    // на конце луча (74–75): точка наведения должна оставаться видной на кнопке.
     const bg=document.createElement('a-entity');
     bg.setAttribute('geometry','primitive:plane;width:1.12;height:1.04');
-    bg.setAttribute('material','shader:flat;color:#112333;opacity:.97;transparent:true;side:double');
+    bg.setAttribute('material','shader:flat;color:#112333;opacity:1;transparent:true;depthTest:false;side:double');
+    // Сетка фона создаётся A-Frame не сразу — порядок ставится, когда она появится.
+    bg.addEventListener('object3dset',e=>{if(e.detail.type==='mesh')bg.getObject3D('mesh').renderOrder=55;});
     menu.appendChild(bg);
     const header=makeXRMenuText(THREE,1.03,.125,'header');
     header.mesh.position.set(0,.425,.026);menu.object3D.add(header.mesh);
     header.setText('LANTERN // VOID');
-    const info=makeXRMenuText(THREE,1.035,.09,'info');
-    info.mesh.position.set(0,.338,.026);menu.object3D.add(info.mesh);
+    const info=makeXRMenuText(THREE,1.035,.095,'info');
+    info.mesh.position.set(0,.336,.026);menu.object3D.add(info.mesh);
     app.xrMenu={entity:menu,background:bg,header,info};
     const actions=['mode','audio','help','exit'];
     for(let i=0;i<actions.length;i++){
       const button=document.createElement('a-entity');
       button.dataset.xrMenuAction=actions[i];button.classList.add('xr-ui-target');
       // Настоящая 3D-поверхность для луча: она существует сразу, в отличие от
-      // асинхронной геометрии A-Frame.
+      // асинхронной геометрии A-Frame. Прозрачная по флагу (чтобы попасть в тот же список
+      // отрисовки, что и свечение тел) и без проверки глубины: порядок 56 ставит плашку
+      // после фона (55) и раньше подписи (60) — см. комментарий у фона.
       const target=new THREE.Mesh(new THREE.BoxGeometry(1.00,.149,.023),
-        new THREE.MeshBasicMaterial({color:'#274253',depthTest:true,depthWrite:true}));
+        new THREE.MeshBasicMaterial({color:'#274253',transparent:true,opacity:1,depthTest:false,depthWrite:false}));
+      target.renderOrder=56;
       target.name='menu-target-'+actions[i];
       button.setObject3D('mesh',target);
       button.setAttribute('position',`0 ${.215-i*.165} .035`);
@@ -1698,7 +1962,7 @@
   function refreshXRMenu(){
     if(!app.xrMenu)return;
     const ru=app.lang==='ru',help=app.xrMenuPage==='help';
-    app.xrMenu.info.setText(ru?(help?'УПРАВЛЕНИЕ':'СРЕДА / НАСТРОЙКИ  ·  B: ЗАКРЫТЬ'):(help?'HOW TO EXPLORE':'ENVIRONMENT / SETTINGS  ·  B: CLOSE'));
+    app.xrMenu.info.setText(ru?(help?'УПРАВЛЕНИЕ':'НАСТРОЙКИ · B: ЗАКРЫТЬ'):(help?'HOW TO EXPLORE':'SETTINGS · B: CLOSE'));
     // Движение — ходьба стиком и снап-повороты; телепорта в меню нет: в космосе
     // нет пола, и случайное переключение на него лишало бы человека ходьбы.
     const titles=help?(app.xrMode==='ar'?
@@ -1853,8 +2117,11 @@
       if(index>=0||(ui&&ui!=='noop'))xrHaptic(side,.12,25);
       app.xrHoverBySide[side]=index;app.xrUiHover[side]=ui;
       if(app.xrMenuVisible){
-        app.xrMenuButtons.forEach(b=>b.target.material.color.set(
-          b.entity.dataset.xrMenuAction===ui&&ui!=='noop'?'#8aaebb':'#274253'));
+        // Базовые цвета — как в refreshXRMenu (последняя кнопка чуть светлее), наведённая
+        // подсвечена; иначе первый же поворот луча делал все кнопки одинаковыми.
+        const last=app.xrMenuButtons.length-1;
+        app.xrMenuButtons.forEach((b,i)=>b.target.material.color.set(
+          b.entity.dataset.xrMenuAction===ui&&ui!=='noop'?'#8aaebb':(i===last?'#374653':'#274253')));
       }
     }
     // Точка на конце луча: видно, куда попадаешь.
@@ -2294,7 +2561,7 @@
                 const last=app.xrLastContactAt.get(b.index)??-Infinity;
                 if(app.world.time-last>.85){
                   app.xrLastContactAt.set(b.index,app.world.time);
-                  b.energy=clamp(b.energy+.10,0,1);
+                  b.energy=clamp(b.energy+RULES.touchGain,0,1);
                   b.lastTouchAt=app.world.time;
                   app.world.contactHistory.push({index:b.index,time:app.world.time});
                   if(app.world.contactHistory.length>40)app.world.contactHistory.shift();
